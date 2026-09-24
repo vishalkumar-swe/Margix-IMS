@@ -6,7 +6,8 @@ Tally worker).
 
 ```
   browser ──HTTPS──▶ Railway edge ──▶ web (Next.js, TARGET=app) ──private network──▶ Postgres
-                                       tally-sync (cron, TARGET=tools) ──────────────┘
+                                       tally-sync (cron, TARGET=tools) ──────────────┤
+                                       notify (cron, TARGET=tools) ──────────────────┘
 ```
 
 All services run in **Asia Southeast (Singapore)**, the Railway region closest
@@ -19,6 +20,7 @@ to India.
 | `Postgres` | Railway Postgres template | volume at `/var/lib/postgresql/data` |
 | `web` | this repo, Dockerfile | pre-deploy `sh ops/railway/pre-deploy.sh`, healthcheck `/api/ready`, public domain |
 | `tally-sync` | this repo, Dockerfile, `TARGET=tools` | start `npx tsx scripts/tally-sync.ts`, cron `*/5 * * * *`, restart policy never |
+| `notify` | this repo, Dockerfile, `TARGET=tools` | start `npx tsx scripts/notify.ts`, cron `*/5 * * * *`, restart policy never |
 
 ### `web` variables
 
@@ -35,6 +37,28 @@ to India.
 
 `tally-sync` uses the same database variables (reference them from `web`)
 plus `TARGET=tools`.
+
+### `notify` (notifications cron)
+
+One pass per run: the daily jobs that are due (slow-moving scan at the
+configured time, daily digests) and delivery of queued in-app, e-mail and
+WhatsApp messages. Railway cron runs at most every 5 minutes, so a digest
+set for 09:00 goes out by about 09:05 IST; immediate alerts reach the bell
+and inboxes within 5 minutes. Deliveries are claimed with `SKIP LOCKED`, so an
+overlapping run never sends a message twice.
+
+| Variable | Value |
+|---|---|
+| `TARGET` | `tools` |
+| `DATABASE_URL`, `DIRECT_DATABASE_URL` | reference `web`'s |
+| `APP_URL` | the public `https://…` address of `web` (links in e-mails) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | e-mail (Gmail: `smtp.gmail.com`, `587`, `false`, address, app password) |
+| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | Meta WhatsApp Cloud API |
+| `WHATSAPP_TEMPLATE_LOW_STOCK`, `WHATSAPP_TEMPLATE_SUMMARY`, `WHATSAPP_TEMPLATE_LANGUAGE` | approved template names, language (`en`) |
+
+Set the same notification variables on `web` too: the "Send test" button on
+Administration → Notifications sends from the web service, and the channel
+status shown there reads them. Blank values mean that channel runs log-only.
 
 ## How a deploy works
 

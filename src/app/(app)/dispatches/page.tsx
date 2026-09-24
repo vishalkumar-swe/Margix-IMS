@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { FilterBar } from "@/components/shared/filter-bar";
+import { ProductFilterNotice } from "@/components/shared/product-filter-notice";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -15,7 +16,7 @@ import { parseSearchParams } from "@/lib/search-params";
 import { dispatchListQuerySchema } from "@/lib/validation/dispatch";
 import { requirePagePermission } from "@/server/auth/current-user";
 import { listDispatches } from "@/server/modules/dispatch/dispatch.queries";
-import { listGodowns } from "@/server/modules/masters/masters.queries";
+import { getSku, listGodowns } from "@/server/modules/masters/masters.queries";
 
 export const metadata: Metadata = { title: "Dispatches" };
 
@@ -23,7 +24,11 @@ export default async function DispatchesPage({ searchParams }: PageProps<"/dispa
   const user = await requirePagePermission("dispatch.view");
   const raw = await searchParams;
   const query = parseSearchParams(dispatchListQuerySchema, raw);
-  const [{ items, total }, godowns] = await Promise.all([listDispatches(query), listGodowns()]);
+  const [{ items, total }, godowns, sku] = await Promise.all([
+    listDispatches(query),
+    listGodowns(),
+    query.skuId ? getSku(query.skuId) : null,
+  ]);
   const newButton = can(user.role, "dispatch.create") && (
     <Link href="/dispatches/new" className={buttonVariants()}>
       <Plus aria-hidden /> New dispatch
@@ -34,7 +39,9 @@ export default async function DispatchesPage({ searchParams }: PageProps<"/dispa
     <>
       <PageHeader title="Dispatches" description="Outward movements of stock, batch by batch." actions={newButton} />
       <Card>
+        <ProductFilterNotice sku={sku} clearHref="/dispatches" />
         <FilterBar
+          hidden={{ skuId: query.skuId }}
           search={{ name: "q", placeholder: "Dispatch no., reference or customer", value: query.q }}
           selects={[
             {

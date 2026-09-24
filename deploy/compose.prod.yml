@@ -37,6 +37,20 @@ x-app-env: &app-env
   TALLY_TIMEOUT_MS: ${TALLY_TIMEOUT_MS:-15000}
   SLOW_STOCK_DAYS: ${SLOW_STOCK_DAYS:-30}
   DEAD_STOCK_DAYS: ${DEAD_STOCK_DAYS:-90}
+  # Notifications: a channel with blank settings runs log-only (docs/operations.md).
+  APP_URL: ${APP_URL:-}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_SECURE: ${SMTP_SECURE:-false}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM: ${SMTP_FROM:-}
+  WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+  WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+  WHATSAPP_TEMPLATE_LOW_STOCK: ${WHATSAPP_TEMPLATE_LOW_STOCK:-}
+  WHATSAPP_TEMPLATE_SUMMARY: ${WHATSAPP_TEMPLATE_SUMMARY:-}
+  WHATSAPP_TEMPLATE_LANGUAGE: ${WHATSAPP_TEMPLATE_LANGUAGE:-en}
+  NOTIFY_TIMEOUT_MS: ${NOTIFY_TIMEOUT_MS:-15000}
 
 # Shared-host guardrails. No `cpus` on purpose: rootless podman on this host
 # only delegates the memory and pids controllers (crun: controller `cpu`
@@ -125,6 +139,23 @@ services:
       - ./release:/app:ro,z
     # The trap lets the loop stop at once on restart instead of waiting to be killed.
     command: ["sh", "-c", "trap 'exit 0' TERM; while true; do node scripts/tally-sync.mjs || true; sleep ${TALLY_SYNC_INTERVAL:-120} & wait $$!; done"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [margix_net]
+
+  # Notification worker: every NOTIFY_INTERVAL seconds runs the daily jobs that
+  # are due (slow-moving scan, digests) and delivers queued in-app, e-mail and
+  # WhatsApp messages (exit code 2 = some deliveries failed; they are retried
+  # with backoff, so keep going).
+  notify:
+    image: localhost/margix-ims-tools:latest
+    restart: unless-stopped
+    <<: *hardening
+    cap_drop: [ALL]
+    mem_limit: 512m
+    pids_limit: 128
+    environment: *app-env
+    command: ["sh", "-c", "while true; do npx tsx scripts/notify.ts || true; sleep ${NOTIFY_INTERVAL:-60}; done"]
     depends_on:
       migrate: { condition: service_completed_successfully }
     networks: [margix_net]

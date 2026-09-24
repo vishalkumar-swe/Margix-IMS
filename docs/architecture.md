@@ -31,11 +31,12 @@ prisma/
   migrations/                Versioned SQL; hand-reviewed (created with --create-only).
                              The init migration appends CHECKs, triggers and the drift view.
   seed.ts                    Idempotent seed — posts stock through the real services
-scripts/                     CLI entry points: tally-sync.ts (one sync pass), db-grants.ts
+scripts/                     CLI entry points: tally-sync.ts (one sync pass), notify.ts (one
+                             notification worker pass), db-grants.ts
 ops/                         Deployment assets
   postgres/                  app-role-grants.sql; init/ hook creating the app login in containers
   backup/                    backup.sh (pg_dump + retention), verify-restore.sh (restore check)
-  systemd/                   Timers for the Tally sync and nightly backups
+  systemd/                   Timers for the Tally sync, the notification worker and nightly backups
 Dockerfile                   Production images ("app": standalone server; "tools": migrations,
                              grants, seed, Tally worker)
 deploy/                      Home-server stack: compose.prod.yml (Postgres, app, worker, Tailscale
@@ -112,11 +113,14 @@ src/
 | `adjustments` | Adjustment requests, approval/rejection (maker/checker) |
 | `opening`     | Opening balances |
 | `reversals`   | Reversal use case: counter-entries + document side effects + Tally + audit |
-| `alerts`      | Reorder rules and low-stock alerts (evaluated by the inventory engine) |
+| `alerts`      | Reorder rules and low-stock alerts (evaluated by the inventory engine); the daily slow-moving scan |
 | `reports`     | Stock summary / daily inventory, movements, slow & dead stock, CSV layouts |
 | `analytics`   | BI read models (inventory, sales, purchasing, operations) and their CSV layouts; see [Analytics](#analytics) |
 | `tally`       | Sync queue, worker, voucher builder, XML wire format, Tally clients |
 | `dashboard`   | Cross-module read model for the dashboard and exceptions |
+| `notifications` | Notification rules, the transactional outbox and its worker, channel providers (in-app, e-mail, WhatsApp), digests, the bell |
+| `checklist`   | Daily checklist: system items computed per role, administrator tasks and completions, popup "seen" marker |
+| `settings`    | Admin-editable settings store (`app_setting`), e.g. slow / dead stock days |
 
 `inventory` is the only module that writes `inventory_ledger` / `stock_balance`,
 and it re-evaluates `alerts` after every posting, so an alert can never
@@ -287,6 +291,63 @@ the only place money is computed — change them there, e.g. for line discounts)
 | Slow / dead | On-hand SKU × godown idle (no ledger movement) for SLOW_STOCK_DAYS ≤ days < DEAD_STOCK_DAYS / ≥ DEAD_STOCK_DAYS. Exclusive, unlike the reports, where "slow" includes dead. |
 | Stock ageing | On-hand SKU × godown by days since last movement: 0–30, 31–60, 61–90, 91–180, over 180. |
 | Low stock / out of stock | SKUs with an ACTIVE low-stock alert / ACTIVE SKUs with no stock in any godown. |
+
+A new in-app notification is announced the same way (a statement trigger on
+`notification`, migration `notifications_checklist`), so the bell's unread
+count, rendered by the app layout, refreshes on every open screen.
+
+## Notifications
+
+```
+ posting tx ─▶ evaluateStockAlerts ─▶ LOW_STOCK alert raised? ─▶ enqueueNotification ─▶ notification_outbox
+                                      (one ACTIVE per SKU×godown×type; notify on raise only)  (same transaction)
+ notify worker (scripts/notify.ts, every 1–5 min):
+   1. slow-moving scan, once per IST day after its time ─▶ SLOW_MOVING alerts (+ outbox if "immediate")
+   2. daily digests, once per IST day per rule at its time ─▶ outbox
+   3. deliver: claim due rows (FOR UPDATE SKIP LOCKED, 2-min lease) ─▶ channel provider ─▶ SENT / SKIPPED / FAILED
+```
+
+- **Transactional outbox.** Messages are rendered and written to
+  `notification_outbox` in the transaction that raises the alert, one row per
+  channel × recipient, so a rolled-back change never notifies anyone and a
+  committed one is never lost. Delivery happens later, outside any
+  transaction, so a slow SMTP server or WhatsApp outage never blocks stock.
+- **Worker** (`notification-delivery.service.ts`) follows the Tally queue:
+  claim with `SKIP LOCKED` under a lease (a crashed worker's rows are
+  re-claimed), exponential backoff (2, 4, 8 … 60 minutes), at most 6 automatic
+  attempts, every attempt logged in `notification_attempt`. Permanent errors
+  (SMTP 5xx, WhatsApp 400/404) stop at once; administrators can retry.
+- **Channels** (`notifications/channels/`) implement one interface
+  (`send()` never throws, returns SENT / SKIPPED / FAILED + retryable):
+  in-app (a `notification` row), e-mail (SMTP via nodemailer), WhatsApp (Meta
+  Cloud API template messages). A channel without credentials runs
+  **log-only**: the row becomes SKIPPED "skipped: not configured".
+- **Rules** (`notification_rule`, one per alert type; defaults in code when
+  absent): enabled, frequency (immediate / daily digest at an IST time),
+  channels, in-app roles and users, e-mail addresses, WhatsApp numbers.
+  Recipients are resolved when the message is queued.
+- **Once-a-day jobs** claim their day in `scheduled_job_run` with a
+  conditional upsert inside the job's transaction, so concurrent workers run
+  each job once and a failed run is retried on the next pass.
+- **Slow-moving alerts** reuse `stock_alert` (`alert_type = SLOW_MOVING`,
+  `days_idle`): raised by the scan for stock idle ≥ the configured days,
+  resolved by the next movement of that SKU in that godown or when a later
+  scan no longer finds it.
+
+## Daily checklist
+
+`checklist.queries.ts` computes a user's checklist for the current IST day:
+system items (low stock, slow-moving, pending POs, invoices awaiting dispatch,
+partial dispatches, outstanding invoices, recent returns, pending approvals,
+Tally and notification failures), each shown only to roles with the
+permission to open its page and derived from live data (Completed when there
+is nothing to do; Critical / Overdue / Pending otherwise), followed by the
+administrator tasks for the user's role (`checklist_task`), ticked per user per
+day (`checklist_task_completion`) and overdue after their due time. The app
+layout opens the popup on the first page of the day (`checklist_view` records
+that it was shown), the header and dashboard reopen it, and sign-out lists
+unresolved items first when enabled. Configuration lives in `app_setting`
+(`checklist`).
 
 ## Naming conventions
 

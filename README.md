@@ -31,7 +31,10 @@ Stock = Opening + Inward + Transfer in + Return in
 | Printing | Printable tax invoices, purchase orders, GRN notes and delivery challans with company letterhead, full GST breakdown, amount in words, a QR code (top right) and a Code 128 barcode of the document number (bottom); product barcode labels (3 × 8 per A4) |
 | Pricing & GST | Line discounts, other charges (freight, packing) and live totals on POs and invoices; CGST + SGST within the state, IGST across states — decided from the company and party GST states and fixed on the document; per-line and document breakdown on screen and in print |
 | Barcodes & scanning | Product barcodes (EAN-13 or Code 128; internal EAN-13s generated automatically), scan-to-add on POs and invoices, scan-to-pick on dispatches and transfers, dispatch verification by scan (matched / short / extra), returns started by scanning the original document, and a header scan box that opens any scanned document or product. Works with USB/Bluetooth scanners everywhere and the camera where the browser supports it |
-| Alerts | Reorder rules per SKU × godown; low-stock alerts raised and resolved in the same transaction as the stock change, never duplicated |
+| Alerts | Reorder rules per SKU × godown; low-stock alerts raised (at or below the minimum) and resolved in the same transaction as the stock change, never duplicated; slow-moving alerts from a daily scan |
+| Notifications | Low-stock and slow-moving alerts in-app (bell with unread count), by e-mail (SMTP) and WhatsApp (Meta Cloud API); per alert type: on/off, immediate or daily digest, channels and recipients; queued in the same transaction as the alert (outbox) and delivered with retries; channels without credentials run log-only; Send test per channel |
+| Slow-moving stock | Slow / dead stock days set by administrators; report rows link to the product, its stock, sales history (dispatches, invoices), purchase history (POs, GRNs) and a pre-filled reorder PO |
+| Daily checklist | Popup on the first sign-in of the day: low / slow stock, pending POs, invoices awaiting dispatch, outstanding invoices, returns, approvals, sync failures and administrator tasks, each Completed / Pending / Overdue / Critical; reopen from the header or dashboard; unresolved items shown before sign-out |
 | Reports | Stock summary and daily inventory (opening + inward − outward ± adjustments = closing), movement report, slow and dead stock — on screen and as CSV |
 | Analytics | Business-intelligence dashboard at `/analytics`: inventory (value at latest cost, low/out-of-stock, fast/slow/dead, ageing, movement trends), sales (by product, customer, category; GST collected; daily/weekly/monthly trends), purchasing (by supplier, pending POs, purchase vs sales) and operational KPIs — period presets incl. Indian FY, comparison with the previous period, filters, CSV per section |
 | Tally | Every posted document is queued; failures show a plain-language reason, back off and can be retried; a Tally outage never blocks stock operations |
@@ -113,6 +116,7 @@ Sign in with `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`. With
 | `npm run db:reset` | Drop, re-migrate, grant and re-seed the development database |
 | `npm run db:seed` | Seed (safe to repeat) |
 | `npm run tally:sync` | One Tally sync pass — schedule it with cron/systemd |
+| `npm run notify:run` | One notification worker pass (slow-moving scan, digests, delivery) — schedule it every minute |
 | `npm run db:backup` | Dump the database with retention (`ops/backup/backup.sh`) |
 | `npm run db:verify-backup -- <dump>` | Restore a dump into a scratch database and check it |
 
@@ -130,7 +134,12 @@ Sign in with `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`. With
 | `SESSION_TTL_HOURS` | Idle session timeout (sliding; sessions also end after 7 days) |
 | `TALLY_MODE` | `mock` (accepts vouchers), `fail` (simulates an outage), `xml` (real Tally Prime) or `disabled` |
 | `TALLY_URL`, `TALLY_COMPANY`, `TALLY_TIMEOUT_MS` | Tally Prime HTTP/XML server, company name and timeout (for `xml`) |
-| `SLOW_STOCK_DAYS`, `DEAD_STOCK_DAYS` | Days without movement before stock counts as slow / dead |
+| `SLOW_STOCK_DAYS`, `DEAD_STOCK_DAYS` | Default days without movement before stock counts as slow / dead (administrators can change them in the app) |
+| `APP_URL` | Public address of the app, for links in e-mails |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | E-mail notifications over SMTP (e.g. Gmail with an app password); blank = log-only |
+| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp Cloud API credentials; blank = log-only |
+| `WHATSAPP_TEMPLATE_LOW_STOCK`, `WHATSAPP_TEMPLATE_SUMMARY`, `WHATSAPP_TEMPLATE_LANGUAGE` | Approved template names (low-stock alert; summaries) and their language (default `en`) |
+| `NOTIFY_TIMEOUT_MS` | Timeout for one e-mail / WhatsApp delivery (default 15 s) |
 | `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | Initial administrator |
 | `SEED_DEMO_USERS` | `true` to create one demo user per role (ignored in production) |
 
@@ -168,5 +177,5 @@ the test suite, the build, the E2E test and both container image builds.
 ## Deployment
 
 See [deploy/RUNBOOK.md](deploy/RUNBOOK.md): `deploy/compose.prod.yml` runs
-Postgres, migrations, the app, the Tally worker and a Tailscale sidecar that
+Postgres, migrations, the app, the Tally and notification workers and a Tailscale sidecar that
 publishes the app over HTTPS, with no host port.

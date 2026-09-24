@@ -1,0 +1,14 @@
+# One notification worker pass. Triggered by margix-notify.timer.
+# Install (per user):  see docs/operations.md
+[Unit]
+Description=Margix IMS – notification worker pass
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Adjust to the checkout location and the Node binary directory.
+WorkingDirectory=%h/apps/Margix-IMS
+Environment=PATH=%h/.nvm/versions/node/v22.23.3/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env npm run --silent notify:run
+# Exit code 2 means "some deliveries failed" — retried with backoff, not a unit failure.
+SuccessExitStatus=2

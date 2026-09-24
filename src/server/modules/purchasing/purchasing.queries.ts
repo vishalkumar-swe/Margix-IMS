@@ -3,10 +3,13 @@ import type { PageQuery } from "@/lib/validation/common";
 import { prisma } from "@/server/db/client";
 import { userRefSelect } from "@/server/modules/users/users.queries";
 
-export async function listPurchaseOrders(query: PageQuery & { status?: PurchaseOrderStatus; supplierId?: string }) {
+export async function listPurchaseOrders(
+  query: PageQuery & { status?: PurchaseOrderStatus; supplierId?: string; skuId?: string },
+) {
   const where: Prisma.PurchaseOrderWhereInput = {
     status: query.status,
     supplierId: query.supplierId,
+    items: query.skuId ? { some: { skuId: query.skuId } } : undefined,
     OR: query.q
       ? [
           { poNumber: { contains: query.q, mode: "insensitive" } },
@@ -77,9 +80,10 @@ export function getPurchaseOrderDetail(id: string) {
   });
 }
 
-export async function listGrns(query: PageQuery & { purchaseOrderId?: string }) {
+export async function listGrns(query: PageQuery & { purchaseOrderId?: string; skuId?: string }) {
   const where: Prisma.GrnWhereInput = {
     purchaseOrderId: query.purchaseOrderId,
+    items: query.skuId ? { some: { skuId: query.skuId } } : undefined,
     OR: query.q
       ? [
           { grnNumber: { contains: query.q, mode: "insensitive" } },

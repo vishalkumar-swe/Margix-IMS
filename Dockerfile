@@ -27,7 +27,7 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1 NEXT_OUTPUT=standalone
 RUN npm run build
 
-# ---- Tools: migrations, DB grants, seed and the Tally sync worker ----
+# ---- Tools: migrations, DB grants, seed, the Tally sync and notification workers ----
 FROM deps AS tools
 COPY prisma ./prisma
 COPY scripts ./scripts

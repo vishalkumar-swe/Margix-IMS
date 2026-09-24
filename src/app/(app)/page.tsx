@@ -20,6 +20,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatCard } from "@/components/ui/stat-card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { OpenChecklistButton } from "@/features/checklist/open-checklist-button";
 import { LedgerTable } from "@/features/ledger/ledger-table";
 import { formatDate } from "@/lib/dates";
 import { can } from "@/lib/permissions";
@@ -38,11 +39,14 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
         title="Dashboard"
         description="Live position derived from the inventory ledger."
         actions={
-          can(user.role, "report.view") ? (
-            <Link href="/analytics" className={buttonVariants({ variant: "secondary" })}>
-              <ChartLine aria-hidden /> Analytics
-            </Link>
-          ) : undefined
+          <>
+            <OpenChecklistButton variant="labelled" />
+            {can(user.role, "report.view") && (
+              <Link href="/analytics" className={buttonVariants({ variant: "secondary" })}>
+                <ChartLine aria-hidden /> Analytics
+              </Link>
+            )}
+          </>
         }
       />
 

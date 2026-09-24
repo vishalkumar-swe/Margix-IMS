@@ -1,10 +1,11 @@
 import { Prisma } from "@prisma/client";
 import { addDays, istDayStart, startOfMonth, todayIst } from "@/lib/dates";
 import type { MovementReportQuery, StockAgingQuery, StockSummaryQuery } from "@/lib/validation/reports";
-import { getEnv } from "@/server/config/env";
 import { prisma } from "@/server/db/client";
 import type { Decimal } from "@/server/db/decimal";
+import type { Tx } from "@/server/db/transaction";
 import { ledgerEntrySelect } from "@/server/modules/inventory/ledger.queries";
+import { getStockAgingSettings } from "@/server/modules/settings/stock-aging";
 
 /** Upper bound on rows returned by one report run (CSV and screen alike). */
 export const REPORT_ROW_LIMIT = 10_000;
@@ -101,6 +102,7 @@ export interface StockAgingRow {
   skuCode: string;
   skuName: string;
   unit: string;
+  godownId: string;
   godownCode: string;
   godownName: string;
   quantity: Decimal;
@@ -110,17 +112,29 @@ export interface StockAgingRow {
 
 /**
  * Stock on hand per SKU × godown with no movement for at least the configured
- * number of days: SLOW_STOCK_DAYS (slow) or DEAD_STOCK_DAYS (dead).
+ * number of days: slow or dead (Administration → Notifications; the
+ * SLOW_STOCK_DAYS / DEAD_STOCK_DAYS environment values are the defaults).
  */
 export async function getStockAging(query: StockAgingQuery): Promise<{ minDays: number; rows: StockAgingRow[] }> {
-  const env = getEnv();
-  const minDays = query.kind === "dead" ? env.DEAD_STOCK_DAYS : env.SLOW_STOCK_DAYS;
+  const settings = await getStockAgingSettings();
+  const minDays = query.kind === "dead" ? settings.deadStockDays : settings.slowStockDays;
+  return { minDays, rows: await listIdleStock(minDays, { godownId: query.godownId }) };
+}
 
-  const rows = await prisma.$queryRaw<StockAgingRow[]>`
+/**
+ * SKU × godown pairs with stock on hand whose last ledger movement is at least
+ * `minDays` old, oldest first. Also drives the daily slow-moving alert scan.
+ */
+export function listIdleStock(
+  minDays: number,
+  options: { godownId?: string; limit?: number; db?: Tx } = {},
+): Promise<StockAgingRow[]> {
+  const db = options.db ?? prisma;
+  return db.$queryRaw<StockAgingRow[]>`
     WITH stock AS (
       SELECT "sku_id", "godown_id", SUM("quantity") AS "quantity"
       FROM "stock_balance"
-      ${query.godownId ? Prisma.sql`WHERE "godown_id" = ${query.godownId}::uuid` : Prisma.empty}
+      ${options.godownId ? Prisma.sql`WHERE "godown_id" = ${options.godownId}::uuid` : Prisma.empty}
       GROUP BY 1, 2
       HAVING SUM("quantity") > 0
     ), last_movement AS (
@@ -129,7 +143,7 @@ export async function getStockAging(query: StockAgingQuery): Promise<{ minDays: 
       GROUP BY 1, 2
     )
     SELECT s."id" AS "skuId", s."code" AS "skuCode", s."name" AS "skuName", u."code" AS "unit",
-           g."code" AS "godownCode", g."name" AS "godownName",
+           g."id" AS "godownId", g."code" AS "godownCode", g."name" AS "godownName",
            st."quantity", lm."at" AS "lastMovementAt",
            FLOOR(EXTRACT(EPOCH FROM (now() - lm."at")) / 86400)::int AS "daysIdle"
     FROM stock st
@@ -139,6 +153,5 @@ export async function getStockAging(query: StockAgingQuery): Promise<{ minDays: 
     JOIN "godown" g ON g."id" = st."godown_id"
     WHERE lm."at" <= now() - make_interval(days => ${minDays}::int)
     ORDER BY lm."at", s."code", g."code"
-    LIMIT ${REPORT_ROW_LIMIT}`;
-  return { minDays, rows };
+    LIMIT ${options.limit ?? REPORT_ROW_LIMIT}`;
 }

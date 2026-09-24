@@ -20,10 +20,17 @@ export { PO_STATUSES } from "@/lib/enums";
 export const poListQuerySchema = pageQuerySchema.extend({
   status: z.enum(PO_STATUSES).optional(),
   supplierId: idSchema.optional(),
+  /** Orders with a line for this SKU (purchase history). */
+  skuId: idSchema.optional(),
 });
+
+/** New PO page: `?skuId=` pre-fills a reorder line for the product. */
+export const newPoQuerySchema = z.object({ skuId: idSchema.optional() });
 
 export const grnListQuerySchema = pageQuerySchema.extend({
   purchaseOrderId: idSchema.optional(),
+  /** Receipts with a line for this SKU (purchase history). */
+  skuId: idSchema.optional(),
 });
 
 export const poItemSchema = z.object({

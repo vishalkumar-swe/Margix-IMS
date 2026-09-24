@@ -14,7 +14,20 @@ export async function signIn(browser: Browser, email: string): Promise<Page> {
   await page.getByLabel("Password").fill(DEMO_PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).not.toHaveURL(/\/login/);
+  await dismissDailyChecklist(page);
   return page;
+}
+
+/** The daily checklist pops up on a user's first page of the day; close it so it does not cover the app. */
+async function dismissDailyChecklist(page: Page): Promise<void> {
+  const checklist = page.getByRole("dialog", { name: "Today's checklist" });
+  try {
+    await checklist.waitFor({ state: "visible", timeout: 3_000 });
+  } catch {
+    return; // Already seen today.
+  }
+  await checklist.getByRole("button", { name: "Done" }).click();
+  await expect(checklist).toBeHidden();
 }
 
 /** Selects the first option whose text contains `text` (options may load asynchronously). */

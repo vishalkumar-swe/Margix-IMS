@@ -32,10 +32,34 @@ const envSchema = z
     /** Company name exactly as loaded in Tally (required for TALLY_MODE=xml). */
     TALLY_COMPANY: z.string().trim().min(1).optional(),
     TALLY_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
-    /** Stock with no movement for this many days is "slow" (spec §6.7). */
+    /**
+     * Default for "slow" stock: no movement for this many days (spec §6.7).
+     * Administrators can override it (Administration → Notifications).
+     */
     SLOW_STOCK_DAYS: z.coerce.number().int().positive().default(30),
-    /** Stock with no movement for this many days is "dead" (spec §6.7). */
+    /** Default for "dead" stock: no movement for this many days (spec §6.7). */
     DEAD_STOCK_DAYS: z.coerce.number().int().positive().default(90),
+    /** Public address of the app, used for links in e-mails (e.g. https://margix.example.com). */
+    APP_URL: z.url().optional(),
+    /** E-mail notifications over SMTP. Without SMTP_HOST and SMTP_FROM e-mail runs log-only. */
+    SMTP_HOST: z.string().trim().min(1).optional(),
+    SMTP_PORT: z.coerce.number().int().positive().max(65_535).default(587),
+    /** true = implicit TLS (port 465); false = STARTTLS when the server offers it (port 587). */
+    SMTP_SECURE: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+    SMTP_USER: z.string().trim().min(1).optional(),
+    SMTP_PASSWORD: z.string().min(1).optional(),
+    /** Sender, e.g. "Margix IMS <alerts@example.com>". */
+    SMTP_FROM: z.string().trim().min(1).optional(),
+    /** WhatsApp Cloud API (Meta). Without the token and phone number id WhatsApp runs log-only. */
+    WHATSAPP_ACCESS_TOKEN: z.string().trim().min(1).optional(),
+    WHATSAPP_PHONE_NUMBER_ID: z.string().trim().min(1).optional(),
+    /** Approved template for one low-stock alert; body parameters: product, current stock, minimum. */
+    WHATSAPP_TEMPLATE_LOW_STOCK: z.string().trim().min(1).optional(),
+    /** Approved template for summaries (digests, slow-moving, tests); one body parameter: the text. */
+    WHATSAPP_TEMPLATE_SUMMARY: z.string().trim().min(1).optional(),
+    WHATSAPP_TEMPLATE_LANGUAGE: z.string().trim().min(2).default("en"),
+    /** Delivery timeout for e-mail and WhatsApp calls. */
+    NOTIFY_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
   })
   .superRefine((env, ctx) => {
     if (env.TALLY_MODE === "xml" && !env.TALLY_COMPANY) {

@@ -3,9 +3,10 @@ import type { PageQuery } from "@/lib/validation/common";
 import { prisma } from "@/server/db/client";
 import { userRefSelect } from "@/server/modules/users/users.queries";
 
-export async function listDispatches(query: PageQuery & { godownId?: string }) {
+export async function listDispatches(query: PageQuery & { godownId?: string; skuId?: string }) {
   const where: Prisma.OutwardWhereInput = {
     godownId: query.godownId,
+    items: query.skuId ? { some: { skuId: query.skuId } } : undefined,
     OR: query.q
       ? [
           { outwardNumber: { contains: query.q, mode: "insensitive" } },

@@ -45,3 +45,26 @@ export const ADJUSTMENT_REASON_LABELS: Record<AdjustmentReasonCode, string> = {
   COUNTING_ERROR: "Counting error",
   OTHER: "Other",
 };
+
+export const NOTIFICATION_ALERT_TYPES = ["LOW_STOCK", "SLOW_MOVING"] as const;
+
+export type NotificationAlertTypeCode = (typeof NOTIFICATION_ALERT_TYPES)[number];
+
+export const NOTIFICATION_ALERT_TYPE_LABELS: Record<NotificationAlertTypeCode, string> = {
+  LOW_STOCK: "Low stock",
+  SLOW_MOVING: "Slow-moving stock",
+};
+
+export const NOTIFICATION_CHANNELS = ["IN_APP", "EMAIL", "WHATSAPP"] as const;
+
+export type NotificationChannelCode = (typeof NOTIFICATION_CHANNELS)[number];
+
+export const NOTIFICATION_CHANNEL_LABELS: Record<NotificationChannelCode, string> = {
+  IN_APP: "In-app",
+  EMAIL: "E-mail",
+  WHATSAPP: "WhatsApp",
+};
+
+export const NOTIFICATION_FREQUENCIES = ["IMMEDIATE", "DAILY_DIGEST"] as const;
+
+export const NOTIFICATION_STATUSES = ["PENDING", "IN_PROGRESS", "SENT", "FAILED", "SKIPPED"] as const;
