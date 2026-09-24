@@ -41,6 +41,7 @@ export function GlobalScan({ className }: { className?: string }) {
     <div className={cn("relative", className)}>
       <ScanInput
         label="Scan or find a document or product"
+        compact
         placeholder="Scan / enter document no. or barcode"
         onScan={open}
         busy={busy}

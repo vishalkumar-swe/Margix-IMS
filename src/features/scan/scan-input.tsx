@@ -35,6 +35,7 @@ export function ScanInput({
   autoFocus = false,
   className,
   inputClassName,
+  compact = false,
 }: {
   onScan: (code: string) => void;
   label?: string;
@@ -45,6 +46,8 @@ export function ScanInput({
   autoFocus?: boolean;
   className?: string;
   inputClassName?: string;
+  /** Icon-only camera button (tight spaces such as the header). */
+  compact?: boolean;
 }) {
   const [value, setValue] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -77,8 +80,15 @@ export function ScanInput({
           />
         </div>
         {cameraSupported && (
-          <Button variant="secondary" size="sm" className="h-9" onClick={() => setCameraOpen(true)}>
-            <Camera aria-hidden /> Use camera
+          <Button
+            variant="secondary"
+            size={compact ? "icon" : "sm"}
+            className={compact ? "h-9 w-9 shrink-0" : "h-9"}
+            onClick={() => setCameraOpen(true)}
+            aria-label="Use camera"
+            title="Use camera"
+          >
+            <Camera aria-hidden /> {!compact && "Use camera"}
           </Button>
         )}
       </div>

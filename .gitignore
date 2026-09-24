@@ -55,3 +55,6 @@ next-env.d.ts
 # Agent worktrees
 /.claude/worktrees/
 /deploy/.last-build.log
+
+# Copied from node_modules on install (scripts/copy-vendor-assets.mjs)
+/public/vendor/

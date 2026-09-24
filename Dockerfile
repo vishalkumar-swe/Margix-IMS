@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
   && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
+COPY scripts/copy-vendor-assets.mjs ./scripts/copy-vendor-assets.mjs
 RUN npm ci --no-audit --no-fund
 
 # ---- Build ----

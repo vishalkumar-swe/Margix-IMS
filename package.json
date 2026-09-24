@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "postinstall": "prisma generate",
+    "postinstall": "prisma generate && node scripts/copy-vendor-assets.mjs",
     "db:up": "podman start margix-postgres",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy && npm run db:grants",
@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
+    "barcode-detector": "^3.2.2",
     "bwip-js": "^4.11.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
