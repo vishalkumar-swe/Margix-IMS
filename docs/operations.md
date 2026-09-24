@@ -70,8 +70,77 @@ Before switching to `xml`:
    separately), with batch and godown allocations. Each carries
    `REMOTEID="margix-<document number>"` for traceability in Tally.
 
+## Production deployment (containers)
+
+The `Dockerfile` builds two images: `app` (the standalone Next.js server, runs
+as a non-root user) and `tools` (migrations, grants, the seed and the Tally
+sync worker). `deploy/compose.prod.yml` runs them with Postgres 16 and a
+Tailscale sidecar that publishes the app over HTTPS via Funnel, with no host
+port. Install, upgrade and day-to-day commands are in
+[deploy/RUNBOOK.md](../deploy/RUNBOOK.md).
+
+- On first start Postgres creates the `margix_app` login
+  (`ops/postgres/init/10-app-role.sh`, password `APP_DB_PASSWORD`).
+- Every `up` runs the one-shot `migrate` service (`prisma migrate deploy` +
+  grants) before the app and the Tally worker start.
+- In production the seed creates roles, units and the administrator; sample
+  masters and stock only with `SEED_SAMPLE_DATA=true`; demo users never.
+- TLS is terminated by Tailscale; session cookies are marked `Secure` when the
+  request arrived over HTTPS (`X-Forwarded-Proto`).
+
+## Backups and restore
+
+`ops/backup/backup.sh` writes a compressed `pg_dump` (custom format) plus a
+SHA-256 file and deletes dumps older than `BACKUP_KEEP_DAYS` (default 14).
+`ops/backup/verify-restore.sh <dump>` checks the checksum, restores the dump
+into a scratch database on the same server, verifies the ledger invariants
+(no drift, no negative balance, reversal links, append-only triggers,
+migrations complete), prints row counts and drops the scratch database.
+
+Both use the standard `PG*` variables (schema owner). Without a local Postgres
+client, set `PG_CONTAINER` to run the tools inside the database container:
+
+```bash
+PG_CONTAINER=margix-postgres BACKUP_DIR=~/backups/margix npm run db:backup
+PG_CONTAINER=margix-postgres npm run db:verify-backup -- ~/backups/margix/margix-<timestamp>.dump
+```
+
+Nightly backups via systemd (per user):
+
+```bash
+cp ops/systemd/margix-backup.{service,timer} ~/.config/systemd/user/
+# Edit WorkingDirectory / BACKUP_DIR / PG_CONTAINER in the .service file.
+systemctl --user daemon-reload
+systemctl --user enable --now margix-backup.timer
+loginctl enable-linger "$USER"
+```
+
+Copy dumps off the machine (another host or object storage) — a backup on the
+same disk does not survive a disk failure. Run `verify-restore.sh` on a recent
+dump at least monthly.
+
+**Restoring for real** (stop the app first so nothing writes meanwhile):
+
+```bash
+podman exec margix-postgres dropdb -U margix margix
+podman exec margix-postgres createdb -U margix margix
+podman exec -i margix-postgres pg_restore -U margix --no-owner -d margix < margix-<timestamp>.dump
+npm run db:grants     # re-apply the app-login privileges
+```
+
+## Logs
+
+The server writes JSON lines to stdout/stderr (`LOG_LEVEL`: debug, info, warn,
+error). Each API request produces one `api request` line with `requestId`,
+`method`, `path`, `status`, `durationMs` and `userId`; the same `requestId` is
+returned in the `x-request-id` response header and in error responses, so a
+user-reported error can be found in the logs. With containers:
+`podman logs -f margix-app-1`.
+
 ## Health checks
 
+- `GET /api/health` — 200 while the process is up (liveness).
+- `GET /api/ready` — 200 when the database answers, otherwise 503 (readiness).
 - `SELECT * FROM v_stock_balance_drift;` must return no rows: the stock
   projection always equals the sum of the ledger.
 - The dashboard's "Needs attention" panel lists failed syncs, pending

@@ -3,13 +3,14 @@ import { dateOnlyToUtc } from "@/lib/dates";
 import type { InvoiceCreateInput } from "@/lib/validation/invoices";
 import type { Actor } from "@/server/actor";
 import { prisma } from "@/server/db/client";
-import { toDecimal, ZERO, type Decimal } from "@/server/db/decimal";
+import { ZERO, type Decimal } from "@/server/db/decimal";
 import { lockRowForUpdate } from "@/server/db/locks";
 import { withTx, type Tx } from "@/server/db/transaction";
 import { BusinessRuleError, ConflictError, NotFoundError, ValidationError } from "@/server/errors";
 import { recordAudit } from "@/server/modules/audit/audit.service";
 import { nextDocumentNumber, withIdempotency } from "@/server/modules/documents/documents.service";
 import { assertUomPrecision } from "@/server/modules/inventory/movement-rules";
+import { toBaseQuantity } from "@/server/modules/inventory/units";
 import { loadActiveCustomer, loadTransactableSkus } from "@/server/modules/masters/masters.queries";
 
 /**
@@ -29,11 +30,22 @@ export function createInvoice(actor: Actor, input: InvoiceCreateInput): Promise<
           tx,
           input.items.map((i) => i.skuId),
         );
-        for (const item of input.items) {
+        const itemRows = input.items.map((item, index) => {
           const sku = skus.get(item.skuId)!;
           if (sku.status !== "ACTIVE") throw new ValidationError(`SKU ${sku.code} is not active.`, { sku: sku.code });
-          assertUomPrecision(toDecimal(item.quantity), sku);
-        }
+          const { baseQuantity, entry } = toBaseQuantity(sku, item.quantity, item.uomId);
+          assertUomPrecision(baseQuantity, sku);
+          return {
+            lineNo: index + 1,
+            skuId: item.skuId,
+            quantity: baseQuantity,
+            entryUomId: entry?.uomId ?? null,
+            entryQuantity: entry?.quantity ?? null,
+            entryFactor: entry?.factor ?? null,
+            rate: item.rate ?? null,
+            gstRate: item.gstRate ?? null,
+          };
+        });
 
         const invoice = await tx.invoice.create({
           data: {
@@ -43,15 +55,7 @@ export function createInvoice(actor: Actor, input: InvoiceCreateInput): Promise<
             remarks: input.remarks,
             idempotencyKey: input.idempotencyKey,
             createdById: actor.userId,
-            items: {
-              create: input.items.map((item, index) => ({
-                lineNo: index + 1,
-                skuId: item.skuId,
-                quantity: item.quantity,
-                rate: item.rate ?? null,
-                gstRate: item.gstRate ?? null,
-              })),
-            },
+            items: { create: itemRows },
           },
           include: { items: true },
         });

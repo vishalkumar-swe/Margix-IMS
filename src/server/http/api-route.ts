@@ -4,6 +4,7 @@ import { can, type Permission } from "@/lib/permissions";
 import type { Actor } from "@/server/actor";
 import { readSessionToken, validateSessionToken, type SessionUser } from "@/server/auth/session";
 import { AuthenticationError, ForbiddenError, NotFoundError, ValidationError } from "@/server/errors";
+import { logger } from "@/server/observability/logger";
 import { jsonError, jsonSuccess, toAppError } from "./api-response";
 
 type Schema = z.ZodType;
@@ -18,6 +19,8 @@ export interface RequestMeta {
   requestId: string;
   ipAddress: string | null;
   userAgent: string | null;
+  /** Set once the session is resolved; used for the access log. */
+  userId?: string;
 }
 
 interface BaseContext<B extends Schema | undefined, Q extends Schema | undefined> {
@@ -60,6 +63,7 @@ export function apiRoute<B extends Schema | undefined = undefined, Q extends Sch
       const token = readSessionToken(request.headers.get("cookie"));
       const user = token ? await validateSessionToken(token) : null;
       if (!user) throw new AuthenticationError();
+      base.meta.userId = user.id;
       if (options.permission && !can(user.role, options.permission)) throw new ForbiddenError();
 
       const actor: Actor = {
@@ -89,7 +93,28 @@ async function execute<B extends Schema | undefined, Q extends Schema | undefine
 ): Promise<Response> {
   const meta = getRequestMeta(request);
   const headers = { "x-request-id": meta.requestId };
+  const startedAt = performance.now();
+  const response = await handleRequest(request, context, options, run, meta, headers);
 
+  logger.info("api request", {
+    requestId: meta.requestId,
+    method: request.method,
+    path: new URL(request.url).pathname,
+    status: response.status,
+    durationMs: Math.round(performance.now() - startedAt),
+    userId: meta.userId ?? null,
+  });
+  return response;
+}
+
+async function handleRequest<B extends Schema | undefined, Q extends Schema | undefined>(
+  request: Request,
+  context: NextRouteContext,
+  options: RouteOptions<B, Q>,
+  run: Handler<BaseContext<B, Q>>,
+  meta: RequestMeta,
+  headers: Record<string, string>,
+): Promise<Response> {
   try {
     if (request.method !== "GET" && request.method !== "HEAD") assertSameOrigin(request);
 
@@ -112,16 +137,25 @@ async function execute<B extends Schema | undefined, Q extends Schema | undefine
   } catch (error) {
     const appError = toAppError(error);
     if (appError.status >= 500) {
-      console.error(`[api] ${request.method} ${new URL(request.url).pathname} (${meta.requestId})`, error);
+      logger.error("api request failed", {
+        requestId: meta.requestId,
+        method: request.method,
+        path: new URL(request.url).pathname,
+        err: error,
+      });
     }
     return jsonError(appError, headers);
   }
 }
 
+/** A request id from a trusted reverse proxy is kept so logs correlate end to end. */
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{8,64}$/;
+
 export function getRequestMeta(request: Request): RequestMeta {
   const forwardedFor = request.headers.get("x-forwarded-for");
+  const incomingId = request.headers.get("x-request-id");
   return {
-    requestId: randomUUID(),
+    requestId: incomingId && REQUEST_ID_PATTERN.test(incomingId) ? incomingId : randomUUID(),
     ipAddress: forwardedFor?.split(",")[0]?.trim() || request.headers.get("x-real-ip") || null,
     userAgent: request.headers.get("user-agent"),
   };

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { idSchema, pageQuerySchema } from "./common";
+import { idSchema, pageQuerySchema, quantitySchema } from "./common";
 
 export const stockListQuerySchema = pageQuerySchema.extend({
   godownId: idSchema.optional(),
@@ -10,6 +10,12 @@ export const stockListQuerySchema = pageQuerySchema.extend({
 export const availableBatchesQuerySchema = z.object({
   skuId: idSchema,
   godownId: idSchema,
+});
+
+export const fefoQuerySchema = z.object({
+  skuId: idSchema,
+  godownId: idSchema,
+  quantity: quantitySchema,
 });
 
 export type StockListQuery = z.infer<typeof stockListQuerySchema>;

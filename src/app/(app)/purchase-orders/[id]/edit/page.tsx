@@ -36,7 +36,9 @@ export default async function EditPurchaseOrderPage({ params }: PageProps<"/purc
           remarks: po.remarks ?? "",
           items: po.items.map((item) => ({
             skuId: item.skuId,
-            quantity: item.orderedQty.toString(),
+            // Re-open the line in the unit it was entered in (rate is per that unit).
+            quantity: (item.entryQuantity ?? item.orderedQty).toString(),
+            uomId: item.entryUomId ?? "",
             rate: item.rate?.toString() ?? "",
             gstRate: item.gstRate?.toString() ?? "",
           })),

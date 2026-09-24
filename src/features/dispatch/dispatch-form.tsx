@@ -12,6 +12,7 @@ import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
 import { formatQuantity } from "@/lib/format";
 import type { NamedOption, SkuOption } from "@/lib/options";
+import { pushFresh } from "@/lib/navigation";
 
 /** An invoice that can still be dispatched against, with remaining quantity per SKU. */
 export interface DispatchableInvoice {
@@ -84,8 +85,7 @@ export function DispatchForm({
       items: lines.map(({ skuId, batchId, quantity }) => ({ skuId, batchId, quantity })),
     });
     if (outward) {
-      router.push(`/dispatches/${outward.id}`);
-      router.refresh();
+      pushFresh(router, `/dispatches/${outward.id}`);
     }
   }
 

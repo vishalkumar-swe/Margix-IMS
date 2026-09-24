@@ -1,0 +1,173 @@
+# Margix IMS production stack for the home server.
+#
+# Runs under rootless Podman alongside unrelated applications, so it follows
+# the same rules as the other stacks on this host:
+#
+#  1. Nothing is published to the host. The Tailscale sidecar joins the tailnet
+#     as its own device and proxies inward; Funnel makes that hostname public.
+#  2. Its own project name, network and volumes. It cannot reach the other
+#     stacks' containers and they cannot reach it.
+#  3. Resource caps, so it can never starve the other applications.
+#
+#   cd deploy
+#   cp .env.production.example .env.production && chmod 600 .env.production
+#   podman compose -f compose.prod.yml --env-file .env.production up -d --build
+#   podman compose -f compose.prod.yml --env-file .env.production run --rm seed   # first install only
+#
+# See RUNBOOK.md.
+
+name: margix
+
+x-app-env: &app-env
+  NODE_ENV: production
+  DATABASE_URL: postgresql://margix_app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD}@postgres:5432/margix?schema=public
+  DIRECT_DATABASE_URL: postgresql://margix:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/margix?schema=public
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
+  LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-5}
+  LOGIN_LOCKOUT_MINUTES: ${LOGIN_LOCKOUT_MINUTES:-15}
+  COMPANY_NAME: ${COMPANY_NAME:-Margix IMS}
+  COMPANY_ADDRESS: ${COMPANY_ADDRESS:-}
+  COMPANY_GSTIN: ${COMPANY_GSTIN:-}
+  TALLY_MODE: ${TALLY_MODE:-mock}
+  TALLY_URL: ${TALLY_URL:-http://localhost:9000}
+  TALLY_COMPANY: ${TALLY_COMPANY:-}
+  TALLY_TIMEOUT_MS: ${TALLY_TIMEOUT_MS:-15000}
+  SLOW_STOCK_DAYS: ${SLOW_STOCK_DAYS:-30}
+  DEAD_STOCK_DAYS: ${DEAD_STOCK_DAYS:-90}
+
+# Shared-host guardrails. No `cpus` on purpose: rootless podman on this host
+# only delegates the memory and pids controllers (crun: controller `cpu`
+# unavailable).
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  postgres:
+    image: docker.io/library/postgres:16-alpine
+    restart: unless-stopped
+    <<: *hardening
+    mem_limit: ${DB_MEM_LIMIT:-1g}
+    pids_limit: 256
+    environment:
+      POSTGRES_USER: margix
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: margix
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD}
+    volumes:
+      # Not "pgdata": under project "margix" that would be margix_pgdata, the
+      # development database's volume on this host.
+      - db_data:/var/lib/postgresql/data
+      - ../ops/postgres/init:/docker-entrypoint-initdb.d:ro,z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U margix -d margix"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    networks: [margix_net]
+
+  # Applies pending migrations and the app-login grants, then exits.
+  migrate:
+    build: { context: .., dockerfile: Dockerfile, target: tools }
+    image: localhost/margix-ims-tools:latest
+    <<: *hardening
+    cap_drop: [ALL]
+    mem_limit: 1g
+    environment: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+    networks: [margix_net]
+
+  app:
+    build: { context: .., dockerfile: Dockerfile, target: app }
+    image: localhost/margix-ims:latest
+    restart: unless-stopped
+    <<: *hardening
+    cap_drop: [ALL]
+    mem_limit: ${APP_MEM_LIMIT:-1g}
+    mem_reservation: ${APP_MEM_RESERVATION:-256m}
+    pids_limit: ${APP_PIDS_LIMIT:-256}
+    environment: *app-env
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/ready').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [margix_net]
+
+  # One Tally sync pass every TALLY_SYNC_INTERVAL seconds (exit code 2 = some
+  # vouchers failed; they are retried with backoff, so keep going).
+  tally-sync:
+    image: localhost/margix-ims-tools:latest
+    restart: unless-stopped
+    <<: *hardening
+    cap_drop: [ALL]
+    mem_limit: 512m
+    pids_limit: 128
+    environment: *app-env
+    command: ["sh", "-c", "while true; do npx tsx scripts/tally-sync.ts || true; sleep ${TALLY_SYNC_INTERVAL:-120}; done"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [margix_net]
+
+  # First install only: `run --rm seed` creates roles, units and the admin
+  # (plus sample masters and stock when SEED_SAMPLE_DATA=true). Never demo users.
+  seed:
+    image: localhost/margix-ims-tools:latest
+    <<: *hardening
+    cap_drop: [ALL]
+    environment:
+      <<: *app-env
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:?set SEED_ADMIN_EMAIL}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?set SEED_ADMIN_PASSWORD}
+      SEED_SAMPLE_DATA: ${SEED_SAMPLE_DATA:-false}
+      SEED_DEMO_USERS: "false"
+    command: ["npx", "prisma", "db", "seed"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    profiles: ["seed"]
+    restart: "no"
+    networks: [margix_net]
+
+  # The app's own device on the tailnet, answering at the root of its own
+  # hostname: https://${TS_HOSTNAME}.<tailnet>.ts.net
+  #
+  # PUBLIC. ts-serve.json sets AllowFunnel, so this hostname answers the whole
+  # internet, not just the tailnet. Every page and API call requires a login.
+  #
+  # Userspace networking (the image default) keeps it working under rootless
+  # podman with no TUN device and no added capabilities.
+  ts:
+    image: docker.io/tailscale/tailscale:stable
+    restart: unless-stopped
+    hostname: ${TS_HOSTNAME:-margix}
+    environment:
+      TS_HOSTNAME: ${TS_HOSTNAME:-margix}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      # The host resolves DNS; the tailnet resolver would only add a way for
+      # this container to lose sight of `app`.
+      TS_ACCEPT_DNS: "false"
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+    volumes:
+      # The node's identity. Without it every restart would join the tailnet as
+      # a new device and the hostname would gain a -1 suffix.
+      - ts_state:/var/lib/tailscale
+      - ./ts-serve.json:/config/serve.json:ro,z
+    # Started, not healthy: the tailnet connection is made while the app warms up.
+    depends_on:
+      app: { condition: service_started }
+    networks: [margix_net]
+
+volumes:
+  db_data:
+  ts_state:
+
+networks:
+  margix_net:
+    driver: bridge

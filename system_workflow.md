@@ -19,7 +19,9 @@ and the balance of its SKU × godown × batch after the entry.
 
 1. **Purchase order.** A Store Manager creates a PO for a supplier (`DRAFT`,
    editable) and submits it (`OPEN`), or creates it open directly. Draft or open
-   orders without receipts can be cancelled with a reason.
+   orders without receipts can be cancelled with a reason. Lines may be
+   entered in an alternate unit of the SKU (e.g. 5 BOX at ₹480 per BOX); the
+   order stores the base quantity (120 PCS) and shows what was entered.
 2. **Goods receipt (GRN).** When goods arrive, an operator opens the PO,
    chooses the receiving godown and, per line, records batch, dates, the
    **received** quantity and the **accepted** quantity. Any difference needs a
@@ -28,7 +30,8 @@ and the balance of its SKU × godown × batch after the entry.
    recorded on the GRN but never enters stock.
 4. **PO progress.** Accepted quantity accumulates per PO line; the PO moves to
    `PARTIALLY_RECEIVED` or `FULLY_RECEIVED`. Accepting more than is pending is
-   refused (`OVER_RECEIPT`). Several GRNs per PO are normal.
+   refused (`OVER_RECEIPT`). Several GRNs per PO are normal. Each GRN has a
+   printable goods receipt note for signatures.
 5. **Short-close.** When a supplier will not deliver the balance, a Store
    Manager short-closes a partially received PO (`SHORT_CLOSED`, with a reason);
    no further receipts are accepted.
@@ -36,10 +39,14 @@ and the balance of its SKU × godown × batch after the entry.
 ## 2. Invoices and dispatch
 
 1. **Invoice.** Accounts (or a Store Manager) records what was sold: customer,
-   date, SKU lines with quantity and rate. Status `OPEN`.
+   date, SKU lines with quantity and rate (in the base unit or an alternate
+   unit). Status `OPEN`.
 2. **Dispatch.** The operator selects the godown and, optionally, the invoice
    (the customer then comes from the invoice), and for each line a SKU and a
-   **batch** (shown with its available quantity, earliest expiry first).
+   **batch** (shown with its available quantity, earliest expiry first;
+   expired batches are marked). **Pick batches (FEFO)** fills the lines from the
+   earliest-expiring stock automatically and skips expired batches. The posted
+   dispatch has a printable delivery challan.
 3. **Ledger.** One `OUTWARD` entry per line. If any line exceeds the batch's
    available stock, the whole dispatch is refused (`INSUFFICIENT_STOCK`) —
    negative stock is impossible, even with simultaneous users.
@@ -125,7 +132,19 @@ Damage −25 → mistaken GRN +1000 → Reversal −1000 = **575**.
 
 Every report can be downloaded as CSV.
 
-## 10. Roles
+## 10. Go-live data
+
+- **Masters by CSV.** An Admin downloads the SKU template, fills it in and
+  imports it on the SKU master screen. Every line is checked first (unknown
+  unit or category, duplicate code, bad GST rate …); if any line is wrong,
+  the problems are listed by line number and nothing is imported.
+- **Units.** For each SKU, **Units** adds purchase/sales units with their
+  factor (1 BOX = 24 PCS).
+- **Opening stock by CSV.** Same approach on the Opening stock screen: one
+  file with godown, SKU, batch and quantity; one opening document is posted per
+  godown, all or nothing.
+
+## 11. Roles
 
 | Operation | Admin | Store Manager | Warehouse Operator | Accounts | Management |
 |-----------|:-----:|:-------------:|:------------------:|:--------:|:----------:|

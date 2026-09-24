@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Select } from "@/components/ui/form-controls";
 import { apiRequest } from "@/lib/api-client";
-import { formatDate } from "@/lib/dates";
+import { formatDate, todayIst } from "@/lib/dates";
 import { formatQuantity } from "@/lib/format";
 
 interface AvailableBatch {
@@ -54,6 +54,7 @@ export function AvailableBatchSelect({
   }, [key]);
 
   const current = result && result.key === key ? result : null;
+  const today = todayIst();
   const loading = key !== null && current === null;
   const batches = current?.batches ?? [];
 
@@ -83,6 +84,7 @@ export function AvailableBatchSelect({
         <option key={batch.id} value={batch.id}>
           {batch.batchNumber} — {formatQuantity(quantity)} {unit ?? ""}
           {batch.expiryDate ? ` · exp ${formatDate(batch.expiryDate)}` : ""}
+          {batch.expiryDate && batch.expiryDate.slice(0, 10) < today ? " · EXPIRED" : ""}
         </option>
       ))}
     </Select>

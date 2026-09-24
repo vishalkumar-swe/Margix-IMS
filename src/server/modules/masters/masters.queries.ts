@@ -10,7 +10,9 @@ export const skuWithUomSelect = {
   name: true,
   isBatchTracked: true,
   status: true,
+  baseUomId: true,
   baseUom: { select: { code: true, decimalPlaces: true } },
+  units: { select: { uomId: true, factor: true, uom: { select: { code: true } } }, orderBy: { factor: "asc" } },
 } satisfies Prisma.SkuSelect;
 
 export type TransactableSku = Prisma.SkuGetPayload<{ select: typeof skuWithUomSelect }>;
@@ -71,7 +73,11 @@ export async function listSkus(query: PageQuery & { status?: Sku["status"] }) {
       orderBy: { code: "asc" },
       skip: (query.page - 1) * query.pageSize,
       take: query.pageSize,
-      include: { baseUom: true, category: true },
+      include: {
+        baseUom: true,
+        category: true,
+        units: { include: { uom: { select: { code: true, name: true } } }, orderBy: { factor: "asc" } },
+      },
     }),
     prisma.sku.count({ where }),
   ]);

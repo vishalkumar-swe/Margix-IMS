@@ -7,9 +7,13 @@ export interface SkuOption {
   id: string;
   code: string;
   name: string;
+  /** Base unit code. */
   unit: string;
+  baseUomId: string;
   decimalPlaces: number;
   isBatchTracked: boolean;
+  /** Alternate units: 1 unit = factor base units. */
+  units: { uomId: string; code: string; factor: string }[];
 }
 
 export interface NamedOption {
@@ -23,15 +27,19 @@ export function toSkuOption(sku: {
   code: string;
   name: string;
   isBatchTracked: boolean;
+  baseUomId: string;
   baseUom: { code: string; decimalPlaces: number };
+  units?: { uomId: string; factor: { toString(): string }; uom: { code: string } }[];
 }): SkuOption {
   return {
     id: sku.id,
     code: sku.code,
     name: sku.name,
     unit: sku.baseUom.code,
+    baseUomId: sku.baseUomId,
     decimalPlaces: sku.baseUom.decimalPlaces,
     isBatchTracked: sku.isBatchTracked,
+    units: (sku.units ?? []).map((u) => ({ uomId: u.uomId, code: u.uom.code, factor: u.factor.toString() })),
   };
 }
 

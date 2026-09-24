@@ -9,7 +9,7 @@ import { NextResponse, type NextRequest } from "next/server";
  * runs separately from the app and must not import server modules.
  */
 const SESSION_COOKIE_NAME = "margix_session";
-const PUBLIC_PATHS = new Set(["/login", "/api/v1/auth/login", "/api/v1/auth/logout"]);
+const PUBLIC_PATHS = new Set(["/login", "/api/v1/auth/login", "/api/v1/auth/logout", "/api/health", "/api/ready"]);
 
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;

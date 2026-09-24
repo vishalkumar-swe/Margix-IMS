@@ -1,4 +1,4 @@
-import { CornerDownLeft } from "lucide-react";
+import { CornerDownLeft, Printer } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -54,12 +54,16 @@ export default async function DispatchPage({ params }: PageProps<"/dispatches/[i
           </>
         }
         actions={
-          can(user.role, "return.create") &&
-          dispatch.status !== "REVERSED" && (
-            <Link href={`/sales-returns/new?outwardId=${dispatch.id}`} className={buttonVariants({ variant: "secondary" })}>
-              <CornerDownLeft aria-hidden /> Record customer return
+          <>
+            <Link href={`/dispatches/${dispatch.id}/print`} className={buttonVariants({ variant: "secondary" })}>
+              <Printer aria-hidden /> Print
             </Link>
-          )
+            {can(user.role, "return.create") && dispatch.status !== "REVERSED" && (
+              <Link href={`/sales-returns/new?outwardId=${dispatch.id}`} className={buttonVariants({ variant: "secondary" })}>
+                <CornerDownLeft aria-hidden /> Record customer return
+              </Link>
+            )}
+          </>
         }
       />
       {dispatch.remarks && <p className="-mt-3 mb-6 text-sm text-slate-600">{dispatch.remarks}</p>}

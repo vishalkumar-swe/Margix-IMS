@@ -5,6 +5,7 @@ import { prisma } from "@/server/db/client";
 import { withTx } from "@/server/db/transaction";
 import { ConflictError, NotFoundError } from "@/server/errors";
 import { recordAudit } from "@/server/modules/audit/audit.service";
+import { logger } from "@/server/observability/logger";
 import { createTallyClient, type TallyClient, type TallyPushResult } from "./tally-client";
 import { buildTallyVoucher, TallyMappingError } from "./tally-voucher";
 
@@ -45,9 +46,14 @@ export async function runTallySync(options: { client?: TallyClient | null; limit
     const startedAt = Date.now();
     const result = await pushJob(client, job);
     await recordAttempt(job, result, Date.now() - startedAt);
-    if (result.ok) summary.synced++;
-    else summary.failed++;
+    if (result.ok) {
+      summary.synced++;
+    } else {
+      summary.failed++;
+      logger.warn("tally sync failed", { jobId: job.id, entityNo: job.entity_no, attempt: job.attempts, error: result.error });
+    }
   }
+  if (summary.processed > 0) logger.info("tally sync run", { ...summary });
   return summary;
 }
 
@@ -96,7 +102,7 @@ async function pushJob(client: TallyClient, job: ClaimedJob): Promise<TallyPushR
     return await client.push(voucher);
   } catch (error) {
     if (error instanceof TallyMappingError) return { ok: false, error: error.message };
-    console.error(`[tally] job ${job.id} failed unexpectedly`, error);
+    logger.error("tally voucher preparation failed", { jobId: job.id, entityNo: job.entity_no, err: error });
     return { ok: false, error: "Unexpected error while preparing the Tally voucher." };
   }
 }

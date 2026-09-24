@@ -6,12 +6,13 @@ import type {
   PartyCreateInput,
   PartyUpdateInput,
   SkuCreateInput,
+  SkuUnitInput,
   SkuUpdateInput,
   UomCreateInput,
 } from "@/lib/validation/masters";
 import type { Actor } from "@/server/actor";
 import { withTx } from "@/server/db/transaction";
-import { ConflictError, NotFoundError } from "@/server/errors";
+import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
 import { recordAudit } from "@/server/modules/audit/audit.service";
 import { hasStockOnHand } from "@/server/modules/inventory/stock.queries";
 
@@ -57,6 +58,53 @@ export function updateSku(actor: Actor, id: string, input: SkuUpdateInput) {
       newData: after,
     });
     return after;
+  });
+}
+
+/**
+ * Adds or re-factors an alternate unit of a SKU. Documents keep their own
+ * snapshot of the factor, so changing it never alters past quantities.
+ */
+export function setSkuUnit(actor: Actor, skuId: string, input: SkuUnitInput) {
+  return withTx(async (tx) => {
+    const sku = await tx.sku.findUnique({ where: { id: skuId }, select: { id: true, code: true, baseUomId: true } });
+    if (!sku) throw new NotFoundError("SKU", skuId);
+    if (input.uomId === sku.baseUomId) {
+      throw new ValidationError(`That is already the base unit of ${sku.code}.`, { uomId: input.uomId });
+    }
+    if (!(await tx.uom.findUnique({ where: { id: input.uomId }, select: { id: true } }))) {
+      throw new NotFoundError("Unit", input.uomId);
+    }
+
+    const before = await tx.skuUnit.findUnique({ where: { skuId_uomId: { skuId, uomId: input.uomId } } });
+    const after = await tx.skuUnit.upsert({
+      where: { skuId_uomId: { skuId, uomId: input.uomId } },
+      create: { skuId, uomId: input.uomId, factor: input.factor },
+      update: { factor: input.factor },
+    });
+    await recordAudit(tx, actor, {
+      action: "MASTER_UPDATED",
+      entityType: "Sku",
+      entityId: skuId,
+      oldData: before ? { unit: before } : undefined,
+      newData: { unit: after },
+    });
+    return after;
+  });
+}
+
+/** Removes an alternate unit; documents entered in it keep their snapshot. */
+export function removeSkuUnit(actor: Actor, skuId: string, uomId: string) {
+  return withTx(async (tx) => {
+    const before = await tx.skuUnit.findUnique({ where: { skuId_uomId: { skuId, uomId } } });
+    if (!before) throw new NotFoundError("SKU unit", uomId);
+    await tx.skuUnit.delete({ where: { id: before.id } });
+    await recordAudit(tx, actor, {
+      action: "MASTER_UPDATED",
+      entityType: "Sku",
+      entityId: skuId,
+      oldData: { unit: before },
+    });
   });
 }
 

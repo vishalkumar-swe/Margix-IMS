@@ -1,11 +1,12 @@
 "use client";
 
-import { Plus, Trash2 } from "lucide-react";
-import type { ReactNode } from "react";
+import { Plus, Sparkles, Trash2 } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/form-controls";
 import { Table, TBody, TD, TH, THead } from "@/components/ui/table";
+import { apiRequest } from "@/lib/api-client";
 import { formatQuantity } from "@/lib/format";
 import type { SkuOption } from "@/lib/options";
 import { AvailableBatchSelect } from "./available-batch-select";
@@ -18,6 +19,11 @@ export interface BatchLine {
   quantity: string;
 }
 
+interface FefoSuggestion {
+  allocations: { batchId: string; batchNumber: string; quantity: string }[];
+  shortfall: string;
+}
+
 export const emptyBatchLine = (): BatchLine => ({
   key: crypto.randomUUID(),
   skuId: "",
@@ -28,8 +34,9 @@ export const emptyBatchLine = (): BatchLine => ({
 
 /**
  * Lines that take stock out of one godown: SKU → batch with stock there
- * (FEFO order, available quantity shown) → quantity. Shared by dispatches and
- * transfers.
+ * (FEFO order, available quantity shown) → quantity. Entering a SKU and a
+ * quantity first offers an automatic FEFO pick across batches. Shared by
+ * dispatches and transfers.
  */
 export function BatchLinesEditor({
   title = "Items",
@@ -51,8 +58,42 @@ export function BatchLinesEditor({
   lineHint?: (line: BatchLine) => ReactNode;
 }) {
   const skuById = new Map(skus.map((s) => [s.id, s]));
+  const [fefoMessages, setFefoMessages] = useState<Record<string, string>>({});
+  const [fefoPending, setFefoPending] = useState<string | null>(null);
   const update = (key: string, patch: Partial<BatchLine>) =>
     onChange(lines.map((line) => (line.key === key ? { ...line, ...patch } : line)));
+
+  /** Replaces a line (SKU + total quantity) with one line per batch, earliest expiry first. */
+  async function pickFefo(line: BatchLine) {
+    setFefoPending(line.key);
+    setFefoMessages((m) => ({ ...m, [line.key]: "" }));
+    try {
+      const params = new URLSearchParams({ skuId: line.skuId, godownId, quantity: line.quantity.trim() });
+      const suggestion = await apiRequest<FefoSuggestion>(`/stock/fefo?${params.toString()}`);
+      if (suggestion.allocations.length === 0) {
+        setFefoMessages((m) => ({ ...m, [line.key]: "No unexpired stock of this SKU in the godown." }));
+        return;
+      }
+      const picked = suggestion.allocations.map((a, index) => ({
+        key: index === 0 ? line.key : crypto.randomUUID(),
+        skuId: line.skuId,
+        batchId: a.batchId,
+        available: null,
+        quantity: a.quantity,
+      }));
+      onChange(lines.flatMap((l) => (l.key === line.key ? picked : [l])));
+      if (suggestion.shortfall !== "0") {
+        setFefoMessages((m) => ({
+          ...m,
+          [line.key]: `Only part could be picked: ${formatQuantity(suggestion.shortfall)} short.`,
+        }));
+      }
+    } catch (error) {
+      setFefoMessages((m) => ({ ...m, [line.key]: error instanceof Error ? error.message : "Could not suggest batches." }));
+    } finally {
+      setFefoPending(null);
+    }
+  }
 
   return (
     <Card>
@@ -107,6 +148,18 @@ export function BatchLinesEditor({
                     onChange={(batchId, available) => update(line.key, { batchId, available })}
                   />
                   {err("batchId") && <p className="mt-1 text-xs text-red-600">{err("batchId")}</p>}
+                  {!line.batchId && line.skuId && godownId && line.quantity.trim() && (
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="mt-1 h-auto"
+                      loading={fefoPending === line.key}
+                      onClick={() => pickFefo(line)}
+                    >
+                      {fefoPending !== line.key && <Sparkles aria-hidden />} Pick batches (FEFO)
+                    </Button>
+                  )}
+                  {fefoMessages[line.key] && <p className="mt-1 text-xs text-amber-700">{fefoMessages[line.key]}</p>}
                 </TD>
                 <TD>
                   <div className="flex items-center gap-2">

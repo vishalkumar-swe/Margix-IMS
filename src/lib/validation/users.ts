@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { ROLE_CODES } from "@/lib/enums";
 import { optionalText, requiredText } from "./common";
 
-export const ROLE_CODES = ["ADMIN", "STORE_MANAGER", "WAREHOUSE_OPERATOR", "ACCOUNTS", "MANAGEMENT"] as const;
+export { ROLE_CODES } from "@/lib/enums";
 
 /** Password policy (single source of truth). */
 export const passwordSchema = z

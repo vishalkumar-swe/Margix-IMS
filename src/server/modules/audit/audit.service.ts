@@ -12,6 +12,7 @@ export type AuditAction =
   | "USER_PASSWORD_RESET"
   | "MASTER_CREATED"
   | "MASTER_UPDATED"
+  | "MASTER_IMPORTED"
   | "PO_CREATED"
   | "PO_UPDATED"
   | "PO_SUBMITTED"

@@ -44,7 +44,10 @@ export function getInvoiceDetail(id: string) {
       cancelledBy: { select: userRefSelect },
       items: {
         orderBy: { lineNo: "asc" },
-        include: { sku: { select: { id: true, code: true, name: true, isBatchTracked: true, baseUom: true } } },
+        include: {
+          sku: { select: { id: true, code: true, name: true, isBatchTracked: true, baseUom: true } },
+          entryUom: { select: { code: true } },
+        },
       },
       outwards: {
         orderBy: { createdAt: "desc" },

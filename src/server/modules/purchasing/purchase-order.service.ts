@@ -3,13 +3,13 @@ import { dateOnlyToUtc } from "@/lib/dates";
 import type { PoCreateInput, PoUpdateInput } from "@/lib/validation/purchasing";
 import type { Actor } from "@/server/actor";
 import { prisma } from "@/server/db/client";
-import { toDecimal } from "@/server/db/decimal";
 import { lockRowForUpdate } from "@/server/db/locks";
 import { withTx, type Tx } from "@/server/db/transaction";
 import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
 import { recordAudit } from "@/server/modules/audit/audit.service";
 import { nextDocumentNumber, withIdempotency } from "@/server/modules/documents/documents.service";
 import { assertUomPrecision } from "@/server/modules/inventory/movement-rules";
+import { toBaseQuantity } from "@/server/modules/inventory/units";
 import { loadActiveSupplier, loadTransactableSkus } from "@/server/modules/masters/masters.queries";
 
 export type LockedPurchaseOrder = PurchaseOrder & { items: PurchaseOrderItem[] };
@@ -26,7 +26,7 @@ export function createPurchaseOrder(actor: Actor, input: PoCreateInput): Promise
     (key) => prisma.purchaseOrder.findUnique({ where: { idempotencyKey: key } }),
     () =>
       withTx(async (tx) => {
-        await validatePoContent(tx, input);
+        const itemRows = await buildPoItemRows(tx, input);
         const poNumber = await nextDocumentNumber(tx, "PO");
         const now = new Date();
 
@@ -41,7 +41,7 @@ export function createPurchaseOrder(actor: Actor, input: PoCreateInput): Promise
             idempotencyKey: input.idempotencyKey,
             createdById: actor.userId,
             submittedAt: input.submit ? now : null,
-            items: { create: toItemRows(input.items) },
+            items: { create: itemRows },
           },
           include: { items: true },
         });
@@ -58,7 +58,7 @@ export function updateDraftPurchaseOrder(actor: Actor, id: string, input: PoUpda
     if (before.status !== "DRAFT") {
       throw new ConflictError("INVALID_STATE", `Only draft purchase orders can be edited (${before.poNumber} is ${before.status}).`);
     }
-    await validatePoContent(tx, input);
+    const itemRows = await buildPoItemRows(tx, input);
 
     await tx.purchaseOrderItem.deleteMany({ where: { purchaseOrderId: id } });
     const after = await tx.purchaseOrder.update({
@@ -68,7 +68,7 @@ export function updateDraftPurchaseOrder(actor: Actor, id: string, input: PoUpda
         orderDate: dateOnlyToUtc(input.orderDate),
         expectedDate: input.expectedDate ? dateOnlyToUtc(input.expectedDate) : null,
         remarks: input.remarks ?? null,
-        items: { create: toItemRows(input.items) },
+        items: { create: itemRows },
       },
       include: { items: true },
     });
@@ -176,27 +176,33 @@ export async function recomputePurchaseOrderStatus(tx: Tx, id: string): Promise<
   return status;
 }
 
-async function validatePoContent(tx: Tx, input: PoUpdateInput): Promise<void> {
+/**
+ * Validates supplier and lines and converts each entered quantity to the
+ * SKU's base unit (keeping the as-entered snapshot for alternate units).
+ * Returns the rows to store.
+ */
+async function buildPoItemRows(tx: Tx, input: PoUpdateInput) {
   await loadActiveSupplier(tx, input.supplierId);
   const skus = await loadTransactableSkus(
     tx,
     input.items.map((i) => i.skuId),
   );
-  for (const item of input.items) {
+  return input.items.map((item, index) => {
     const sku = skus.get(item.skuId)!;
     if (sku.status !== "ACTIVE") throw new ValidationError(`SKU ${sku.code} is not active.`, { sku: sku.code });
-    assertUomPrecision(toDecimal(item.orderedQty), sku);
-  }
-}
-
-function toItemRows(items: PoUpdateInput["items"]) {
-  return items.map((item, index) => ({
-    lineNo: index + 1,
-    skuId: item.skuId,
-    orderedQty: item.orderedQty,
-    rate: item.rate ?? null,
-    gstRate: item.gstRate ?? null,
-  }));
+    const { baseQuantity, entry } = toBaseQuantity(sku, item.orderedQty, item.uomId);
+    assertUomPrecision(baseQuantity, sku);
+    return {
+      lineNo: index + 1,
+      skuId: item.skuId,
+      orderedQty: baseQuantity,
+      entryUomId: entry?.uomId ?? null,
+      entryQuantity: entry?.quantity ?? null,
+      entryFactor: entry?.factor ?? null,
+      rate: item.rate ?? null,
+      gstRate: item.gstRate ?? null,
+    };
+  });
 }
 
 async function stateError(tx: Tx, id: string, message: string) {

@@ -23,11 +23,16 @@ export function postOpeningBalance(actor: Actor, input: OpeningCreateInput): Pro
   return withIdempotency(
     input.idempotencyKey,
     (key) => prisma.openingBalance.findUnique({ where: { idempotencyKey: key } }),
-    () => withTx((tx) => postOpeningInTx(tx, actor, input)),
+    () => withTx((tx) => postOpeningBalanceInTx(tx, actor, input)),
   );
 }
 
-async function postOpeningInTx(tx: Tx, actor: Actor, input: OpeningCreateInput): Promise<OpeningBalance> {
+/** Posts an opening balance inside the caller's transaction (used by bulk import). */
+export async function postOpeningBalanceInTx(
+  tx: Tx,
+  actor: Actor,
+  input: OpeningCreateInput,
+): Promise<OpeningBalance> {
   await loadActiveGodown(tx, input.godownId);
   const skus = await loadTransactableSkus(
     tx,

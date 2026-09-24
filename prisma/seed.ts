@@ -31,6 +31,7 @@ async function main() {
   if (!adminEmail || !adminPassword) {
     throw new Error("Set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD before seeding.");
   }
+  // Demo logins and sample stock are for development only, never production.
   const seedDemoUsers = process.env.SEED_DEMO_USERS === "true" && process.env.NODE_ENV !== "production";
 
   // ---- Roles & users ----
@@ -79,7 +80,18 @@ async function main() {
     update: {},
     create: { code: "PCS", name: "Pieces", decimalPlaces: 0 },
   });
-  await prisma.uom.upsert({ where: { code: "BOX" }, update: {}, create: { code: "BOX", name: "Box", decimalPlaces: 0 } });
+  const box = await prisma.uom.upsert({
+    where: { code: "BOX" },
+    update: {},
+    create: { code: "BOX", name: "Box", decimalPlaces: 0 },
+  });
+
+  // Sample masters and stock: always in development, in production only when
+  // explicitly requested (e.g. an acceptance-test install).
+  if (process.env.NODE_ENV === "production" && process.env.SEED_SAMPLE_DATA !== "true") {
+    console.log(`Seed complete (roles, units, admin ${adminEmail}). Add masters in the app or by CSV import.`);
+    return;
+  }
 
   const rawMaterials = await prisma.category.upsert({
     where: { name: "Raw Materials" },
@@ -149,6 +161,11 @@ async function main() {
       gstRate: "18",
       tallyStockItemName: "Molded Bottle 500ml",
     },
+  });
+  await prisma.skuUnit.upsert({
+    where: { skuId_uomId: { skuId: bottle.id, uomId: box.id } },
+    update: {},
+    create: { skuId: bottle.id, uomId: box.id, factor: "24" },
   });
   const carton = await prisma.sku.upsert({
     where: { code: "PK-001" },

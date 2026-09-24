@@ -12,6 +12,7 @@ import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
 import { formatQuantity } from "@/lib/format";
 import type { NamedOption } from "@/lib/options";
+import { pushFresh } from "@/lib/navigation";
 
 export interface ReturnableLine {
   id: string;
@@ -71,8 +72,7 @@ export function ReturnForm({
       items: submitted.map((line) => ({ [config.lineField]: line.id, quantity: quantities[line.id] })),
     });
     if (result) {
-      router.push(`${config.endpoint}/${result.id}`);
-      router.refresh();
+      pushFresh(router, `${config.endpoint}/${result.id}`);
     }
   }
 

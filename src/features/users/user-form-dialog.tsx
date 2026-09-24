@@ -11,7 +11,7 @@ import { Input, Select } from "@/components/ui/form-controls";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
 import { ROLE_LABELS } from "@/lib/permissions";
-import { ROLE_CODES } from "@/lib/validation/users";
+import { ROLE_CODES } from "@/lib/enums";
 
 type RoleCode = (typeof ROLE_CODES)[number];
 

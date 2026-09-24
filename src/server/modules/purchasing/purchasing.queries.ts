@@ -48,7 +48,18 @@ export function getPurchaseOrderDetail(id: string) {
       items: {
         orderBy: { lineNo: "asc" },
         include: {
-          sku: { select: { id: true, code: true, name: true, isBatchTracked: true, baseUom: true } },
+          sku: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              isBatchTracked: true,
+              baseUomId: true,
+              baseUom: true,
+              units: { select: { uomId: true, factor: true, uom: { select: { code: true } } }, orderBy: { factor: "asc" } },
+            },
+          },
+          entryUom: { select: { code: true } },
         },
       },
       grns: {

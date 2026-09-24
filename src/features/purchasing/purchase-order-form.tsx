@@ -11,6 +11,7 @@ import { Input, Select, Textarea } from "@/components/ui/form-controls";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
 import type { NamedOption, SkuOption } from "@/lib/options";
+import { pushFresh } from "@/lib/navigation";
 
 export interface PurchaseOrderFormValues {
   supplierId: string;
@@ -49,9 +50,10 @@ export function PurchaseOrderForm({
     const body = {
       ...header,
       expectedDate: header.expectedDate || undefined,
-      items: lines.map(({ skuId, quantity, rate, gstRate }) => ({
+      items: lines.map(({ skuId, quantity, uomId, rate, gstRate }) => ({
         skuId,
         orderedQty: quantity,
+        uomId: uomId || undefined,
         rate: rate || undefined,
         gstRate: gstRate || undefined,
       })),
@@ -69,8 +71,7 @@ export function PurchaseOrderForm({
     setIntent(nextIntent);
     const po = await save.mutate(nextIntent === "open");
     if (po) {
-      router.push(`/purchase-orders/${po.id}`);
-      router.refresh();
+      pushFresh(router, `/purchase-orders/${po.id}`);
     }
   }
 

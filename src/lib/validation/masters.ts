@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SKU_STATUSES } from "@/lib/enums";
 import {
   clearableText,
   codeSchema,
@@ -9,7 +10,7 @@ import {
   requiredText,
 } from "./common";
 
-export const SKU_STATUSES = ["ACTIVE", "INACTIVE", "ARCHIVED"] as const;
+export { SKU_STATUSES } from "@/lib/enums";
 
 export const skuListQuerySchema = pageQuerySchema.extend({ status: z.enum(SKU_STATUSES).optional() });
 
@@ -101,6 +102,18 @@ export const categoryUpdateSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
+/** An alternate unit of a SKU: 1 unit = `factor` base units (up to 6 decimals). */
+export const skuUnitSchema = z.object({
+  uomId: idSchema,
+  factor: z.preprocess(
+    (v) => (typeof v === "number" ? String(v) : typeof v === "string" ? v.trim() : v),
+    z
+      .string({ error: "Factor is required." })
+      .regex(/^\d{1,12}(?:\.\d{1,6})?$/, "Enter a positive number with at most 6 decimal places.")
+      .refine((v) => Number(v) > 0, "Factor must be greater than zero."),
+  ),
+});
+
 export const uomCreateSchema = z.object({
   code: codeSchema,
   name: requiredText(50, "Name"),
@@ -116,3 +129,4 @@ export type PartyUpdateInput = z.infer<typeof partyUpdateSchema>;
 export type CategoryCreateInput = z.infer<typeof categoryCreateSchema>;
 export type CategoryUpdateInput = z.infer<typeof categoryUpdateSchema>;
 export type UomCreateInput = z.infer<typeof uomCreateSchema>;
+export type SkuUnitInput = z.infer<typeof skuUnitSchema>;

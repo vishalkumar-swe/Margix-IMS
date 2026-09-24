@@ -90,6 +90,11 @@ export default async function InvoicePage({ params }: PageProps<"/invoices/[id]"
                   </TD>
                   <TD numeric>
                     <Quantity value={item.quantity} unit={item.sku.baseUom.code} />
+                    {item.entryUom && item.entryQuantity && (
+                      <span className="block text-xs text-slate-500">
+                        entered as {item.entryQuantity.toString()} {item.entryUom.code}
+                      </span>
+                    )}
                   </TD>
                   <TD numeric>
                     <Quantity value={item.dispatchedQty} />
@@ -97,7 +102,9 @@ export default async function InvoicePage({ params }: PageProps<"/invoices/[id]"
                   <TD numeric>
                     <Quantity value={remaining} className={remaining.greaterThan(0) ? "font-medium text-amber-700" : undefined} />
                   </TD>
-                  <TD numeric>{item.rate?.toFixed(2) ?? "—"}</TD>
+                  <TD numeric>
+                    {item.rate ? `${item.rate.toFixed(2)} / ${item.entryUom?.code ?? item.sku.baseUom.code}` : "—"}
+                  </TD>
                   <TD numeric>{item.gstRate?.toString() ?? "—"}</TD>
                 </TR>
               );

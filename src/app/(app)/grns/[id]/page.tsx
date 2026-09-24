@@ -1,4 +1,4 @@
-import { CornerUpRight } from "lucide-react";
+import { CornerUpRight, Printer } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -45,13 +45,18 @@ export default async function GrnPage({ params }: PageProps<"/grns/[id]">) {
           </>
         }
         actions={
-          can(user.role, "return.create") &&
-          grn.status !== "REVERSED" &&
-          grn.items.some((item) => item.acceptedQty.greaterThan(item.returnedQty)) && (
-            <Link href={`/purchase-returns/new?grnId=${grn.id}`} className={buttonVariants({ variant: "secondary" })}>
-              <CornerUpRight aria-hidden /> Return to supplier
+          <>
+            <Link href={`/grns/${grn.id}/print`} className={buttonVariants({ variant: "secondary" })}>
+              <Printer aria-hidden /> Print
             </Link>
-          )
+            {can(user.role, "return.create") &&
+              grn.status !== "REVERSED" &&
+              grn.items.some((item) => item.acceptedQty.greaterThan(item.returnedQty)) && (
+                <Link href={`/purchase-returns/new?grnId=${grn.id}`} className={buttonVariants({ variant: "secondary" })}>
+                  <CornerUpRight aria-hidden /> Return to supplier
+                </Link>
+              )}
+          </>
         }
       />
 

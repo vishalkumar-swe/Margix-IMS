@@ -1,0 +1,14 @@
+# Nightly database backup. Triggered by margix-backup.timer.
+# Install (per user):  see docs/operations.md
+[Unit]
+Description=Margix IMS – database backup
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Adjust to the checkout location. Drop PG_CONTAINER when pg_dump is installed on the host.
+WorkingDirectory=%h/apps/Margix-IMS
+Environment=PG_CONTAINER=margix-postgres
+Environment=BACKUP_DIR=%h/backups/margix
+Environment=BACKUP_KEEP_DAYS=14
+ExecStart=%h/apps/Margix-IMS/ops/backup/backup.sh

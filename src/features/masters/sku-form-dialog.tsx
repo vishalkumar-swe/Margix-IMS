@@ -11,7 +11,7 @@ import { Input, Select, Textarea } from "@/components/ui/form-controls";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
 import { humanize } from "@/lib/format";
-import { SKU_STATUSES } from "@/lib/validation/masters";
+import { SKU_STATUSES } from "@/lib/enums";
 
 export interface SkuFormValues {
   code: string;

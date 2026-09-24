@@ -1,17 +1,8 @@
 import { z } from "zod";
+import { MOVEMENT_TYPES } from "@/lib/enums";
 import { idSchema, optionalText, requiredText } from "./common";
 
-export const MOVEMENT_TYPES = [
-  "OPENING",
-  "INWARD",
-  "OUTWARD",
-  "TRANSFER_IN",
-  "TRANSFER_OUT",
-  "RETURN_IN",
-  "RETURN_OUT",
-  "ADJUSTMENT",
-  "REVERSAL",
-] as const;
+export { MOVEMENT_TYPES } from "@/lib/enums";
 
 export const reversalSchema = z.object({ reason: requiredText(500, "Reason") });
 

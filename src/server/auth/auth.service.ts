@@ -1,3 +1,4 @@
+import { getEnv } from "@/server/config/env";
 import { prisma } from "@/server/db/client";
 import { withTx } from "@/server/db/transaction";
 import { AuthenticationError, ValidationError } from "@/server/errors";
@@ -11,8 +12,6 @@ import {
   type SessionUser,
 } from "./session";
 
-export const MAX_FAILED_LOGINS = 5;
-export const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 
 export interface LoginResult {
   user: SessionUser;
@@ -136,10 +135,11 @@ async function registerFailedAttempt(
       UPDATE "app_user" SET "failed_login_count" = "failed_login_count" + 1
       WHERE "id" = ${userId}::uuid
       RETURNING "failed_login_count"`;
-    if (rows[0].failed_login_count >= MAX_FAILED_LOGINS) {
+    const { LOGIN_MAX_ATTEMPTS, LOGIN_LOCKOUT_MINUTES } = getEnv();
+    if (rows[0].failed_login_count >= LOGIN_MAX_ATTEMPTS) {
       await tx.user.update({
         where: { id: userId },
-        data: { failedLoginCount: 0, lockedUntil: new Date(Date.now() + LOCKOUT_DURATION_MS) },
+        data: { failedLoginCount: 0, lockedUntil: new Date(Date.now() + LOGIN_LOCKOUT_MINUTES * 60_000) },
       });
     }
     await recordAudit(tx, null, {

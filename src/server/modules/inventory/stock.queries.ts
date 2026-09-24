@@ -1,8 +1,10 @@
 import { Prisma } from "@prisma/client";
+import { dateOnlyToUtc, todayIst } from "@/lib/dates";
 import { prisma } from "@/server/db/client";
 import { ZERO, type Decimal } from "@/server/db/decimal";
 import type { Tx } from "@/server/db/transaction";
 import { InsufficientStockError } from "@/server/errors";
+import { allocateFefo } from "./fefo";
 import type { StockKey } from "./inventory.types";
 
 /** Read models over the stock_balance projection (never the raw ledger). */
@@ -143,4 +145,19 @@ export async function listAvailableBatches(skuId: string, godownId: string) {
       batch: { select: { id: true, batchNumber: true, expiryDate: true, manufacturingDate: true } },
     },
   });
+}
+
+/** FEFO pick suggestion for a quantity of a SKU in a godown (never from expired batches). */
+export async function suggestFefoPick(skuId: string, godownId: string, requested: Decimal) {
+  const batches = await listAvailableBatches(skuId, godownId);
+  return allocateFefo(
+    batches.map((b) => ({
+      batchId: b.batch.id,
+      batchNumber: b.batch.batchNumber,
+      expiryDate: b.batch.expiryDate,
+      quantity: b.quantity,
+    })),
+    requested,
+    dateOnlyToUtc(todayIst()),
+  );
 }

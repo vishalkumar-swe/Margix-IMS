@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { Quantity } from "@/components/shared/quantity";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { Alert } from "@/components/ui/alert";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { PurchaseOrderActions } from "@/features/purchasing/purchase-order-actions";
@@ -18,9 +19,14 @@ import { getPurchaseOrderDetail } from "@/server/modules/purchasing/purchasing.q
 
 export const metadata: Metadata = { title: "Purchase order" };
 
-export default async function PurchaseOrderPage({ params }: PageProps<"/purchase-orders/[id]">) {
+/** A GRN number as issued by the document sequence (confirmation banner input). */
+const GRN_NUMBER = /^GRN-\d{4}-\d{5}$/;
+
+export default async function PurchaseOrderPage({ params, searchParams }: PageProps<"/purchase-orders/[id]">) {
   const user = await requirePagePermission("po.view");
   const { id } = await params;
+  const { posted } = await searchParams;
+  const postedGrn = typeof posted === "string" && GRN_NUMBER.test(posted) ? posted : null;
   if (!idSchema.safeParse(id).success) notFound();
 
   const po = await getPurchaseOrderDetail(id);
@@ -55,6 +61,11 @@ export default async function PurchaseOrderPage({ params }: PageProps<"/purchase
         }
       />
 
+      {postedGrn && (
+        <Alert tone="success" className="mb-6">
+          {postedGrn} posted. Stock has been updated.
+        </Alert>
+      )}
       {po.status === "CANCELLED" && (
         <Card className="mb-6 border-slate-300 bg-slate-50">
           <CardBody className="text-sm text-slate-700">
@@ -106,6 +117,11 @@ export default async function PurchaseOrderPage({ params }: PageProps<"/purchase
                   </TD>
                   <TD numeric>
                     <Quantity value={item.orderedQty} unit={item.sku.baseUom.code} />
+                    {item.entryUom && item.entryQuantity && (
+                      <span className="block text-xs text-slate-500">
+                        entered as {item.entryQuantity.toString()} {item.entryUom.code}
+                      </span>
+                    )}
                   </TD>
                   <TD numeric>
                     <Quantity value={item.receivedQty} />
@@ -113,7 +129,9 @@ export default async function PurchaseOrderPage({ params }: PageProps<"/purchase
                   <TD numeric>
                     <Quantity value={pending} className={pending.greaterThan(0) ? "font-medium text-amber-700" : undefined} />
                   </TD>
-                  <TD numeric>{item.rate?.toFixed(2) ?? "—"}</TD>
+                  <TD numeric>
+                    {item.rate ? `${item.rate.toFixed(2)} / ${item.entryUom?.code ?? item.sku.baseUom.code}` : "—"}
+                  </TD>
                   <TD numeric>{item.gstRate?.toString() ?? "—"}</TD>
                 </TR>
               );

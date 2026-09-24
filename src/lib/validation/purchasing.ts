@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PO_STATUSES } from "@/lib/enums";
 import {
   amountSchema,
   compareQuantities,
@@ -13,7 +14,7 @@ import {
   requiredText,
 } from "./common";
 
-export const PO_STATUSES = ["DRAFT", "OPEN", "PARTIALLY_RECEIVED", "FULLY_RECEIVED", "CANCELLED"] as const;
+export { PO_STATUSES } from "@/lib/enums";
 
 export const poListQuerySchema = pageQuerySchema.extend({
   status: z.enum(PO_STATUSES).optional(),
@@ -26,7 +27,9 @@ export const grnListQuerySchema = pageQuerySchema.extend({
 
 export const poItemSchema = z.object({
   skuId: idSchema,
+  /** Quantity in `uomId` (an alternate unit of the SKU) or, when omitted, in its base unit. */
   orderedQty: quantitySchema,
+  uomId: idSchema.optional(),
   rate: amountSchema.optional(),
   gstRate: gstRateSchema.optional(),
 });

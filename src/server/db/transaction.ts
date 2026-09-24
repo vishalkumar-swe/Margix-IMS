@@ -13,10 +13,10 @@ const RETRYABLE_SQLSTATES = new Set(["40001", "40P01"]);
  * is handled with conditional updates and row locks inside the services; the
  * rare deadlock or serialization failure is retried transparently.
  */
-export async function withTx<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+export async function withTx<T>(fn: (tx: Tx) => Promise<T>, options: { timeoutMs?: number } = {}): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await prisma.$transaction(fn, { maxWait: 5_000, timeout: 15_000 });
+      return await prisma.$transaction(fn, { maxWait: 5_000, timeout: options.timeoutMs ?? 15_000 });
     } catch (error) {
       const pg = getPgError(error);
       if (attempt < MAX_ATTEMPTS && pg && RETRYABLE_SQLSTATES.has(pg.code)) {

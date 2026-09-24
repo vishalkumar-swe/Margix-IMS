@@ -1,0 +1,19 @@
+# Keep the build context small and free of secrets.
+.git
+.next
+node_modules
+coverage
+backups
+test-results
+playwright-report
+tests
+.env
+.env.*
+!.env.example
+!.env.production.example
+*.log
+*.tsbuildinfo
+Dockerfile
+.dockerignore
+deploy
+docker-compose.yml

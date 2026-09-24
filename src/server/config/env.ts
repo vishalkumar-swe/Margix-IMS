@@ -8,8 +8,16 @@ function blankAsUndefined(env: NodeJS.ProcessEnv): Record<string, string | undef
 const envSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+    /** Printed on GRN and dispatch notes. */
+    COMPANY_NAME: z.string().trim().min(1).default("Margix IMS"),
+    COMPANY_ADDRESS: z.string().trim().min(1).optional(),
+    COMPANY_GSTIN: z.string().trim().min(1).optional(),
     DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
     SESSION_TTL_HOURS: z.coerce.number().int().positive().max(24 * 30).default(12),
+    /** Consecutive wrong passwords before an account is locked. */
+    LOGIN_MAX_ATTEMPTS: z.coerce.number().int().min(3).max(100).default(5),
+    /** How long a locked account stays locked. */
+    LOGIN_LOCKOUT_MINUTES: z.coerce.number().int().positive().max(24 * 60).default(15),
     TALLY_MODE: z.enum(["mock", "fail", "xml", "disabled"]).default("mock"),
     /** Tally Prime HTTP/XML server (TALLY_MODE=xml). */
     TALLY_URL: z.url().default("http://localhost:9000"),

@@ -11,6 +11,7 @@ import { Input, Select, Textarea } from "@/components/ui/form-controls";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
 import type { NamedOption, SkuOption } from "@/lib/options";
+import { pushFresh } from "@/lib/navigation";
 
 export function InvoiceForm({ customers, skus, today }: { customers: NamedOption[]; skus: SkuOption[]; today: string }) {
   const router = useRouter();
@@ -24,9 +25,10 @@ export function InvoiceForm({ customers, skus, today }: { customers: NamedOption
         ...header,
         remarks: header.remarks || undefined,
         idempotencyKey,
-        items: lines.map(({ skuId, quantity, rate, gstRate }) => ({
+        items: lines.map(({ skuId, quantity, uomId, rate, gstRate }) => ({
           skuId,
           quantity,
+          uomId: uomId || undefined,
           rate: rate || undefined,
           gstRate: gstRate || undefined,
         })),
@@ -39,8 +41,7 @@ export function InvoiceForm({ customers, skus, today }: { customers: NamedOption
     event.preventDefault();
     const invoice = await save.mutate(undefined);
     if (invoice) {
-      router.push(`/invoices/${invoice.id}`);
-      router.refresh();
+      pushFresh(router, `/invoices/${invoice.id}`);
     }
   }
 

@@ -1,3 +1,7 @@
+import { Suspense } from "react";
+import { LiveUpdates } from "@/components/layout/live-updates";
+import { NavigationIntent } from "@/components/layout/navigation-intent";
+import { NavigationProgress } from "@/components/layout/navigation-progress";
 import { Sidebar } from "@/components/layout/sidebar";
 import { UserMenu } from "@/components/layout/user-menu";
 import { permissionsFor, ROLE_LABELS } from "@/lib/permissions";
@@ -9,6 +13,11 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
 
   return (
     <div className="min-h-screen">
+      <NavigationIntent />
+      <LiveUpdates />
+      <Suspense fallback={null}>
+        <NavigationProgress />
+      </Suspense>
       <Sidebar permissions={permissionsFor(user.role)} />
       <div className="lg:pl-64">
         <header className="sticky top-0 z-20 flex h-14 items-center justify-end border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6">

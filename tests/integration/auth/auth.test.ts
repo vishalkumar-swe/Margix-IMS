@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { POST as loginRoute } from "@/app/api/v1/auth/login/route";
 import { POST as logoutRoute } from "@/app/api/v1/auth/logout/route";
 import { GET as meRoute } from "@/app/api/v1/auth/me/route";
-import { MAX_FAILED_LOGINS } from "@/server/auth/auth.service";
+import { getEnv } from "@/server/config/env";
 import { hashPassword } from "@/server/auth/password";
 import { prisma } from "@/server/db/client";
 import { createUser } from "../../helpers/factories";
@@ -73,7 +73,7 @@ describe("login", () => {
   it("locks the account after repeated failures, even for the right password", async () => {
     await createUser("ADMIN", { email: "a@test.local", passwordHash });
 
-    for (let i = 0; i < MAX_FAILED_LOGINS; i++) await attemptLogin("a@test.local", "nope");
+    for (let i = 0; i < getEnv().LOGIN_MAX_ATTEMPTS; i++) await attemptLogin("a@test.local", "nope");
     const res = await attemptLogin("a@test.local", PASSWORD);
 
     expect(res.status).toBe(423);

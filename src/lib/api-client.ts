@@ -33,7 +33,7 @@ export class ApiClientError extends Error {
 
 export async function apiRequest<T>(
   path: string,
-  options: { method?: "GET" | "POST" | "PATCH"; body?: unknown } = {},
+  options: { method?: "GET" | "POST" | "PATCH" | "DELETE"; body?: unknown } = {},
 ): Promise<T> {
   const response = await fetch(`/api/v1${path}`, {
     method: options.method ?? (options.body === undefined ? "GET" : "POST"),

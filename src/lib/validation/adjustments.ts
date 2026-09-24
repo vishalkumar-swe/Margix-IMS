@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ADJUSTMENT_REASONS, ADJUSTMENT_STATUSES } from "@/lib/enums";
 import {
   idempotencyKeySchema,
   idSchema,
@@ -9,22 +10,11 @@ import {
   signedQuantitySchema,
 } from "./common";
 
-export const ADJUSTMENT_STATUSES = ["SUBMITTED", "APPROVED", "REJECTED", "REVERSED"] as const;
+export { ADJUSTMENT_STATUSES, ADJUSTMENT_REASONS, ADJUSTMENT_REASON_LABELS, type AdjustmentReasonCode } from "@/lib/enums";
 
 export const adjustmentListQuerySchema = pageQuerySchema.extend({
   status: z.enum(ADJUSTMENT_STATUSES).optional(),
 });
-
-export const ADJUSTMENT_REASONS = ["DAMAGE", "THEFT", "EXPIRY", "COUNTING_ERROR", "OTHER"] as const;
-export type AdjustmentReasonCode = (typeof ADJUSTMENT_REASONS)[number];
-
-export const ADJUSTMENT_REASON_LABELS: Record<AdjustmentReasonCode, string> = {
-  DAMAGE: "Damage",
-  THEFT: "Theft / shrinkage",
-  EXPIRY: "Expiry",
-  COUNTING_ERROR: "Counting error",
-  OTHER: "Other",
-};
 
 /**
  * A line either references an existing batch (required when reducing stock)

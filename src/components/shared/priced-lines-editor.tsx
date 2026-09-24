@@ -11,6 +11,8 @@ export interface PricedLine {
   key: string;
   skuId: string;
   quantity: string;
+  /** Unit the quantity and rate are entered in; "" = the SKU's base unit. */
+  uomId: string;
   rate: string;
   gstRate: string;
 }
@@ -19,13 +21,15 @@ export const emptyPricedLine = (): PricedLine => ({
   key: crypto.randomUUID(),
   skuId: "",
   quantity: "",
+  uomId: "",
   rate: "",
   gstRate: "",
 });
 
 /**
  * Editable SKU / quantity / rate / GST lines, shared by purchase orders and
- * invoices. `quantityField` is the API field name used in error paths
+ * invoices. Quantity and rate may be entered in an alternate unit of the SKU
+ * (e.g. BOX); the server converts to the base unit. `quantityField` is the API field name used in error paths
  * (e.g. "orderedQty" → errors["items.0.orderedQty"]).
  */
 export function PricedLinesEditor({
@@ -62,7 +66,7 @@ export function PricedLinesEditor({
           <tr>
             <TH className="w-2/5">SKU</TH>
             <TH>Quantity</TH>
-            <TH>Rate (₹)</TH>
+            <TH>Rate (₹ per unit)</TH>
             <TH>GST %</TH>
             <TH className="sr-only">Remove</TH>
           </tr>
@@ -77,7 +81,7 @@ export function PricedLinesEditor({
                   <Select
                     aria-label={`SKU for line ${index + 1}`}
                     value={line.skuId}
-                    onChange={(e) => update(line.key, { skuId: e.target.value })}
+                    onChange={(e) => update(line.key, { skuId: e.target.value, uomId: "" })}
                     aria-invalid={Boolean(err("skuId"))}
                   >
                     <option value="">Select SKU</option>
@@ -99,8 +103,25 @@ export function PricedLinesEditor({
                       aria-invalid={Boolean(err(quantityField))}
                       className="w-28"
                     />
-                    <span className="text-xs text-slate-500">{sku?.unit}</span>
+                    {sku && sku.units.length > 0 ? (
+                      <Select
+                        aria-label={`Unit for line ${index + 1}`}
+                        value={line.uomId}
+                        onChange={(e) => update(line.key, { uomId: e.target.value })}
+                        className="w-24"
+                      >
+                        <option value="">{sku.unit}</option>
+                        {sku.units.map((u) => (
+                          <option key={u.uomId} value={u.uomId}>
+                            {u.code}
+                          </option>
+                        ))}
+                      </Select>
+                    ) : (
+                      <span className="text-xs text-slate-500">{sku?.unit}</span>
+                    )}
                   </div>
+                  {sku && <BaseQuantityHint sku={sku} line={line} />}
                   {err(quantityField) && <p className="mt-1 text-xs text-red-600">{err(quantityField)}</p>}
                 </TD>
                 <TD>
@@ -142,5 +163,18 @@ export function PricedLinesEditor({
         </TBody>
       </Table>
     </Card>
+  );
+}
+
+/** "= 48 PCS" under a quantity entered in an alternate unit (display only; the server converts exactly). */
+function BaseQuantityHint({ sku, line }: { sku: SkuOption; line: PricedLine }) {
+  const unit = sku.units.find((u) => u.uomId === line.uomId);
+  const quantity = Number(line.quantity);
+  if (!unit || !line.quantity || !Number.isFinite(quantity)) return null;
+  const base = quantity * Number(unit.factor);
+  return (
+    <p className="mt-1 text-xs text-slate-500">
+      = {base.toLocaleString("en-IN", { maximumFractionDigits: 3 })} {sku.unit}
+    </p>
   );
 }

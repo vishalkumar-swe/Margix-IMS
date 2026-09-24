@@ -12,6 +12,7 @@ import { Table, TBody, TD, TH, THead } from "@/components/ui/table";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
 import type { NamedOption, SkuOption } from "@/lib/options";
+import { pushFresh } from "@/lib/navigation";
 
 interface Line {
   key: string;
@@ -55,8 +56,7 @@ export function OpeningBalanceForm({ godowns, skus, today }: { godowns: NamedOpt
       })),
     });
     if (result) {
-      router.push("/opening-stock");
-      router.refresh();
+      pushFresh(router, "/opening-stock");
     }
   }
 

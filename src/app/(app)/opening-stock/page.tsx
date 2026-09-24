@@ -7,7 +7,8 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
-import { formatDate, formatDateTime } from "@/lib/dates";
+import { OpeningStockImportDialog } from "@/features/imports/import-dialogs";
+import { formatDate, formatDateTime, todayIst } from "@/lib/dates";
 import { requirePagePermission } from "@/server/auth/current-user";
 import { listOpeningBalances } from "@/server/modules/opening/opening.queries";
 
@@ -27,7 +28,12 @@ export default async function OpeningStockPage() {
       <PageHeader
         title="Opening stock"
         description="Go-live balances. Each line is posted as an OPENING entry in the ledger."
-        actions={newButton}
+        actions={
+          <>
+            <OpeningStockImportDialog today={todayIst()} />
+            {newButton}
+          </>
+        }
       />
       <Card>
         {openings.length > 0 ? (

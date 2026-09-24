@@ -14,7 +14,8 @@ import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
 import { formatQuantity } from "@/lib/format";
 import type { NamedOption, SkuOption } from "@/lib/options";
-import { ADJUSTMENT_REASON_LABELS, ADJUSTMENT_REASONS, type AdjustmentReasonCode } from "@/lib/validation/adjustments";
+import { ADJUSTMENT_REASON_LABELS, ADJUSTMENT_REASONS, type AdjustmentReasonCode } from "@/lib/enums";
+import { pushFresh } from "@/lib/navigation";
 
 type Direction = "decrease" | "increase";
 
@@ -68,8 +69,7 @@ export function AdjustmentForm({ godowns, skus }: { godowns: NamedOption[]; skus
       }),
     });
     if (adjustment) {
-      router.push(`/adjustments/${adjustment.id}`);
-      router.refresh();
+      pushFresh(router, `/adjustments/${adjustment.id}`);
     }
   }
 

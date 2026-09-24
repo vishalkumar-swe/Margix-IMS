@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { INVOICE_STATUSES } from "@/lib/enums";
 import {
   amountSchema,
   dateSchema,
@@ -12,11 +13,13 @@ import {
   requiredText,
 } from "./common";
 
-export const INVOICE_STATUSES = ["OPEN", "PARTIALLY_DISPATCHED", "COMPLETE", "CANCELLED"] as const;
+export { INVOICE_STATUSES } from "@/lib/enums";
 
 export const invoiceItemSchema = z.object({
   skuId: idSchema,
+  /** Quantity in `uomId` (an alternate unit of the SKU) or, when omitted, in its base unit. */
   quantity: quantitySchema,
+  uomId: idSchema.optional(),
   rate: amountSchema.optional(),
   gstRate: gstRateSchema.optional(),
 });

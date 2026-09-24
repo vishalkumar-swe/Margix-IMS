@@ -8,7 +8,9 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/ui/pagination";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { SkuImportDialog } from "@/features/imports/import-dialogs";
 import { EMPTY_SKU, SkuFormDialog } from "@/features/masters/sku-form-dialog";
+import { SkuUnitsDialog } from "@/features/masters/sku-units-dialog";
 import { humanize } from "@/lib/format";
 import { can } from "@/lib/permissions";
 import { parseSearchParams } from "@/lib/search-params";
@@ -34,7 +36,14 @@ export default async function SkusPage({ searchParams }: PageProps<"/masters/sku
       <PageHeader
         title="Products (SKUs)"
         description="Items tracked in inventory. SKUs are archived, never deleted, so history stays intact."
-        actions={canManage && <SkuFormDialog initial={EMPTY_SKU} categories={categories} uoms={uoms} />}
+        actions={
+          canManage && (
+            <>
+              <SkuImportDialog />
+              <SkuFormDialog initial={EMPTY_SKU} categories={categories} uoms={uoms} />
+            </>
+          )
+        }
       />
       <Card>
         <FilterBar
@@ -74,7 +83,14 @@ export default async function SkusPage({ searchParams }: PageProps<"/masters/sku
                     </TD>
                     <TD>{sku.name}</TD>
                     <TD>{sku.category?.name ?? "—"}</TD>
-                    <TD>{sku.baseUom.code}</TD>
+                    <TD>
+                      {sku.baseUom.code}
+                      {sku.units.map((u) => (
+                        <span key={u.uomId} className="block text-xs text-slate-500">
+                          {u.uom.code} = {u.factor.toString()}
+                        </span>
+                      ))}
+                    </TD>
                     <TD className="text-xs">{sku.isBatchTracked ? "Tracked" : "Not tracked"}</TD>
                     <TD className="text-xs">
                       {sku.hsnCode ?? "—"}
@@ -87,7 +103,14 @@ export default async function SkusPage({ searchParams }: PageProps<"/masters/sku
                       <StatusBadge status={sku.status} />
                     </TD>
                     {canManage && (
-                      <TD className="text-right">
+                      <TD className="text-right whitespace-nowrap">
+                        <SkuUnitsDialog
+                          skuId={sku.id}
+                          skuCode={sku.code}
+                          baseUom={{ id: sku.baseUomId, code: sku.baseUom.code }}
+                          units={sku.units.map((u) => ({ uomId: u.uomId, code: u.uom.code, factor: u.factor.toString() }))}
+                          uoms={uoms}
+                        />
                         <SkuFormDialog
                           skuId={sku.id}
                           categories={categories}

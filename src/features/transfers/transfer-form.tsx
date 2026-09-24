@@ -12,6 +12,7 @@ import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
 import { formatQuantity } from "@/lib/format";
 import type { NamedOption, SkuOption } from "@/lib/options";
+import { pushFresh } from "@/lib/navigation";
 
 export function TransferForm({ godowns, skus }: { godowns: NamedOption[]; skus: SkuOption[] }) {
   const router = useRouter();
@@ -39,8 +40,7 @@ export function TransferForm({ godowns, skus }: { godowns: NamedOption[]; skus: 
       items: lines.map(({ skuId, batchId, quantity }) => ({ skuId, batchId, quantity })),
     });
     if (transfer) {
-      router.push(`/transfers/${transfer.id}`);
-      router.refresh();
+      pushFresh(router, `/transfers/${transfer.id}`);
     }
   }
 

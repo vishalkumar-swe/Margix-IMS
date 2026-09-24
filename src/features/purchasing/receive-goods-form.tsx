@@ -11,6 +11,7 @@ import { Table, TBody, TD, TH, THead } from "@/components/ui/table";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
 import { formatQuantity } from "@/lib/format";
+import { replaceFresh } from "@/lib/navigation";
 import type { NamedOption, SkuOption } from "@/lib/options";
 
 export interface ReceivableLine {
@@ -55,7 +56,6 @@ export function ReceiveGoodsForm({
   const [supplierInvoiceNo, setSupplierInvoiceNo] = useState("");
   const [inputs, setInputs] = useState<Record<string, LineInput>>({});
   const [clientError, setClientError] = useState<string | null>(null);
-  const [posted, setPosted] = useState<string | null>(null);
 
   const post = useApiMutation((body: unknown) =>
     apiRequest<{ grnNumber: string }>(`/purchase-orders/${purchaseOrderId}/grns`, { body }),
@@ -80,7 +80,6 @@ export function ReceiveGoodsForm({
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     setClientError(null);
-    setPosted(null);
     if (submitted.length === 0) {
       setClientError("Enter the received quantity for at least one item.");
       return;
@@ -104,11 +103,11 @@ export function ReceiveGoodsForm({
       }),
     });
     if (result) {
-      setPosted(result.grnNumber);
       setInputs({});
       setSupplierInvoiceNo("");
       setIdempotencyKey(crypto.randomUUID());
-      router.refresh();
+      // The page shows the confirmation: this form disappears once nothing is pending.
+      replaceFresh(router, `/purchase-orders/${purchaseOrderId}?posted=${encodeURIComponent(result.grnNumber)}`);
     }
   }
 
@@ -122,7 +121,6 @@ export function ReceiveGoodsForm({
       <CardHeader title="Receive goods" description="Only the accepted quantity is added to stock." />
       <form onSubmit={onSubmit} noValidate>
         <CardBody className="space-y-4">
-          {posted && <Alert tone="success">{posted} posted. Stock has been updated.</Alert>}
           {(clientError || (post.error && !Object.keys(post.fieldErrors).length)) && (
             <Alert tone="error" title={clientError ?? post.error?.message}>
               {post.error?.code === "OVER_RECEIPT" && "Reduce the accepted quantity to the pending quantity."}
