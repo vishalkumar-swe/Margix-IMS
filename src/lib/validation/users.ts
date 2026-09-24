@@ -1,0 +1,31 @@
+import { z } from "zod";
+import { optionalText, requiredText } from "./common";
+
+export const ROLE_CODES = ["ADMIN", "STORE_MANAGER", "WAREHOUSE_OPERATOR", "ACCOUNTS", "MANAGEMENT"] as const;
+
+/** Password policy (single source of truth). */
+const passwordSchema = z
+  .string()
+  .min(10, "Use at least 10 characters.")
+  .max(200)
+  .refine((v) => /[A-Za-z]/.test(v) && /\d/.test(v), "Use letters and at least one digit.");
+
+export const userCreateSchema = z.object({
+  name: requiredText(120, "Name"),
+  email: z.string().trim().toLowerCase().pipe(z.email("Enter a valid email.")),
+  mobile: optionalText(20),
+  role: z.enum(ROLE_CODES),
+  password: passwordSchema,
+});
+
+export const userUpdateSchema = z.object({
+  name: requiredText(120, "Name").optional(),
+  mobile: optionalText(20),
+  role: z.enum(ROLE_CODES).optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const passwordResetSchema = z.object({ password: passwordSchema });
+
+export type UserCreateInput = z.infer<typeof userCreateSchema>;
+export type UserUpdateInput = z.infer<typeof userUpdateSchema>;

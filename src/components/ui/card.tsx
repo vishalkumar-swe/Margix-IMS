@@ -1,18 +1,32 @@
-import React from 'react';
-import { cn } from './button';
+import type { ComponentProps, ReactNode } from "react";
+import { cn } from "@/lib/cn";
 
-export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("rounded-xl border bg-card text-card-foreground shadow", className)} {...props} />;
+export function Card({ className, ...props }: ComponentProps<"section">) {
+  return <section className={cn("rounded-lg border border-slate-200 bg-white shadow-sm", className)} {...props} />;
 }
-export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("flex flex-col space-y-1.5 p-6", className)} {...props} />;
+
+export function CardHeader({
+  title,
+  description,
+  actions,
+  className,
+}: {
+  title: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <header className={cn("flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-5 py-4", className)}>
+      <div>
+        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+        {description && <p className="mt-0.5 text-sm text-slate-500">{description}</p>}
+      </div>
+      {actions && <div className="flex items-center gap-2">{actions}</div>}
+    </header>
+  );
 }
-export function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
-  return <h3 className={cn("font-semibold leading-none tracking-tight", className)} {...props} />;
-}
-export function CardDescription({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
-  return <p className={cn("text-sm text-muted-foreground", className)} {...props} />;
-}
-export function CardContent({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("p-6 pt-0", className)} {...props} />;
+
+export function CardBody({ className, ...props }: ComponentProps<"div">) {
+  return <div className={cn("px-5 py-4", className)} {...props} />;
 }

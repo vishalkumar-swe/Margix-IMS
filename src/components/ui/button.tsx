@@ -1,23 +1,45 @@
-import React from 'react';
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { cva, type VariantProps } from "class-variance-authority";
+import { LoaderCircle } from "lucide-react";
+import type { ComponentProps } from "react";
+import { cn } from "@/lib/cn";
 
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
+export const buttonVariants = cva(
+  "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
+  {
+    variants: {
+      variant: {
+        primary: "bg-brand-600 text-white shadow-sm hover:bg-brand-700",
+        secondary: "border border-slate-300 bg-white text-slate-700 shadow-sm hover:bg-slate-50",
+        ghost: "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
+        danger: "bg-red-600 text-white shadow-sm hover:bg-red-700",
+        link: "px-0 text-brand-700 underline-offset-4 hover:underline",
+      },
+      size: {
+        sm: "h-8 px-3",
+        md: "h-9 px-4",
+        lg: "h-10 px-5",
+        icon: "size-9",
+      },
+    },
+    defaultVariants: { variant: "primary", size: "md" },
+  },
+);
+
+export interface ButtonProps extends ComponentProps<"button">, VariantProps<typeof buttonVariants> {
+  loading?: boolean;
 }
 
-export const Button = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: string, size?: string }>(
-  ({ className, variant = 'default', size = 'default', ...props }, ref) => {
-    return (
-      <button
-        ref={ref}
-        className={cn(
-          "inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:opacity-50 disabled:pointer-events-none ring-offset-slate-900",
-          className
-        )}
-        {...props}
-      />
-    )
-  }
-)
-Button.displayName = "Button"
+export function Button({ className, variant, size, loading = false, disabled, children, type = "button", ...props }: ButtonProps) {
+  return (
+    <button
+      type={type}
+      className={cn(buttonVariants({ variant, size }), className)}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
+      {...props}
+    >
+      {loading && <LoaderCircle className="animate-spin" aria-hidden />}
+      {children}
+    </button>
+  );
+}

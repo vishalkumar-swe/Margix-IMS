@@ -1,115 +1,33 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-:root {
-  /* Color Palette - Inspired by provided Control Tower image */
-  --bg-app: #f9fafb;
-  --bg-card: #ffffff;
-  --bg-header: #ffffff;
-  
-  --text-primary: #111827;
-  --text-secondary: #4b5563;
-  --text-muted: #9ca3af;
-  
-  --border-color: #e5e7eb;
-  
-  --primary-color: #2563eb;
-  --primary-hover: #1d4ed8;
-  
-  --success-color: #10b981;
-  --warning-color: #f59e0b;
-  --danger-color: #ef4444;
-  --info-color: #3b82f6;
-  
-  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  --radius-md: 8px;
-  --radius-lg: 12px;
+/* Design tokens — single light theme. Components use these via Tailwind utilities. */
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe6fe;
+  --color-brand-200: #bfd3fe;
+  --color-brand-300: #93b4fd;
+  --color-brand-400: #6090fa;
+  --color-brand-500: #3b6cf5;
+  --color-brand-600: #2553e0;
+  --color-brand-700: #1d42bf;
+  --color-brand-800: #1e389b;
+  --color-brand-900: #1e347a;
 }
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
+@layer base {
+  :root {
+    color-scheme: light;
+  }
 
-body {
-  font-family: var(--font-family);
-  background-color: var(--bg-app);
-  color: var(--text-primary);
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-}
+  /* Numbers line up in tables and totals. */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
 
-a {
-  color: inherit;
-  text-decoration: none;
+  dialog::backdrop {
+    background: rgb(15 23 42 / 0.4);
+  }
 }
-
-button {
-  cursor: pointer;
-  font-family: inherit;
-}
-
-/* Base Utilities */
-.card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
-  padding: 1.5rem;
-}
-
-.btn-primary {
-  background-color: var(--primary-color);
-  color: white;
-  border: none;
-  border-radius: 6px;
-  padding: 0.5rem 1rem;
-  font-weight: 500;
-  font-size: 0.875rem;
-  transition: background-color 0.2s;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.btn-primary:hover {
-  background-color: var(--primary-hover);
-}
-
-.btn-outline {
-  background-color: transparent;
-  color: var(--text-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 0.5rem 1rem;
-  font-weight: 500;
-  font-size: 0.875rem;
-  transition: all 0.2s;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.btn-outline:hover {
-  background-color: #f3f4f6;
-  color: var(--text-primary);
-}
-
-/* Badges */
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.125rem 0.5rem;
-  border-radius: 9999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-.badge-danger { background: #fee2e2; color: #991b1b; }
-.badge-warning { background: #fef3c7; color: #92400e; }
-.badge-success { background: #d1fae5; color: #065f46; }
-.badge-neutral { background: #f3f4f6; color: #374151; }

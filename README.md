@@ -1,99 +1,125 @@
-# Margix Inventory Management System 🚀
+# Margix IMS
 
-![Next.js](https://img.shields.io/badge/Next.js-15-black?style=for-the-badge&logo=next.js)
-![React](https://img.shields.io/badge/React-19-blue?style=for-the-badge&logo=react)
-![Prisma](https://img.shields.io/badge/Prisma-ORM-2D3748?style=for-the-badge&logo=prisma)
-![Tailwind](https://img.shields.io/badge/Tailwind-CSS-38B2AC?style=for-the-badge&logo=tailwind-css)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-336791?style=for-the-badge&logo=postgresql)
+Ledger-based inventory management for multi-godown, batch-tracked stock, with
+approval workflows and Tally Prime synchronisation.
 
-Margix is an enterprise-grade Inventory Management System built on a strict **Immutable Financial Ledger** architecture. Designed for precision, every single stock movement is recorded as an immutable transaction, ensuring a flawless audit trail and eliminating "ghost stock" anomalies.
+**Core rule:** stock is never edited. Every change is an immutable ledger entry
+with a signed quantity; current stock is derived from the ledger. Mistakes are
+corrected with reversal entries, and the original stays visible.
 
----
+```
+Stock = Opening + Inward + Transfer in + Return in
+      − Outward − Transfer out − Return out
+      ± Adjustment ± Reversal
+```
 
-## 🌟 Core Philosophy: The Immutable Ledger
+## Features (V1 · Phase 1)
 
-Unlike traditional inventory apps where a `currentStock` number is overwritten, Margix calculates real-time stock dynamically by aggregating absolute quantities from the `InventoryLedger` table. 
+| Area | What it does |
+|------|--------------|
+| Stock | Live balances by SKU × godown × batch, expiry, FEFO-ordered batch pickers |
+| Ledger | Every movement with running balance, reference document and user; reversals linked both ways |
+| Purchasing | Purchase orders (draft → open → partially/fully received, or cancelled); GRNs with received / accepted / rejected quantities; only accepted stock is booked; over-receipt blocked |
+| Dispatch | Batch-level outward with strict stock validation — negative stock is impossible (enforced in the database too) |
+| Adjustments | Request → review → post, with maker ≠ checker enforced; reasons DAMAGE, THEFT, EXPIRY, COUNTING_ERROR, OTHER |
+| Reversals | Counter-entries that keep documents consistent (PO received quantities, document status) |
+| Opening stock | Go-live balances per godown |
+| Tally | Every posted document is queued; failures show a plain-language reason, back off and can be retried; a Tally outage never blocks stock operations |
+| Security | Login with DB-backed sessions, role-based permissions (Admin, Store Manager, Warehouse Operator, Accounts, Management), audit log of every important action |
 
-- **Adds to Stock (+):** `OPENING`, `INWARD`, `TRANSFER_IN`, `RETURN_IN`
-- **Deducts from Stock (-):** `OUTWARD`, `TRANSFER_OUT`, `RETURN_OUT`
-- **Corrections (±):** `ADJUSTMENT`
-- **Error Handling (±):** `REVERSAL`
+Deferred to later phases: invoice-linked partial dispatch, reorder alerts,
+reports, audit-log UI, real Tally XML client, transfers and returns.
 
-By calculating `Sum(+) - Sum(-)`, the system can instantly determine the exact stock of any SKU in any Godown down to the specific Batch.
+## Tech stack
 
----
+Next.js 16 (App Router, React 19, Turbopack) · TypeScript · Prisma 5 · PostgreSQL 16 ·
+Tailwind CSS 4 · Zod 4 · Vitest.
 
-## 🚀 Key Features
+See [docs/architecture.md](docs/architecture.md) for the code layout and design rules.
 
-### 📦 Procurement & GRN
-- **Purchase Orders:** Create POs linked to specific Suppliers.
-- **Goods Receipt Note (GRN):** Receive stock directly against POs.
-- **Dynamic Status:** POs automatically transition to `PARTIALLY_RECEIVED` or `FULLY_RECEIVED` based on incoming ledger entries.
+## Getting started
 
-### 🚚 Dispatch & Outward Validation
-- **Batch Tracking:** Outward movements require selecting a specific manufactured Batch.
-- **Strict Validation:** The system blocks transactions if the requested dispatch quantity exceeds the physical availability of that specific batch.
+### 1. Prerequisites
 
-### ⚖️ Stock Adjustments (Approvals)
-- Submit variance requests for physical counting discrepancies (Damage, Shrinkage, Expiry).
-- Manager approval workflow instantly posts an `ADJUSTMENT` movement to the ledger.
+- Node.js 22 (`nvm install 22` — the repo has an `.nvmrc`)
+- PostgreSQL 16. With rootless Podman:
 
-### ⏪ Self-Healing Reversals
-- Mistakes cannot be edited or deleted.
-- Click "Reverse" on any erroneous entry to generate a `REVERSAL` transaction that perfectly counter-balances the mathematical impact of the mistake.
+  ```bash
+  podman volume create margix_pgdata
+  podman run -d --name margix-postgres \
+    -e POSTGRES_USER=margix -e POSTGRES_PASSWORD=margix -e POSTGRES_DB=margix \
+    -p 127.0.0.1:15432:5432 -v margix_pgdata:/var/lib/postgresql/data \
+    docker.io/library/postgres:16-alpine
+  podman exec margix-postgres createdb -U margix margix_test
+  ```
 
-### 🔄 Tally Prime Sync
-- Background asynchronous queueing system.
-- Formats physical stock movements into Tally-compliant XML payloads and syncs them automatically to bridge operations with financial accounting.
+  Or `docker compose up -d` / `podman compose up -d` with the included
+  `docker-compose.yml`, then create the `margix_test` database the same way.
 
----
+### 2. Configure
 
-## 🛠️ Technical Architecture
-
-- **Framework:** Next.js 15 (App Router) with React Server Components (RSC).
-- **Styling:** Tailwind CSS v4 (configured via `@tailwindcss/postcss`) with CSS Modules.
-- **Database ORM:** Prisma ORM.
-- **Database:** PostgreSQL (Cloud/Local).
-- **Build Engine:** Turbopack for ultra-fast local development.
-
----
-
-## 💻 Getting Started (Local Development)
-
-### 1. Clone the repository
 ```bash
-git clone https://github.com/vishalkumar-swe/Margix-IMS.git
-cd Margix-IMS
+cp .env.example .env
 ```
 
-### 2. Install Dependencies
+Set `SEED_ADMIN_PASSWORD` in `.env`. For tests, create `.env.test` with
+`DATABASE_URL` pointing at `margix_test` (tests refuse any other database).
+
+### 3. Install, migrate, seed, run
+
 ```bash
-npm install
+npm install          # also runs prisma generate
+npm run db:migrate   # apply migrations
+npm run db:seed      # idempotent: roles, admin, demo data, opening stock
+npm run dev          # http://localhost:3000
 ```
 
-### 3. Setup Database
-Ensure you have a PostgreSQL database running. Create a `.env` file in the root directory:
-```env
-DATABASE_URL="postgresql://user:password@localhost:5432/margixdb"
+Sign in with `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`. With
+`SEED_DEMO_USERS=true` (development only) the seed also creates
+`manager@`, `operator@`, `accounts@` and `management@margix.local`
+(password `Margix@2026`) to try each role.
+
+## Scripts
+
+| Command | Purpose |
+|---------|---------|
+| `npm run dev` / `build` / `start` | Develop / production build / serve |
+| `npm run typecheck` | Generate Next route types and run `tsc` |
+| `npm run lint` | ESLint |
+| `npm test` | Unit + integration tests against `margix_test` |
+| `npm run db:migrate` | Create/apply migrations (development) |
+| `npm run db:deploy` | Apply migrations (production) |
+| `npm run db:reset` | Drop, re-migrate and re-seed the development database |
+| `npm run db:seed` | Seed (safe to repeat) |
+| `npm run tally:sync` | One Tally sync pass — schedule it with cron/systemd |
+
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `SESSION_TTL_HOURS` | Idle session timeout (sliding; sessions also end after 7 days) |
+| `TALLY_MODE` | `mock` (accepts vouchers), `fail` (simulates an outage) or `disabled` |
+| `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | Initial administrator |
+| `SEED_DEMO_USERS` | `true` to create one demo user per role (ignored in production) |
+
+## API
+
+Versioned under `/api/v1`, session-cookie authenticated. Every response uses one envelope:
+
+```json
+{ "success": true, "data": { } }
+{ "success": false, "error": { "code": "INSUFFICIENT_STOCK", "message": "…", "details": { } } }
 ```
 
-### 4. Push Schema & Seed Data
-Push the Prisma schema to your database and seed it with dummy Suppliers, SKUs, Godowns, and ledgers to start testing immediately:
-```bash
-npx prisma db push
-node prisma/seed.js
-```
+Business operations are explicit endpoints (e.g. `POST /purchase-orders/:id/grns`,
+`POST /adjustments/:id/approve`, `POST /ledger/:id/reverse`); stock itself is
+never writable. Quantities are exchanged as decimal strings.
 
-### 5. Run the Development Server
-```bash
-npm run dev
-```
-Navigate to `http://localhost:3000` to interact with the Margix Dashboard!
+## Testing
 
----
-
-## 🤝 Contributing
-Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/vishalkumar-swe/Margix-IMS/issues).
-
-## 📄 License
-This project is licensed under the MIT License.
+`npm test` rebuilds `margix_test` from migrations and runs the whole suite. It
+includes the spec §14 worked scenario, concurrency tests (parallel dispatches
+and reversals, concurrent approvals, overlapping Tally runs), database guards
+(append-only ledger, sign CHECK, reversal trigger), and the role and response
+contract of the API.

@@ -1,0 +1,40 @@
+/** Display formatting shared by server and client. */
+
+/** Ledger entry number as shown to users, e.g. 123n → "LE-000123". */
+export function formatEntryNo(entryNo: bigint | number | string): string {
+  return `LE-${String(entryNo).padStart(6, "0")}`;
+}
+
+/**
+ * Formats a decimal string with Indian digit grouping without going through a
+ * float, e.g. "1234567.500" → "12,34,567.5".
+ */
+export function formatQuantity(value: string | number | { toString(): string }): string {
+  const text = String(value);
+  const negative = text.startsWith("-");
+  const [intPart, fracPart = ""] = text.replace("-", "").split(".");
+  const trimmedFrac = fracPart.replace(/0+$/, "");
+
+  const lastThree = intPart.slice(-3);
+  const rest = intPart.slice(0, -3);
+  const grouped = rest ? `${rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",")},${lastThree}` : lastThree;
+
+  return `${negative ? "−" : ""}${grouped}${trimmedFrac ? `.${trimmedFrac}` : ""}`;
+}
+
+/** Signed quantity with an explicit "+" for increases, e.g. "+500", "−200". */
+export function formatSignedQuantity(value: string | number | { toString(): string }): string {
+  const text = String(value);
+  return text.startsWith("-") ? formatQuantity(text) : `+${formatQuantity(text)}`;
+}
+
+/** Flips the sign of a decimal string, e.g. "500" → "-500", "-25" → "25". */
+export function negateQuantity(value: string): string {
+  return value.startsWith("-") ? value.slice(1) : `-${value}`;
+}
+
+/** Human label for enum-like codes, e.g. "PARTIALLY_RECEIVED" → "Partially received". */
+export function humanize(code: string): string {
+  const lower = code.toLowerCase().replace(/_/g, " ");
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
