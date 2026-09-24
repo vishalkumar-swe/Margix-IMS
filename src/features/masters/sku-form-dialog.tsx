@@ -1,6 +1,6 @@
 "use client";
 
-import { Pencil, Plus } from "lucide-react";
+import { Pencil, Plus, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Alert } from "@/components/ui/alert";
@@ -24,6 +24,7 @@ export interface SkuFormValues {
   gstRate: string;
   isBatchTracked: boolean;
   tallyStockItemName: string;
+  barcode: string;
   status: (typeof SKU_STATUSES)[number];
 }
 
@@ -37,6 +38,7 @@ export const EMPTY_SKU: SkuFormValues = {
   gstRate: "",
   isBatchTracked: true,
   tallyStockItemName: "",
+  barcode: "",
   status: "ACTIVE",
 };
 
@@ -73,15 +75,20 @@ export function SkuFormDialog({
             categoryId: common.categoryId || undefined,
             hsnCode: common.hsnCode || undefined,
             gstRate: common.gstRate || undefined,
+            barcode: common.barcode || undefined,
           },
         });
   });
   const errors = save.fieldErrors;
+  const generate = useApiMutation(() =>
+    apiRequest<{ barcode: string }>(`/skus/${skuId}/barcode`, { body: { replace: true } }),
+  );
 
   function openDialog() {
     setForm(initial);
     setHsnRate(null);
     save.reset();
+    generate.reset();
     setOpen(true);
   }
 
@@ -179,6 +186,41 @@ export function SkuFormDialog({
               }
             >
               <Input id={id("gst")} inputMode="decimal" value={form.gstRate} onChange={(e) => set("gstRate", e.target.value)} />
+            </Field>
+            <Field
+              label="Barcode"
+              htmlFor={id("barcode")}
+              error={errors.barcode ?? generate.error?.message}
+              hint={
+                editing
+                  ? "EAN-13 or any Code 128 value. Generate replaces it with a new internal EAN-13."
+                  : "EAN-13 or any Code 128 value. Leave blank to generate an internal EAN-13."
+              }
+            >
+              <div className="flex gap-2">
+                <Input
+                  id={id("barcode")}
+                  value={form.barcode}
+                  autoComplete="off"
+                  onChange={(e) => set("barcode", e.target.value)}
+                  aria-invalid={Boolean(errors.barcode)}
+                />
+                {editing && (
+                  <Button
+                    variant="secondary"
+                    loading={generate.pending}
+                    onClick={async () => {
+                      const sku = await generate.mutate(undefined);
+                      if (sku) {
+                        set("barcode", sku.barcode);
+                        router.refresh();
+                      }
+                    }}
+                  >
+                    {!generate.pending && <Sparkles aria-hidden />} Generate
+                  </Button>
+                )}
+              </div>
             </Field>
             <Field label="Tally stock item name" htmlFor={id("tally")} error={errors.tallyStockItemName} hint="Required for Tally sync.">
               <Input id={id("tally")} value={form.tallyStockItemName} onChange={(e) => set("tallyStockItemName", e.target.value)} />

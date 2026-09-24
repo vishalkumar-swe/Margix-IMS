@@ -13,6 +13,7 @@ export const skuWithUomSelect = {
   baseUomId: true,
   hsnCode: true,
   gstRate: true,
+  barcode: true,
   baseUom: { select: { code: true, decimalPlaces: true } },
   units: { select: { uomId: true, factor: true, uom: { select: { code: true } } }, orderBy: { factor: "asc" } },
 } satisfies Prisma.SkuSelect;
@@ -66,6 +67,7 @@ export async function listSkus(query: PageQuery & { status?: Sku["status"] }) {
       ? [
           { code: { contains: query.q, mode: "insensitive" } },
           { name: { contains: query.q, mode: "insensitive" } },
+          { barcode: query.q },
         ]
       : undefined,
   };
@@ -121,6 +123,28 @@ export function listCategories(options: { activeOnly?: boolean } = {}) {
 
 export function listUoms() {
   return prisma.uom.findMany({ orderBy: { code: "asc" } });
+}
+
+/**
+ * The SKU a scanned value stands for: its barcode, else its code
+ * (case-insensitive, as codes are stored in capitals). Any status is found,
+ * so callers can say why an inactive product cannot be used.
+ */
+export async function findSkuByScanCode(code: string) {
+  const value = code.trim();
+  if (!value) return null;
+  return (
+    (await prisma.sku.findUnique({ where: { barcode: value }, select: skuWithUomSelect })) ??
+    (await prisma.sku.findUnique({ where: { code: value.toUpperCase() }, select: skuWithUomSelect }))
+  );
+}
+
+/** What a product label shows, for the given SKUs (in no particular order). */
+export function listSkuLabels(ids: string[]) {
+  return prisma.sku.findMany({
+    where: { id: { in: [...new Set(ids)] } },
+    select: { id: true, code: true, name: true, barcode: true },
+  });
 }
 
 /** Compact SKU list for selects (active only). */

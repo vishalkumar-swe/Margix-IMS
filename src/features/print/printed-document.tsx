@@ -1,13 +1,20 @@
 import type { ReactNode } from "react";
+import { gstStateLabel } from "@/lib/gst-states";
 import type { CompanyDetails } from "@/server/config/company";
+import { Barcode, QrCode } from "./document-codes";
 import { PrintButton } from "./print-button";
 import { BrandLogo } from "@/components/layout/brand-logo";
 
-/** A4 layout shared by printed notes: company header, title, parties, lines, signatures. */
+/**
+ * A4 layout shared by printed documents: company header with the document's
+ * QR code (top right), title, parties, lines, signatures, and a Code 128
+ * barcode of the document number at the bottom (see lib/document-codes.ts).
+ */
 export function PrintedDocument({
   company,
   title,
   number,
+  qrPayload,
   back,
   details,
   children,
@@ -16,6 +23,8 @@ export function PrintedDocument({
   company: CompanyDetails;
   title: string;
   number: string;
+  /** QR payload identifying the document (buildDocumentQrPayload). */
+  qrPayload: string;
   back: ReactNode;
   details: { label: string; value: ReactNode }[];
   children: ReactNode;
@@ -28,18 +37,22 @@ export function PrintedDocument({
         <PrintButton />
       </div>
 
-      <header className="flex items-start justify-between border-b-2 border-slate-900 pb-4">
+      <header className="flex items-start justify-between gap-6 border-b-2 border-slate-900 pb-4">
         <div className="flex items-start gap-4">
           <BrandLogo variant="full" className="h-16" priority />
           <div>
             <p className="text-lg font-bold">{company.name}</p>
             {company.address && <p className="text-xs text-slate-600">{company.address}</p>}
             {company.gstin && <p className="text-xs text-slate-600">GSTIN {company.gstin}</p>}
+            {company.stateCode && <p className="text-xs text-slate-600">State {gstStateLabel(company.stateCode)}</p>}
           </div>
         </div>
-        <div className="text-right">
-          <p className="text-base font-semibold tracking-wide uppercase">{title}</p>
-          <p className="font-mono">{number}</p>
+        <div className="flex items-start gap-4">
+          <div className="text-right">
+            <p className="text-base font-semibold tracking-wide uppercase">{title}</p>
+            <p className="font-mono">{number}</p>
+          </div>
+          <QrCode value={qrPayload} label={`QR code of ${number}`} className="size-24 shrink-0" />
         </div>
       </header>
 
@@ -61,6 +74,10 @@ export function PrintedDocument({
           </div>
         ))}
       </footer>
+
+      <div className="mt-8 flex justify-center break-inside-avoid">
+        <Barcode value={number} symbology="code128" heightMm={8} label={`Barcode of ${number}`} className="w-64" />
+      </div>
     </div>
   );
 }

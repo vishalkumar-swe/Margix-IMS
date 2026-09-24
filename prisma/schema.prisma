@@ -104,6 +104,12 @@ enum SkuStatus {
   ARCHIVED
 }
 
+/// GST treatment of a priced document: CGST + SGST within a state, IGST across states.
+enum TaxType {
+  INTRA
+  INTER
+}
+
 enum TallySyncStatus {
   PENDING
   IN_PROGRESS
@@ -258,6 +264,8 @@ model Sku {
   isBatchTracked     Boolean   @default(true) @map("is_batch_tracked")
   status             SkuStatus @default(ACTIVE)
   tallyStockItemName String?   @map("tally_stock_item_name")
+  /// Product barcode (EAN-13 or any Code 128 value); scanned to find the product.
+  barcode            String?   @unique
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -356,6 +364,8 @@ model Supplier {
   code            String           @unique
   name            String
   gstin           String?
+  /// Two-digit GST state code; used when there is no GSTIN (the GSTIN's own state wins).
+  stateCode       String?          @map("state_code")
   email           String?
   phone           String?
   address         String?
@@ -372,6 +382,8 @@ model Customer {
   code         String        @unique
   name         String
   gstin        String?
+  /// Two-digit GST state code; used when there is no GSTIN (the GSTIN's own state wins).
+  stateCode    String?       @map("state_code")
   email        String?
   phone        String?
   address      String?
@@ -389,28 +401,35 @@ model Customer {
 // ==========================
 
 model PurchaseOrder {
-  id             String              @id @default(uuid()) @db.Uuid
-  poNumber       String              @unique @map("po_number")
-  supplierId     String              @map("supplier_id") @db.Uuid
-  supplier       Supplier            @relation(fields: [supplierId], references: [id])
-  status         PurchaseOrderStatus @default(DRAFT)
-  orderDate      DateTime            @map("order_date") @db.Date
-  expectedDate   DateTime?           @map("expected_date") @db.Date
-  remarks        String?
-  idempotencyKey String?             @unique @map("idempotency_key")
-  createdById    String              @map("created_by_id") @db.Uuid
-  createdBy      User                @relation("PoCreatedBy", fields: [createdById], references: [id])
-  submittedAt    DateTime?           @map("submitted_at") @db.Timestamptz(3)
-  cancelledAt    DateTime?           @map("cancelled_at") @db.Timestamptz(3)
-  cancelledById  String?             @map("cancelled_by_id") @db.Uuid
-  cancelledBy    User?               @relation("PoCancelledBy", fields: [cancelledById], references: [id])
-  cancelReason   String?             @map("cancel_reason")
-  closedAt       DateTime?           @map("closed_at") @db.Timestamptz(3)
-  closedById     String?             @map("closed_by_id") @db.Uuid
-  closedBy       User?               @relation("PoClosedBy", fields: [closedById], references: [id])
-  closeReason    String?             @map("close_reason")
-  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                String              @id @default(uuid()) @db.Uuid
+  poNumber          String              @unique @map("po_number")
+  supplierId        String              @map("supplier_id") @db.Uuid
+  supplier          Supplier            @relation(fields: [supplierId], references: [id])
+  status            PurchaseOrderStatus @default(DRAFT)
+  orderDate         DateTime            @map("order_date") @db.Date
+  expectedDate      DateTime?           @map("expected_date") @db.Date
+  remarks           String?
+  /// Fixed when the order is saved (supplier state vs company state); master edits never change it.
+  taxType           TaxType             @default(INTRA) @map("tax_type")
+  /// GST state code where the goods are delivered (the company's state); null when unknown.
+  placeOfSupply     String?             @map("place_of_supply")
+  /// Freight, packing etc.: added after tax, not taxed.
+  otherCharges      Decimal             @default(0) @map("other_charges") @db.Decimal(18, 2)
+  otherChargesLabel String?             @map("other_charges_label")
+  idempotencyKey    String?             @unique @map("idempotency_key")
+  createdById       String              @map("created_by_id") @db.Uuid
+  createdBy         User                @relation("PoCreatedBy", fields: [createdById], references: [id])
+  submittedAt       DateTime?           @map("submitted_at") @db.Timestamptz(3)
+  cancelledAt       DateTime?           @map("cancelled_at") @db.Timestamptz(3)
+  cancelledById     String?             @map("cancelled_by_id") @db.Uuid
+  cancelledBy       User?               @relation("PoCancelledBy", fields: [cancelledById], references: [id])
+  cancelReason      String?             @map("cancel_reason")
+  closedAt          DateTime?           @map("closed_at") @db.Timestamptz(3)
+  closedById        String?             @map("closed_by_id") @db.Uuid
+  closedBy          User?               @relation("PoClosedBy", fields: [closedById], references: [id])
+  closeReason       String?             @map("close_reason")
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   items PurchaseOrderItem[]
   grns  Grn[]
@@ -437,7 +456,11 @@ model PurchaseOrderItem {
   receivedQty     Decimal       @default(0) @map("received_qty") @db.Decimal(18, 3)
   /// Price per entered unit (entryUom when set, otherwise the base unit).
   rate            Decimal?      @db.Decimal(18, 2)
+  /// Trade discount on the line, percent of quantity × rate (0–100).
+  discountPercent Decimal       @default(0) @map("discount_percent") @db.Decimal(5, 2)
   gstRate         Decimal?      @map("gst_rate") @db.Decimal(5, 2)
+  /// The product's HSN code when the line was saved.
+  hsnCode         String?       @map("hsn_code")
 
   grnItems GrnItem[]
 
@@ -800,22 +823,29 @@ model AuditLog {
 // ==========================
 
 model Invoice {
-  id             String        @id @default(uuid()) @db.Uuid
-  invoiceNumber  String        @unique @map("invoice_number")
-  customerId     String        @map("customer_id") @db.Uuid
-  customer       Customer      @relation(fields: [customerId], references: [id])
-  invoiceDate    DateTime      @map("invoice_date") @db.Date
-  status         InvoiceStatus @default(OPEN)
-  remarks        String?
-  idempotencyKey String?       @unique @map("idempotency_key")
-  createdById    String        @map("created_by_id") @db.Uuid
-  createdBy      User          @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
-  cancelledAt    DateTime?     @map("cancelled_at") @db.Timestamptz(3)
-  cancelledById  String?       @map("cancelled_by_id") @db.Uuid
-  cancelledBy    User?         @relation("InvoiceCancelledBy", fields: [cancelledById], references: [id])
-  cancelReason   String?       @map("cancel_reason")
-  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                String        @id @default(uuid()) @db.Uuid
+  invoiceNumber     String        @unique @map("invoice_number")
+  customerId        String        @map("customer_id") @db.Uuid
+  customer          Customer      @relation(fields: [customerId], references: [id])
+  invoiceDate       DateTime      @map("invoice_date") @db.Date
+  status            InvoiceStatus @default(OPEN)
+  remarks           String?
+  /// Fixed when the invoice is created (customer state vs company state); master edits never change it.
+  taxType           TaxType       @default(INTRA) @map("tax_type")
+  /// GST state code of the place of supply (the customer's state); null when unknown.
+  placeOfSupply     String?       @map("place_of_supply")
+  /// Freight, packing etc.: added after tax, not taxed.
+  otherCharges      Decimal       @default(0) @map("other_charges") @db.Decimal(18, 2)
+  otherChargesLabel String?       @map("other_charges_label")
+  idempotencyKey    String?       @unique @map("idempotency_key")
+  createdById       String        @map("created_by_id") @db.Uuid
+  createdBy         User          @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
+  cancelledAt       DateTime?     @map("cancelled_at") @db.Timestamptz(3)
+  cancelledById     String?       @map("cancelled_by_id") @db.Uuid
+  cancelledBy       User?         @relation("InvoiceCancelledBy", fields: [cancelledById], references: [id])
+  cancelReason      String?       @map("cancel_reason")
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   items    InvoiceItem[]
   outwards Outward[]
@@ -826,23 +856,27 @@ model Invoice {
 }
 
 model InvoiceItem {
-  id            String   @id @default(uuid()) @db.Uuid
-  invoiceId     String   @map("invoice_id") @db.Uuid
-  invoice       Invoice  @relation(fields: [invoiceId], references: [id])
-  lineNo        Int      @map("line_no")
-  skuId         String   @map("sku_id") @db.Uuid
-  sku           Sku      @relation(fields: [skuId], references: [id])
-  quantity      Decimal  @db.Decimal(18, 3)
+  id              String   @id @default(uuid()) @db.Uuid
+  invoiceId       String   @map("invoice_id") @db.Uuid
+  invoice         Invoice  @relation(fields: [invoiceId], references: [id])
+  lineNo          Int      @map("line_no")
+  skuId           String   @map("sku_id") @db.Uuid
+  sku             Sku      @relation(fields: [skuId], references: [id])
+  quantity        Decimal  @db.Decimal(18, 3)
   /// As entered when an alternate unit was used: unit, quantity and factor at the time.
-  entryUomId    String?  @map("entry_uom_id") @db.Uuid
-  entryUom      Uom?     @relation(fields: [entryUomId], references: [id], onDelete: Restrict)
-  entryQuantity Decimal? @map("entry_quantity") @db.Decimal(18, 3)
-  entryFactor   Decimal? @map("entry_factor") @db.Decimal(18, 6)
+  entryUomId      String?  @map("entry_uom_id") @db.Uuid
+  entryUom        Uom?     @relation(fields: [entryUomId], references: [id], onDelete: Restrict)
+  entryQuantity   Decimal? @map("entry_quantity") @db.Decimal(18, 3)
+  entryFactor     Decimal? @map("entry_factor") @db.Decimal(18, 6)
   /// Dispatched against this line, net of reversals. Maintained in-transaction.
-  dispatchedQty Decimal  @default(0) @map("dispatched_qty") @db.Decimal(18, 3)
+  dispatchedQty   Decimal  @default(0) @map("dispatched_qty") @db.Decimal(18, 3)
   /// Price per entered unit (entryUom when set, otherwise the base unit).
-  rate          Decimal? @db.Decimal(18, 2)
-  gstRate       Decimal? @map("gst_rate") @db.Decimal(5, 2)
+  rate            Decimal? @db.Decimal(18, 2)
+  /// Trade discount on the line, percent of quantity × rate (0–100).
+  discountPercent Decimal  @default(0) @map("discount_percent") @db.Decimal(5, 2)
+  gstRate         Decimal? @map("gst_rate") @db.Decimal(5, 2)
+  /// The product's HSN code when the line was saved.
+  hsnCode         String?  @map("hsn_code")
 
   outwardItems OutwardItem[]
 

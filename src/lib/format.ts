@@ -22,6 +22,18 @@ export function formatQuantity(value: string | number | { toString(): string }):
   return `${negative ? "−" : ""}${grouped}${trimmedFrac ? `.${trimmedFrac}` : ""}`;
 }
 
+/**
+ * Money with Indian digit grouping and exactly two decimals, without going
+ * through a float, e.g. "1234567.5" → "12,34,567.50".
+ */
+export function formatAmount(value: string | number | { toString(): string }): string {
+  const text = String(value);
+  const negative = text.startsWith("-");
+  const [intPart, fracPart = ""] = text.replace("-", "").split(".");
+  const grouped = formatQuantity(intPart || "0");
+  return `${negative ? "−" : ""}${grouped}.${fracPart.padEnd(2, "0").slice(0, 2)}`;
+}
+
 /** True for any representation of zero ("0", "0.000", "-0"). */
 export function isZeroQuantity(value: string | number | { toString(): string }): boolean {
   return /^-?0*(\.0*)?$/.test(String(value));

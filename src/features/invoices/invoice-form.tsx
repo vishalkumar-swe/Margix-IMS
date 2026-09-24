@@ -2,7 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { emptyPricedLine, PricedLinesEditor, type PricedLine } from "@/components/shared/priced-lines-editor";
+import {
+  emptyPricedLine,
+  PricedLinesEditor,
+  type OtherCharges,
+  type PricedLine,
+} from "@/components/shared/priced-lines-editor";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -10,26 +15,47 @@ import { Field } from "@/components/ui/field";
 import { Input, Select, Textarea } from "@/components/ui/form-controls";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
-import type { NamedOption, SkuOption } from "@/lib/options";
+import type { PartyOption, SkuOption } from "@/lib/options";
 import { pushFresh } from "@/lib/navigation";
+import { resolveTaxType } from "@/lib/tax";
 
-export function InvoiceForm({ customers, skus, today }: { customers: NamedOption[]; skus: SkuOption[]; today: string }) {
+const UNKNOWN_STATE_NOTE =
+  "The GST state of the company or the customer is not known, so it is treated as intra-state (set a GSTIN or state on the customer).";
+
+export function InvoiceForm({
+  customers,
+  skus,
+  today,
+  companyStateCode,
+}: {
+  customers: PartyOption[];
+  skus: SkuOption[];
+  today: string;
+  /** Our GST state; with the customer's it decides CGST + SGST vs IGST. */
+  companyStateCode: string | null;
+}) {
   const router = useRouter();
   const [idempotencyKey] = useState(() => crypto.randomUUID());
   const [header, setHeader] = useState({ customerId: "", invoiceDate: today, remarks: "" });
   const [lines, setLines] = useState<PricedLine[]>([emptyPricedLine()]);
+  const [otherCharges, setOtherCharges] = useState<OtherCharges>({ amount: "", label: "" });
+  const customer = customers.find((c) => c.id === header.customerId);
+  const { taxType, statesKnown } = resolveTaxType(companyStateCode, customer?.stateCode);
 
   const save = useApiMutation(() =>
     apiRequest<{ id: string }>("/invoices", {
       body: {
         ...header,
         remarks: header.remarks || undefined,
+        otherCharges: otherCharges.amount || undefined,
+        otherChargesLabel: otherCharges.label || undefined,
         idempotencyKey,
-        items: lines.map(({ skuId, quantity, uomId, rate, gstRate }) => ({
+        items: lines.map(({ skuId, quantity, uomId, rate, discountPercent, gstRate }) => ({
           skuId,
           quantity,
           uomId: uomId || undefined,
           rate: rate || undefined,
+          discountPercent: discountPercent || undefined,
           gstRate: gstRate || undefined,
         })),
       },
@@ -86,7 +112,16 @@ export function InvoiceForm({ customers, skus, today }: { customers: NamedOption
         </CardBody>
       </Card>
 
-      <PricedLinesEditor lines={lines} onChange={setLines} skus={skus} errors={errors} />
+      <PricedLinesEditor
+        lines={lines}
+        onChange={setLines}
+        skus={skus}
+        errors={errors}
+        taxType={taxType}
+        taxNote={customer && !statesKnown ? UNKNOWN_STATE_NOTE : undefined}
+        otherCharges={otherCharges}
+        onOtherChargesChange={setOtherCharges}
+      />
 
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={() => router.back()}>

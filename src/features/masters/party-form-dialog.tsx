@@ -7,21 +7,33 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
-import { Input, Textarea } from "@/components/ui/form-controls";
+import { Input, Select, Textarea } from "@/components/ui/form-controls";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
+import { GST_STATES, gstStateLabel, stateCodeOfGstin } from "@/lib/gst-states";
 
 export interface PartyFormValues {
   code: string;
   name: string;
   gstin: string;
+  /** GST state code; taken from the GSTIN when there is one. */
+  stateCode: string;
   email: string;
   phone: string;
   address: string;
   isActive: boolean;
 }
 
-export const EMPTY_PARTY: PartyFormValues = { code: "", name: "", gstin: "", email: "", phone: "", address: "", isActive: true };
+export const EMPTY_PARTY: PartyFormValues = {
+  code: "",
+  name: "",
+  gstin: "",
+  stateCode: "",
+  email: "",
+  phone: "",
+  address: "",
+  isActive: true,
+};
 
 /** Supplier or customer create/edit (same fields, different endpoint). */
 export function PartyFormDialog({
@@ -43,11 +55,14 @@ export function PartyFormDialog({
   const endpoint = kind === "supplier" ? "/suppliers" : "/customers";
   const noun = kind === "supplier" ? "supplier" : "customer";
 
-  const save = useApiMutation(({ code, isActive, ...rest }: PartyFormValues) =>
-    editing
-      ? apiRequest(`${endpoint}/${partyId}`, { method: "PATCH", body: { ...rest, isActive } })
-      : apiRequest(endpoint, { body: { ...rest, code } }),
-  );
+  // A GSTIN names its state; the state field is only needed without one.
+  const gstinState = stateCodeOfGstin(form.gstin);
+  const save = useApiMutation(({ code, isActive, ...rest }: PartyFormValues) => {
+    const body = { ...rest, stateCode: stateCodeOfGstin(rest.gstin) ?? rest.stateCode };
+    return editing
+      ? apiRequest(`${endpoint}/${partyId}`, { method: "PATCH", body: { ...body, isActive } })
+      : apiRequest(endpoint, { body: { ...body, code } });
+  });
   const errors = save.fieldErrors;
   const set = <K extends keyof PartyFormValues>(key: K, value: PartyFormValues[K]) => setForm({ ...form, [key]: value });
   const id = (field: string) => `${partyId ?? "new"}-${kind}-${field}`;
@@ -101,10 +116,30 @@ export function PartyFormDialog({
             <Field label="GSTIN" htmlFor={id("gstin")} error={errors.gstin}>
               <Input id={id("gstin")} value={form.gstin} maxLength={15} onChange={(e) => set("gstin", e.target.value)} />
             </Field>
+            <Field
+              label="GST state"
+              htmlFor={id("state")}
+              error={errors.stateCode}
+              hint={gstinState ? "From the GSTIN." : "Decides CGST + SGST or IGST on documents."}
+            >
+              <Select
+                id={id("state")}
+                value={gstinState ?? form.stateCode}
+                disabled={Boolean(gstinState)}
+                onChange={(e) => set("stateCode", e.target.value)}
+              >
+                <option value="">Not set</option>
+                {GST_STATES.map((s) => (
+                  <option key={s.code} value={s.code}>
+                    {gstStateLabel(s.code)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
             <Field label="Phone" htmlFor={id("phone")} error={errors.phone}>
               <Input id={id("phone")} type="tel" value={form.phone} onChange={(e) => set("phone", e.target.value)} />
             </Field>
-            <Field label="Email" htmlFor={id("email")} error={errors.email} className="sm:col-span-2">
+            <Field label="Email" htmlFor={id("email")} error={errors.email}>
               <Input id={id("email")} type="email" value={form.email} onChange={(e) => set("email", e.target.value)} />
             </Field>
             <Field label="Address" htmlFor={id("address")} error={errors.address} className="sm:col-span-2">

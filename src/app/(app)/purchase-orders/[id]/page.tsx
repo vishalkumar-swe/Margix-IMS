@@ -1,10 +1,13 @@
+import { Printer } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { Quantity } from "@/components/shared/quantity";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { TaxBreakdown } from "@/components/shared/tax-breakdown";
 import { Alert } from "@/components/ui/alert";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { PurchaseOrderActions } from "@/features/purchasing/purchase-order-actions";
@@ -15,6 +18,7 @@ import { can } from "@/lib/permissions";
 import { idSchema } from "@/lib/validation/common";
 import { requirePagePermission } from "@/server/auth/current-user";
 import { listGodowns } from "@/server/modules/masters/masters.queries";
+import { purchaseOrderPricing } from "@/server/modules/documents/pricing";
 import { getPurchaseOrderDetail } from "@/server/modules/purchasing/purchasing.queries";
 
 export const metadata: Metadata = { title: "Purchase order" };
@@ -48,16 +52,21 @@ export default async function PurchaseOrderPage({ params, searchParams }: PagePr
         meta={<StatusBadge status={po.status} />}
         description={`${po.supplier.name} · ordered ${formatDate(po.orderDate)} by ${po.createdBy.name}`}
         actions={
-          canManage && (
-            <PurchaseOrderActions
-              purchaseOrderId={po.id}
-              poNumber={po.poNumber}
-              canEdit={po.status === "DRAFT"}
-              canSubmit={po.status === "DRAFT"}
-              canCancel={(po.status === "DRAFT" || po.status === "OPEN") && !hasReceipts}
-              canShortClose={po.status === "PARTIALLY_RECEIVED"}
-            />
-          )
+          <>
+            <Link href={`/purchase-orders/${po.id}/print`} className={buttonVariants({ variant: "secondary" })}>
+              <Printer aria-hidden /> Print
+            </Link>
+            {canManage && (
+              <PurchaseOrderActions
+                purchaseOrderId={po.id}
+                poNumber={po.poNumber}
+                canEdit={po.status === "DRAFT"}
+                canSubmit={po.status === "DRAFT"}
+                canCancel={(po.status === "DRAFT" || po.status === "OPEN") && !hasReceipts}
+                canShortClose={po.status === "PARTIALLY_RECEIVED"}
+              />
+            )}
+          </>
         }
       />
 
@@ -99,8 +108,6 @@ export default async function PurchaseOrderPage({ params, searchParams }: PagePr
               <TH numeric>Ordered</TH>
               <TH numeric>Received</TH>
               <TH numeric>Pending</TH>
-              <TH numeric>Rate (₹)</TH>
-              <TH numeric>GST %</TH>
             </tr>
           </THead>
           <TBody>
@@ -129,16 +136,16 @@ export default async function PurchaseOrderPage({ params, searchParams }: PagePr
                   <TD numeric>
                     <Quantity value={pending} className={pending.greaterThan(0) ? "font-medium text-amber-700" : undefined} />
                   </TD>
-                  <TD numeric>
-                    {item.rate ? `${item.rate.toFixed(2)} / ${item.entryUom?.code ?? item.sku.baseUom.code}` : "—"}
-                  </TD>
-                  <TD numeric>{item.gstRate?.toString() ?? "—"}</TD>
                 </TR>
               );
             })}
           </TBody>
         </Table>
       </Card>
+
+      <div className="mt-6">
+        <TaxBreakdown view={purchaseOrderPricing(po)} placeOfSupplyLabel="Delivery state" />
+      </div>
 
       {godowns.length > 0 && pendingLines.length > 0 && (
         <div className="mt-6">

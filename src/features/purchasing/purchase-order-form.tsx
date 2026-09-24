@@ -2,7 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { emptyPricedLine, PricedLinesEditor, type PricedLine } from "@/components/shared/priced-lines-editor";
+import {
+  emptyPricedLine,
+  PricedLinesEditor,
+  type OtherCharges,
+  type PricedLine,
+} from "@/components/shared/priced-lines-editor";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -10,16 +15,21 @@ import { Field } from "@/components/ui/field";
 import { Input, Select, Textarea } from "@/components/ui/form-controls";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
-import type { NamedOption, SkuOption } from "@/lib/options";
+import type { PartyOption, SkuOption } from "@/lib/options";
 import { pushFresh } from "@/lib/navigation";
+import { resolveTaxType } from "@/lib/tax";
 
 export interface PurchaseOrderFormValues {
   supplierId: string;
   orderDate: string;
   expectedDate: string;
   remarks: string;
+  otherCharges: OtherCharges;
   items: Omit<PricedLine, "key">[];
 }
+
+const UNKNOWN_STATE_NOTE =
+  "The GST state of the company or the supplier is not known, so it is treated as intra-state (set a GSTIN or state on the supplier).";
 
 /** Create a PO (draft or open) or edit a draft (`purchaseOrderId` set). */
 export function PurchaseOrderForm({
@@ -27,11 +37,14 @@ export function PurchaseOrderForm({
   skus,
   initial,
   purchaseOrderId,
+  companyStateCode,
 }: {
-  suppliers: NamedOption[];
+  suppliers: PartyOption[];
   skus: SkuOption[];
   initial: PurchaseOrderFormValues;
   purchaseOrderId?: string;
+  /** Our GST state; with the supplier's it decides CGST + SGST vs IGST. */
+  companyStateCode: string | null;
 }) {
   const router = useRouter();
   const [idempotencyKey] = useState(() => crypto.randomUUID());
@@ -44,17 +57,23 @@ export function PurchaseOrderForm({
   const [lines, setLines] = useState<PricedLine[]>(() =>
     initial.items.length ? initial.items.map((item) => ({ ...item, key: crypto.randomUUID() })) : [emptyPricedLine()],
   );
+  const [otherCharges, setOtherCharges] = useState<OtherCharges>(initial.otherCharges);
   const [intent, setIntent] = useState<"draft" | "open">("draft");
+  const supplier = suppliers.find((s) => s.id === header.supplierId);
+  const { taxType, statesKnown } = resolveTaxType(companyStateCode, supplier?.stateCode);
 
   const save = useApiMutation((submit: boolean) => {
     const body = {
       ...header,
       expectedDate: header.expectedDate || undefined,
-      items: lines.map(({ skuId, quantity, uomId, rate, gstRate }) => ({
+      otherCharges: otherCharges.amount || undefined,
+      otherChargesLabel: otherCharges.label || undefined,
+      items: lines.map(({ skuId, quantity, uomId, rate, discountPercent, gstRate }) => ({
         skuId,
         orderedQty: quantity,
         uomId: uomId || undefined,
         rate: rate || undefined,
+        discountPercent: discountPercent || undefined,
         gstRate: gstRate || undefined,
       })),
     };
@@ -124,7 +143,17 @@ export function PurchaseOrderForm({
         </CardBody>
       </Card>
 
-      <PricedLinesEditor lines={lines} onChange={setLines} skus={skus} errors={errors} quantityField="orderedQty" />
+      <PricedLinesEditor
+        lines={lines}
+        onChange={setLines}
+        skus={skus}
+        errors={errors}
+        quantityField="orderedQty"
+        taxType={taxType}
+        taxNote={supplier && !statesKnown ? UNKNOWN_STATE_NOTE : undefined}
+        otherCharges={otherCharges}
+        onOtherChargesChange={setOtherCharges}
+      />
 
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={() => router.back()}>

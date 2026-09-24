@@ -27,7 +27,8 @@ to India.
 | `DIRECT_DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (schema owner: migrations, grants) |
 | `APP_DB_PASSWORD` | random letters/digits (`openssl rand -hex 24`) |
 | `DATABASE_URL` | `postgresql://margix_app:<APP_DB_PASSWORD>@${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}` |
-| `COMPANY_NAME`, `COMPANY_ADDRESS`, `COMPANY_GSTIN` | letterhead on printed notes |
+| `COMPANY_NAME`, `COMPANY_ADDRESS`, `COMPANY_GSTIN` | letterhead on printed documents; the GSTIN's state decides CGST+SGST vs IGST |
+| `COMPANY_STATE_CODE`, `COMPANY_BANK_DETAILS` | GST state when there is no GSTIN; bank details on tax invoices |
 | `TALLY_MODE` | `mock` until Tally Prime is reachable from Railway |
 | `LOGIN_MAX_ATTEMPTS`, `LOGIN_LOCKOUT_MINUTES` | `20` / `5` while testing; `5` / `15` for go-live |
 | `LOG_LEVEL` | `info` |

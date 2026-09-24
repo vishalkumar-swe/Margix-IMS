@@ -9,6 +9,7 @@ import { withTx, type Tx } from "@/server/db/transaction";
 import { BusinessRuleError, ConflictError, NotFoundError, ValidationError } from "@/server/errors";
 import { recordAudit } from "@/server/modules/audit/audit.service";
 import { nextDocumentNumber, withIdempotency } from "@/server/modules/documents/documents.service";
+import { documentTaxTerms, documentTotals } from "@/server/modules/documents/pricing";
 import { assertUomPrecision } from "@/server/modules/inventory/movement-rules";
 import { toBaseQuantity } from "@/server/modules/inventory/units";
 import { loadActiveCustomer, loadTransactableSkus } from "@/server/modules/masters/masters.queries";
@@ -25,7 +26,9 @@ export function createInvoice(actor: Actor, input: InvoiceCreateInput): Promise<
     (key) => prisma.invoice.findUnique({ where: { idempotencyKey: key } }),
     () =>
       withTx(async (tx) => {
-        await loadActiveCustomer(tx, input.customerId);
+        const customer = await loadActiveCustomer(tx, input.customerId);
+        // GST terms and each line's HSN code and rate are fixed now, so later master edits never change the invoice.
+        const { taxType, placeOfSupply } = documentTaxTerms("sale", customer);
         const skus = await loadTransactableSkus(
           tx,
           input.items.map((i) => i.skuId),
@@ -43,7 +46,10 @@ export function createInvoice(actor: Actor, input: InvoiceCreateInput): Promise<
             entryQuantity: entry?.quantity ?? null,
             entryFactor: entry?.factor ?? null,
             rate: item.rate ?? null,
-            gstRate: item.gstRate ?? null,
+            discountPercent: item.discountPercent ?? "0",
+            // A line without its own GST rate takes the product's applied rate.
+            gstRate: item.gstRate ?? sku.gstRate ?? null,
+            hsnCode: sku.hsnCode,
           };
         });
 
@@ -53,6 +59,10 @@ export function createInvoice(actor: Actor, input: InvoiceCreateInput): Promise<
             customerId: input.customerId,
             invoiceDate: dateOnlyToUtc(input.invoiceDate),
             remarks: input.remarks,
+            taxType,
+            placeOfSupply,
+            otherCharges: input.otherCharges ?? "0",
+            otherChargesLabel: input.otherChargesLabel ?? null,
             idempotencyKey: input.idempotencyKey,
             createdById: actor.userId,
             items: { create: itemRows },
@@ -63,7 +73,7 @@ export function createInvoice(actor: Actor, input: InvoiceCreateInput): Promise<
           action: "INVOICE_CREATED",
           entityType: "Invoice",
           entityId: invoice.id,
-          newData: invoice,
+          newData: { ...invoice, totals: documentTotals(invoice, (item) => item.quantity) },
         });
         return invoice;
       }),

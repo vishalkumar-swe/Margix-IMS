@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { gstStateName, partyStateCode } from "@/lib/gst-states";
 import { PartyFormDialog } from "./party-form-dialog";
 
 interface Party {
@@ -7,6 +8,7 @@ interface Party {
   code: string;
   name: string;
   gstin: string | null;
+  stateCode: string | null;
   email: string | null;
   phone: string | null;
   address: string | null;
@@ -22,6 +24,7 @@ export function PartyTable({ kind, parties, canManage }: { kind: "supplier" | "c
           <TH>Code</TH>
           <TH>Name</TH>
           <TH>GSTIN</TH>
+          <TH>State</TH>
           <TH>Contact</TH>
           <TH>Status</TH>
           {canManage && <TH className="sr-only">Actions</TH>}
@@ -36,6 +39,7 @@ export function PartyTable({ kind, parties, canManage }: { kind: "supplier" | "c
               {p.address && <span className="block max-w-64 truncate text-xs text-slate-500">{p.address}</span>}
             </TD>
             <TD className="font-mono text-xs">{p.gstin ?? "—"}</TD>
+            <TD className="text-xs">{gstStateName(partyStateCode(p))}</TD>
             <TD className="text-xs">
               {p.phone ?? "—"}
               {p.email && <span className="block text-slate-500">{p.email}</span>}
@@ -52,6 +56,7 @@ export function PartyTable({ kind, parties, canManage }: { kind: "supplier" | "c
                     code: p.code,
                     name: p.name,
                     gstin: p.gstin ?? "",
+                    stateCode: p.stateCode ?? "",
                     email: p.email ?? "",
                     phone: p.phone ?? "",
                     address: p.address ?? "",

@@ -128,12 +128,18 @@ async function main() {
   const supplier = await prisma.supplier.upsert({
     where: { code: "SUP-001" },
     update: {},
-    create: { code: "SUP-001", name: "Global Polymers Pvt Ltd", gstin: "27AAACG1234F1Z5" },
+    create: { code: "SUP-001", name: "Global Polymers Pvt Ltd", gstin: "27AAACG1234F1Z5", stateCode: "27" },
   });
   await prisma.customer.upsert({
     where: { code: "CUS-001" },
     update: {},
-    create: { code: "CUS-001", name: "Retail Chain India Ltd", gstin: "29AABCR5678K1Z2" },
+    create: { code: "CUS-001", name: "Retail Chain India Ltd", gstin: "29AABCR5678K1Z2", stateCode: "29" },
+  });
+  // Unregistered (no GSTIN): its state decides CGST + SGST or IGST on invoices.
+  await prisma.customer.upsert({
+    where: { code: "CUS-002" },
+    update: {},
+    create: { code: "CUS-002", name: "Sharma General Stores", stateCode: "27", address: "Pune, Maharashtra" },
   });
 
   // Sample HSN master entries for the sample products. Load the official
@@ -171,6 +177,7 @@ async function main() {
       hsnCode: "3901",
       gstRate: "18",
       tallyStockItemName: "Premium Polymer Resin",
+      barcode: "2000000000015",
     },
   });
   const bottle = await prisma.sku.upsert({
@@ -184,6 +191,7 @@ async function main() {
       hsnCode: "3923",
       gstRate: "18",
       tallyStockItemName: "Molded Bottle 500ml",
+      barcode: "2000000000022",
     },
   });
   await prisma.skuUnit.upsert({
@@ -201,6 +209,7 @@ async function main() {
       baseUomId: pcs.id,
       isBatchTracked: false,
       tallyStockItemName: "Shipping Carton Large",
+      barcode: "2000000000039",
     },
   });
 
@@ -223,7 +232,9 @@ async function main() {
     submit: true,
     idempotencyKey: PO_KEY,
     remarks: "Monthly resin replenishment",
-    items: [{ skuId: resin.id, orderedQty: "1000", rate: "145.50", gstRate: "18" }],
+    otherCharges: "2500",
+    otherChargesLabel: "Freight",
+    items: [{ skuId: resin.id, orderedQty: "1000", rate: "145.50", discountPercent: "2.5", gstRate: "18" }],
   });
 
   console.log(`Seed complete. Admin: ${adminEmail}`);

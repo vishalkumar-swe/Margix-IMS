@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { barcodeProblem } from "@/lib/barcode";
 import { SKU_STATUSES } from "@/lib/enums";
+import { isGstStateCode } from "@/lib/gst-states";
 import { hsnCodeSchema } from "./hsn";
 import {
   clearableText,
@@ -28,6 +30,15 @@ const optionalCode = z.preprocess((v) => (typeof v === "string" && v.trim() === 
 
 // ---- SKU ----
 
+/** EAN-13 (check digit verified) or any Code 128 value; see lib/barcode.ts. */
+export const barcodeSchema = z
+  .string()
+  .trim()
+  .superRefine((value, ctx) => {
+    const problem = barcodeProblem(value);
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
+  });
+
 export const skuCreateSchema = z.object({
   code: optionalCode,
   name: requiredText(200, "Name"),
@@ -39,6 +50,8 @@ export const skuCreateSchema = z.object({
   gstRate: gstRateSchema.optional(),
   isBatchTracked: z.boolean().default(true),
   tallyStockItemName: optionalText(200),
+  /** Blank: an internal EAN-13 is generated. */
+  barcode: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), barcodeSchema.optional()),
 });
 
 export const skuUpdateSchema = z.object({
@@ -50,7 +63,44 @@ export const skuUpdateSchema = z.object({
   gstRate: clearable(gstRateSchema),
   isBatchTracked: z.boolean().optional(),
   tallyStockItemName: clearableText(200),
+  barcode: clearable(barcodeSchema),
   status: z.enum(SKU_STATUSES).optional(),
+});
+
+/** Generating a barcode for a SKU that already has one requires `replace`. */
+export const skuBarcodeGenerateSchema = z.object({ replace: z.boolean().default(false) });
+
+export const MAX_LABEL_COPIES = 200;
+
+/** Copies per label as written in a URL ("12"). */
+const labelCopiesSchema = z
+  .string()
+  .regex(/^\d{1,4}$/)
+  .transform(Number)
+  .pipe(z.number().int().min(1).max(MAX_LABEL_COPIES));
+
+/** Label page of one SKU: `?copies=12`. */
+export const skuLabelQuerySchema = z.object({ copies: labelCopiesSchema.default(1) });
+
+/** Label sheet of several SKUs: `?items=<skuId>:<copies>,<skuId>:<copies>`. */
+export const labelSheetQuerySchema = z.object({
+  items: z
+    .string()
+    .default("")
+    .transform((value) => value.split(",").filter(Boolean))
+    .pipe(
+      z
+        .array(
+          z
+            .string()
+            .transform((entry) => {
+              const [skuId, copies] = entry.split(":");
+              return { skuId, copies };
+            })
+            .pipe(z.object({ skuId: idSchema, copies: labelCopiesSchema })),
+        )
+        .max(100),
+    ),
 });
 
 // ---- Godown ----
@@ -80,11 +130,17 @@ const gstinSchema = z
   .transform((v) => v.toUpperCase())
   .pipe(z.string().regex(GSTIN, "Enter a valid 15-character GSTIN."));
 const emailSchema = z.string().trim().pipe(z.email("Enter a valid email."));
+const stateCodeSchema = z
+  .string()
+  .trim()
+  .refine(isGstStateCode, "Select a GST state.");
 
 export const partyCreateSchema = z.object({
   code: optionalCode,
   name: requiredText(200, "Name"),
   gstin: z.preprocess((v) => (v === "" ? undefined : v), gstinSchema.optional()),
+  /** Used for the GST split when the party has no GSTIN. */
+  stateCode: z.preprocess((v) => (v === "" ? undefined : v), stateCodeSchema.optional()),
   email: z.preprocess((v) => (v === "" ? undefined : v), emailSchema.optional()),
   phone: optionalText(20),
   address: optionalText(500),
@@ -93,6 +149,7 @@ export const partyCreateSchema = z.object({
 export const partyUpdateSchema = z.object({
   name: requiredText(200, "Name").optional(),
   gstin: clearable(gstinSchema),
+  stateCode: clearable(stateCodeSchema),
   email: clearable(emailSchema),
   phone: clearableText(20),
   address: clearableText(500),

@@ -8,10 +8,18 @@ function blankAsUndefined(env: NodeJS.ProcessEnv): Record<string, string | undef
 const envSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-    /** Printed on GRN and dispatch notes. */
+    /** Letterhead of printed documents (invoices, purchase orders, GRN and dispatch notes). */
     COMPANY_NAME: z.string().trim().min(1).default("Margix India"),
     COMPANY_ADDRESS: z.string().trim().min(1).optional(),
     COMPANY_GSTIN: z.string().trim().min(1).optional(),
+    /** GST state code of the company (e.g. "29"); only needed when COMPANY_GSTIN is blank. */
+    COMPANY_STATE_CODE: z
+      .string()
+      .trim()
+      .regex(/^[0-9]{2}$/, "must be a 2-digit GST state code")
+      .optional(),
+    /** Bank / payment details printed on tax invoices (free text). */
+    COMPANY_BANK_DETAILS: z.string().trim().min(1).optional(),
     DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
     SESSION_TTL_HOURS: z.coerce.number().int().positive().max(24 * 30).default(12),
     /** Consecutive wrong passwords before an account is locked. */

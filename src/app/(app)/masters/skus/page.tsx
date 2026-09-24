@@ -1,14 +1,16 @@
-import { Package } from "lucide-react";
+import { Package, Tags } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { FilterBar } from "@/components/shared/filter-bar";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/ui/pagination";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { SkuImportDialog } from "@/features/imports/import-dialogs";
+import { GenerateBarcodesButton } from "@/features/masters/generate-barcodes-button";
 import { EMPTY_SKU, SkuFormDialog } from "@/features/masters/sku-form-dialog";
 import { SkuUnitsDialog } from "@/features/masters/sku-units-dialog";
 import { humanize } from "@/lib/format";
@@ -41,17 +43,23 @@ export default async function SkusPage({ searchParams }: PageProps<"/masters/sku
         title="Products (SKUs)"
         description="Items tracked in inventory. SKUs are archived, never deleted, so history stays intact."
         actions={
-          canManage && (
-            <>
-              <SkuImportDialog />
-              <SkuFormDialog initial={EMPTY_SKU} categories={categoryOptions} uoms={uoms} nextCode={nextCode} />
-            </>
-          )
+          <>
+            <Link href="/masters/skus/labels" className={buttonVariants({ variant: "secondary" })}>
+              <Tags aria-hidden /> Print labels
+            </Link>
+            {canManage && (
+              <>
+                <GenerateBarcodesButton />
+                <SkuImportDialog />
+                <SkuFormDialog initial={EMPTY_SKU} categories={categoryOptions} uoms={uoms} nextCode={nextCode} />
+              </>
+            )}
+          </>
         }
       />
       <Card>
         <FilterBar
-          search={{ name: "q", placeholder: "Code or name", value: query.q }}
+          search={{ name: "q", placeholder: "Code, name or barcode", value: query.q }}
           selects={[
             {
               name: "status",
@@ -72,6 +80,7 @@ export default async function SkusPage({ searchParams }: PageProps<"/masters/sku
                   <TH>Unit</TH>
                   <TH>Batches</TH>
                   <TH>HSN / GST</TH>
+                  <TH>Barcode</TH>
                   <TH>Tally item</TH>
                   <TH>Status</TH>
                   {canManage && <TH className="sr-only">Actions</TH>}
@@ -99,6 +108,19 @@ export default async function SkusPage({ searchParams }: PageProps<"/masters/sku
                     <TD className="text-xs">
                       {sku.hsnCode ?? "—"}
                       {sku.gstRate && <span className="block text-slate-500">{sku.gstRate.toString()}%</span>}
+                    </TD>
+                    <TD className="text-xs">
+                      {sku.barcode ? (
+                        <Link
+                          href={`/masters/skus/${sku.id}/label`}
+                          className="font-mono text-brand-700 hover:underline"
+                          title="Print label"
+                        >
+                          {sku.barcode}
+                        </Link>
+                      ) : (
+                        <span className="text-amber-700">None</span>
+                      )}
                     </TD>
                     <TD className="text-xs">
                       {sku.tallyStockItemName ?? <span className="text-amber-700">Not mapped</span>}
@@ -129,6 +151,7 @@ export default async function SkusPage({ searchParams }: PageProps<"/masters/sku
                             gstRate: sku.gstRate?.toString() ?? "",
                             isBatchTracked: sku.isBatchTracked,
                             tallyStockItemName: sku.tallyStockItemName ?? "",
+                            barcode: sku.barcode ?? "",
                             status: sku.status,
                           }}
                         />

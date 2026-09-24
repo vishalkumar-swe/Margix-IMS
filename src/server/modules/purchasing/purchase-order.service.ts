@@ -8,6 +8,7 @@ import { withTx, type Tx } from "@/server/db/transaction";
 import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
 import { recordAudit } from "@/server/modules/audit/audit.service";
 import { nextDocumentNumber, withIdempotency } from "@/server/modules/documents/documents.service";
+import { documentTaxTerms, documentTotals } from "@/server/modules/documents/pricing";
 import { assertUomPrecision } from "@/server/modules/inventory/movement-rules";
 import { toBaseQuantity } from "@/server/modules/inventory/units";
 import { loadActiveSupplier, loadTransactableSkus } from "@/server/modules/masters/masters.queries";
@@ -26,7 +27,7 @@ export function createPurchaseOrder(actor: Actor, input: PoCreateInput): Promise
     (key) => prisma.purchaseOrder.findUnique({ where: { idempotencyKey: key } }),
     () =>
       withTx(async (tx) => {
-        const itemRows = await buildPoItemRows(tx, input);
+        const { terms, itemRows } = await buildPoContent(tx, input);
         const poNumber = await nextDocumentNumber(tx, "PO");
         const now = new Date();
 
@@ -38,6 +39,7 @@ export function createPurchaseOrder(actor: Actor, input: PoCreateInput): Promise
             orderDate: dateOnlyToUtc(input.orderDate),
             expectedDate: input.expectedDate ? dateOnlyToUtc(input.expectedDate) : null,
             remarks: input.remarks,
+            ...terms,
             idempotencyKey: input.idempotencyKey,
             createdById: actor.userId,
             submittedAt: input.submit ? now : null,
@@ -45,7 +47,12 @@ export function createPurchaseOrder(actor: Actor, input: PoCreateInput): Promise
           },
           include: { items: true },
         });
-        await recordAudit(tx, actor, { action: "PO_CREATED", entityType: "PurchaseOrder", entityId: po.id, newData: po });
+        await recordAudit(tx, actor, {
+          action: "PO_CREATED",
+          entityType: "PurchaseOrder",
+          entityId: po.id,
+          newData: { ...po, totals: documentTotals(po, (item) => item.orderedQty) },
+        });
         return po;
       }),
   );
@@ -58,7 +65,7 @@ export function updateDraftPurchaseOrder(actor: Actor, id: string, input: PoUpda
     if (before.status !== "DRAFT") {
       throw new ConflictError("INVALID_STATE", `Only draft purchase orders can be edited (${before.poNumber} is ${before.status}).`);
     }
-    const itemRows = await buildPoItemRows(tx, input);
+    const { terms, itemRows } = await buildPoContent(tx, input);
 
     await tx.purchaseOrderItem.deleteMany({ where: { purchaseOrderId: id } });
     const after = await tx.purchaseOrder.update({
@@ -68,6 +75,7 @@ export function updateDraftPurchaseOrder(actor: Actor, id: string, input: PoUpda
         orderDate: dateOnlyToUtc(input.orderDate),
         expectedDate: input.expectedDate ? dateOnlyToUtc(input.expectedDate) : null,
         remarks: input.remarks ?? null,
+        ...terms,
         items: { create: itemRows },
       },
       include: { items: true },
@@ -77,7 +85,7 @@ export function updateDraftPurchaseOrder(actor: Actor, id: string, input: PoUpda
       entityType: "PurchaseOrder",
       entityId: id,
       oldData: before,
-      newData: after,
+      newData: { ...after, totals: documentTotals(after, (item) => item.orderedQty) },
     });
     return after;
   });
@@ -179,15 +187,23 @@ export async function recomputePurchaseOrderStatus(tx: Tx, id: string): Promise<
 /**
  * Validates supplier and lines and converts each entered quantity to the
  * SKU's base unit (keeping the as-entered snapshot for alternate units).
- * Returns the rows to store.
+ * Fixes the GST terms (supplier state vs ours) and snapshots each line's HSN
+ * code and GST rate, so later master edits never change the order.
  */
-async function buildPoItemRows(tx: Tx, input: PoUpdateInput) {
-  await loadActiveSupplier(tx, input.supplierId);
+async function buildPoContent(tx: Tx, input: PoUpdateInput) {
+  const supplier = await loadActiveSupplier(tx, input.supplierId);
+  const { taxType, placeOfSupply } = documentTaxTerms("purchase", supplier);
+  const terms = {
+    taxType,
+    placeOfSupply,
+    otherCharges: input.otherCharges ?? "0",
+    otherChargesLabel: input.otherChargesLabel ?? null,
+  };
   const skus = await loadTransactableSkus(
     tx,
     input.items.map((i) => i.skuId),
   );
-  return input.items.map((item, index) => {
+  const itemRows = input.items.map((item, index) => {
     const sku = skus.get(item.skuId)!;
     if (sku.status !== "ACTIVE") throw new ValidationError(`SKU ${sku.code} is not active.`, { sku: sku.code });
     const { baseQuantity, entry } = toBaseQuantity(sku, item.orderedQty, item.uomId);
@@ -200,9 +216,13 @@ async function buildPoItemRows(tx: Tx, input: PoUpdateInput) {
       entryQuantity: entry?.quantity ?? null,
       entryFactor: entry?.factor ?? null,
       rate: item.rate ?? null,
-      gstRate: item.gstRate ?? null,
+      discountPercent: item.discountPercent ?? "0",
+      // A line without its own GST rate takes the product's applied rate.
+      gstRate: item.gstRate ?? sku.gstRate ?? null,
+      hsnCode: sku.hsnCode,
     };
   });
+  return { terms, itemRows };
 }
 
 async function stateError(tx: Tx, id: string, message: string) {

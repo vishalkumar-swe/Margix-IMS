@@ -3,6 +3,7 @@ import { INVOICE_STATUSES } from "@/lib/enums";
 import {
   amountSchema,
   dateSchema,
+  discountPercentSchema,
   gstRateSchema,
   idempotencyKeySchema,
   idSchema,
@@ -21,6 +22,7 @@ export const invoiceItemSchema = z.object({
   quantity: quantitySchema,
   uomId: idSchema.optional(),
   rate: amountSchema.optional(),
+  discountPercent: discountPercentSchema.optional(),
   gstRate: gstRateSchema.optional(),
 });
 
@@ -29,6 +31,9 @@ export const invoiceCreateSchema = z
     customerId: idSchema,
     invoiceDate: dateSchema,
     remarks: optionalText(500),
+    /** Freight, packing etc.: added after tax, not taxed. */
+    otherCharges: amountSchema.optional(),
+    otherChargesLabel: optionalText(60),
     idempotencyKey: idempotencyKeySchema,
     items: z.array(invoiceItemSchema).min(1, "Add at least one item.").max(200),
   })

@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/form-controls";
 import { Table, TBody, TD, TH, THead } from "@/components/ui/table";
+import { ScanInput, type ScanStatus } from "@/features/scan/scan-input";
+import { resolveScannedSku } from "@/features/scan/scan-lookup";
 import { apiRequest } from "@/lib/api-client";
 import { formatQuantity } from "@/lib/format";
 import type { SkuOption } from "@/lib/options";
@@ -35,7 +37,8 @@ export const emptyBatchLine = (): BatchLine => ({
 /**
  * Lines that take stock out of one godown: SKU → batch with stock there
  * (FEFO order, available quantity shown) → quantity. Entering a SKU and a
- * quantity first offers an automatic FEFO pick across batches. Shared by
+ * quantity first offers an automatic FEFO pick across batches. Scanning a
+ * product barcode selects its line (adding one when needed). Shared by
  * dispatches and transfers.
  */
 export function BatchLinesEditor({
@@ -60,6 +63,7 @@ export function BatchLinesEditor({
   const skuById = new Map(skus.map((s) => [s.id, s]));
   const [fefoMessages, setFefoMessages] = useState<Record<string, string>>({});
   const [fefoPending, setFefoPending] = useState<string | null>(null);
+  const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null);
   const update = (key: string, patch: Partial<BatchLine>) =>
     onChange(lines.map((line) => (line.key === key ? { ...line, ...patch } : line)));
 
@@ -95,6 +99,27 @@ export function BatchLinesEditor({
     }
   }
 
+  /** Selects the scanned product's line: focuses it, or puts the product on a new line. */
+  async function selectScanned(code: string) {
+    const result = await resolveScannedSku(skus, code, "cannot be picked here");
+    if ("error" in result) {
+      setScanStatus({ tone: "error", text: result.error });
+      return;
+    }
+    const { sku } = result;
+    const index = lines.findIndex((line) => line.skuId === sku.id);
+    if (index >= 0) {
+      setScanStatus({ tone: "info", text: `${sku.code} is on line ${index + 1}.` });
+      focusQuantity(lines[index].key);
+      return;
+    }
+    const blank = lines.find((line) => !line.skuId);
+    const line = { ...(blank ?? emptyBatchLine()), skuId: sku.id, batchId: "", available: null };
+    onChange(blank ? lines.map((l) => (l.key === blank.key ? line : l)) : [...lines, line]);
+    setScanStatus({ tone: "success", text: `Added ${sku.code} · ${sku.name}. Enter the quantity and pick a batch.` });
+    focusQuantity(line.key);
+  }
+
   return (
     <Card>
       <CardHeader
@@ -106,6 +131,9 @@ export function BatchLinesEditor({
           </Button>
         }
       />
+      <div className="border-b border-slate-200 px-5 py-3">
+        <ScanInput label="Scan product" onScan={selectScanned} status={scanStatus} className="max-w-xl" />
+      </div>
       <Table>
         <THead>
           <tr>
@@ -164,6 +192,7 @@ export function BatchLinesEditor({
                 <TD>
                   <div className="flex items-center gap-2">
                     <Input
+                      id={quantityInputId(line.key)}
                       aria-label={`Quantity for line ${index + 1}`}
                       inputMode="decimal"
                       value={line.quantity}
@@ -195,4 +224,11 @@ export function BatchLinesEditor({
       </Table>
     </Card>
   );
+}
+
+const quantityInputId = (key: string) => `batch-line-qty-${key}`;
+
+/** Focuses a line's quantity once it has rendered. */
+function focusQuantity(key: string) {
+  requestAnimationFrame(() => document.getElementById(quantityInputId(key))?.focus());
 }
