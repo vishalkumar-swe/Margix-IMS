@@ -27,14 +27,30 @@ import { formatCompactNumber, formatMoney, formatQuantity } from "@/lib/format";
  * never its rank). Every chart has a legend or a title naming its one series,
  * and a table view (see ChartPanel).
  */
-export const CHART_COLORS = ["#d99a00", "#334155", "#8a6100", "#94a3b8", "#ffc620", "#0f172a"] as const;
-export const OTHER_COLOR = "#cbd5e1";
+// Theme tokens (not hex), so charts follow light/dark mode (see globals.css).
+export const CHART_COLORS = [
+  "var(--color-brand-600)",
+  "var(--color-slate-700)",
+  "var(--color-brand-800)",
+  "var(--color-slate-400)",
+  "var(--color-brand-400)",
+  "var(--color-slate-900)",
+] as const;
+export const OTHER_COLOR = "var(--color-slate-300)";
 
-const AXIS = { fontSize: 12, fill: "#64748b" };
-const GRID = "#e2e8f0";
+const AXIS = { fontSize: 12, fill: "var(--color-slate-500)" };
+const GRID = "var(--color-slate-200)";
+const TOOLTIP_STYLE = {
+  borderRadius: 8,
+  borderColor: GRID,
+  fontSize: 12,
+  background: "var(--glass-strong)",
+  color: "var(--color-slate-900)",
+  backdropFilter: "blur(12px)",
+};
 
 /** Legend labels stay in text ink; the swatch carries the series colour. */
-const legendText = (value: string) => <span style={{ color: "#475569" }}>{value}</span>;
+const legendText = (value: string) => <span style={{ color: "var(--color-slate-600)" }}>{value}</span>;
 
 export type ValueFormat = "money" | "quantity";
 
@@ -80,13 +96,13 @@ export function TrendChart({
           <XAxis dataKey="label" tick={AXIS} tickLine={false} axisLine={{ stroke: GRID }} minTickGap={16} />
           <YAxis tick={AXIS} tickLine={false} axisLine={false} width={56} tickFormatter={formatCompactNumber} />
           <Tooltip
-            cursor={{ stroke: "#94a3b8", strokeDasharray: "3 3" }}
+            cursor={{ stroke: "var(--color-slate-400)", strokeDasharray: "3 3" }}
             formatter={(value, name, item) => {
               const key = series.find((s) => s.label === name)?.key;
               const raw = key ? (item.payload as { raw: Record<string, string> }).raw[key] : value;
               return [formatValue(String(raw ?? value), format), name];
             }}
-            contentStyle={{ borderRadius: 6, borderColor: GRID, fontSize: 12 }}
+            contentStyle={TOOLTIP_STYLE}
           />
           {series.length > 1 && <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} formatter={legendText} />}
           {series.map((s, index) => (
@@ -99,8 +115,8 @@ export function TrendChart({
               strokeWidth={2}
               fill={CHART_COLORS[s.color ?? index]}
               fillOpacity={series.length > 1 ? 0.08 : 0.15}
-              dot={data.length <= 12 ? { r: 3, strokeWidth: 2, fill: "#fff" } : false}
-              activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
+              dot={data.length <= 12 ? { r: 3, strokeWidth: 2, fill: "var(--color-white)" } : false}
+              activeDot={{ r: 4, stroke: "var(--color-white)", strokeWidth: 2 }}
               isAnimationActive={false}
             />
           ))}
@@ -145,9 +161,9 @@ export function BarBreakdownChart({
             tickFormatter={(v: string) => (v.length > 18 ? `${v.slice(0, 17)}…` : v)}
           />
           <Tooltip
-            cursor={{ fill: "#f1f5f9" }}
+            cursor={{ fill: "var(--color-slate-100)" }}
             formatter={(_value, _name, item) => [formatValue((item.payload as { raw: string }).raw, format), seriesLabel]}
-            contentStyle={{ borderRadius: 6, borderColor: GRID, fontSize: 12 }}
+            contentStyle={TOOLTIP_STYLE}
           />
           <Bar dataKey="value" name={seriesLabel} fill={CHART_COLORS[0]} radius={[0, 4, 4, 0]} maxBarSize={22} isAnimationActive={false} />
         </BarChart>
@@ -187,7 +203,7 @@ export function DonutChart({ data, ariaLabel }: { data: BarDatum[]; ariaLabel: s
             innerRadius="58%"
             outerRadius="85%"
             paddingAngle={slices.length > 1 ? 1 : 0}
-            stroke="#fff"
+            stroke="var(--color-white)"
             strokeWidth={2}
             isAnimationActive={false}
           >
@@ -197,7 +213,7 @@ export function DonutChart({ data, ariaLabel }: { data: BarDatum[]; ariaLabel: s
           </Pie>
           <Tooltip
             formatter={(_value, name, item) => [formatMoney((item.payload as { raw: string }).raw), name]}
-            contentStyle={{ borderRadius: 6, borderColor: GRID, fontSize: 12 }}
+            contentStyle={TOOLTIP_STYLE}
           />
           <Legend iconType="circle" layout="vertical" align="right" verticalAlign="middle" wrapperStyle={{ fontSize: 12 }} formatter={legendText} />
         </PieChart>

@@ -48,7 +48,7 @@ export function KpiCard({
       {footer && <div className="mt-1 text-xs text-slate-500">{footer}</div>}
     </>
   );
-  const className = "block rounded-lg border border-slate-200 bg-white p-4 shadow-sm";
+  const className = "glass block rounded-xl border p-4";
   return href ? (
     <Link href={href} className={cn(className, "transition-colors hover:border-brand-300")}>
       {content}
@@ -106,7 +106,7 @@ function Sparkline({ values }: { values: string[] }) {
     .join(" ");
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden className="shrink-0">
-      <polyline points={points} fill="none" stroke="#d99a00" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+      <polyline points={points} fill="none" stroke="var(--color-brand-600)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   );
 }

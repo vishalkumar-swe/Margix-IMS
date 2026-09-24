@@ -148,14 +148,16 @@ services:
   # WhatsApp messages (exit code 2 = some deliveries failed; they are retried
   # with backoff, so keep going).
   notify:
-    image: localhost/margix-ims-tools:latest
+    image: localhost/margix-ims-runtime:latest
     restart: unless-stopped
     <<: *hardening
     cap_drop: [ALL]
     mem_limit: 512m
     pids_limit: 128
     environment: *app-env
-    command: ["sh", "-c", "while true; do npx tsx scripts/notify.ts || true; sleep ${NOTIFY_INTERVAL:-60}; done"]
+    volumes:
+      - ./release:/app:ro,z
+    command: ["sh", "-c", "trap 'exit 0' TERM; while true; do node scripts/notify.mjs || true; sleep ${NOTIFY_INTERVAL:-60} & wait $$!; done"]
     depends_on:
       migrate: { condition: service_completed_successfully }
     networks: [margix_net]

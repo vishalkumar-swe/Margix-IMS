@@ -23,8 +23,8 @@ import { getPurchaseOrderDetail } from "@/server/modules/purchasing/purchasing.q
 
 export const metadata: Metadata = { title: "Purchase order" };
 
-/** A GRN number as issued by the document sequence (confirmation banner input). */
-const GRN_NUMBER = /^GRN-\d{4}-\d{5}$/;
+/** A document number as the numbering master can issue it (confirmation banner input; format is configurable). */
+const GRN_NUMBER = /^[A-Z0-9][A-Z0-9/_.-]{0,39}$/;
 
 export default async function PurchaseOrderPage({ params, searchParams }: PageProps<"/purchase-orders/[id]">) {
   const user = await requirePagePermission("po.view");

@@ -50,9 +50,13 @@ mkdir -p "$NEW/prisma" "$NEW/ops/postgres" "$NEW/ops/railway" "$NEW/scripts"
 cp -a prisma/schema.prisma prisma/migrations "$NEW/prisma/"
 cp -a ops/postgres/app-role-grants.sql "$NEW/ops/postgres/"
 cp -a ops/railway/pre-deploy.sh "$NEW/ops/railway/"
-# The Tally worker, bundled so it runs with the release's own node_modules.
-npx esbuild scripts/tally-sync.ts --bundle --platform=node --format=esm --target=node22 \
-  --external:@prisma/client --external:.prisma/client --external:pg-native --tsconfig=tsconfig.json --log-level=warning --outfile="$NEW/scripts/tally-sync.mjs"
+# The background workers, bundled so they run with the release's own node_modules.
+for worker in tally-sync notify; do
+  npx esbuild "scripts/$worker.ts" --bundle --platform=node --format=esm --target=node22 \
+    --external:@prisma/client --external:.prisma/client --external:pg-native --tsconfig=tsconfig.json \
+    --banner:js="import { createRequire } from 'module'; const require = createRequire(import.meta.url);" \
+    --log-level=warning --outfile="$NEW/scripts/$worker.mjs"
+done
 chmod -R a+rX "$NEW"
 
 log "Running migrations"
@@ -69,7 +73,7 @@ rm -rf "$DEPLOY/release.old"
 [[ -d "$DEPLOY/release" ]] && mv "$DEPLOY/release" "$DEPLOY/release.old"
 mv "$NEW" "$DEPLOY/release"
 "${COMPOSE[@]}" up -d --no-build 2>&1 | grep -iE "error|warn" || true
-"${COMPOSE[@]}" restart app tally-sync 2>&1 | grep -iE "error" || true
+"${COMPOSE[@]}" restart app tally-sync notify 2>&1 | grep -iE "error" || true
 rm -rf "$DEPLOY/release.old"
 
 log "Waiting for the app"
