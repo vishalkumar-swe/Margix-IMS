@@ -42,7 +42,7 @@ describe("frequency", () => {
 
 describe("retry backoff", () => {
   it("doubles per attempt and is capped at an hour", () => {
-    expect([1, 2, 3, 4, 5].map(retryDelayMinutes)).toEqual([2, 4, 8, 16, 32]);
+    expect([1, 2, 3, 4, 5].map((attempt) => retryDelayMinutes(attempt))).toEqual([2, 4, 8, 16, 32]);
     expect(retryDelayMinutes(6)).toBe(60);
     expect(retryDelayMinutes(20)).toBe(60);
     expect(MAX_DELIVERY_ATTEMPTS).toBeGreaterThan(1);

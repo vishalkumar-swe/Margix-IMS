@@ -19,6 +19,7 @@
     "test:e2e": "playwright test",
     "tally:sync": "tsx --env-file=.env scripts/tally-sync.ts",
     "notify:run": "tsx --env-file=.env scripts/notify.ts",
+    "integration:new": "node scripts/new-integration.mjs",
     "db:grants": "tsx --env-file=.env scripts/db-grants.ts",
     "db:backup": "ops/backup/backup.sh",
     "db:verify-backup": "ops/backup/verify-restore.sh"

@@ -334,6 +334,17 @@ count, rendered by the app layout, refreshes on every open screen.
   resolved by the next movement of that SKU in that godown or when a later
   scan no longer finds it.
 
+## Integrations
+
+All outside systems (Tally, e-mail, WhatsApp, webhooks) implement one
+`Integration` contract (`src/server/integrations/integration.types.ts`) and are
+listed in `registry.ts`, which drives the Integrations admin screen and
+`/api/v1/integrations`. Work is queued in an outbox table in the business
+transaction and delivered by a worker (`FOR UPDATE SKIP LOCKED`, shared backoff
+in `retry.ts`, outbound HTTP through `http.ts`). Webhook events are derived from
+audit records (`webhook-emitter.ts`), so every audited business action can be
+published with a two-line change. Details and the how-to: [integrations.md](integrations.md).
+
 ## Daily checklist
 
 `checklist.queries.ts` computes a user's checklist for the current IST day:

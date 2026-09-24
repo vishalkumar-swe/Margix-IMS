@@ -19,6 +19,8 @@ export interface SmtpConfig {
 /** The part of a nodemailer transport this channel uses (replaced in tests). */
 export interface MailTransport {
   sendMail(mail: { from: string; to: string; subject: string; text: string }): Promise<{ messageId?: string }>;
+  /** Connects and authenticates without sending anything. */
+  verify?(): Promise<unknown>;
 }
 
 export type MailTransportFactory = (config: SmtpConfig) => MailTransport;
@@ -81,6 +83,18 @@ export class EmailChannel implements NotificationChannelProvider {
       const responseCode = (error as { responseCode?: number }).responseCode;
       const permanent = typeof responseCode === "number" && responseCode >= 500 && responseCode !== 535;
       return { status: "FAILED", error: describeError(error), retryable: !permanent };
+    }
+  }
+
+  /** Connection check: SMTP handshake and login, no message sent. */
+  async check(): Promise<{ ok: boolean; message: string }> {
+    if (!this.configured) return { ok: false, message: "Not configured." };
+    try {
+      this.transport ??= this.transportFactory(this.config);
+      await this.transport.verify?.();
+      return { ok: true, message: `Connected to ${this.config.host}:${this.config.port} and signed in.` };
+    } catch (error) {
+      return { ok: false, message: describeError(error) };
     }
   }
 

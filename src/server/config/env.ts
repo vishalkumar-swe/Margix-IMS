@@ -60,6 +60,9 @@ const envSchema = z
     WHATSAPP_TEMPLATE_LANGUAGE: z.string().trim().min(2).default("en"),
     /** Delivery timeout for e-mail and WhatsApp calls. */
     NOTIFY_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
+    /** Webhooks: set to true only to allow endpoints on private/LAN addresses or plain http (e.g. an on-premise service). */
+    WEBHOOK_ALLOW_PRIVATE_URLS: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+    WEBHOOK_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
   })
   .superRefine((env, ctx) => {
     if (env.TALLY_MODE === "xml" && !env.TALLY_COMPANY) {

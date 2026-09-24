@@ -51,6 +51,26 @@ export class WhatsappChannel implements NotificationChannelProvider {
     };
   }
 
+  /** Connection check: reads the phone number's profile with the token, sends nothing. */
+  async check(): Promise<{ ok: boolean; message: string }> {
+    if (!this.configured) return { ok: false, message: "Not configured." };
+    try {
+      const response = await this.fetchImpl(
+        `${WHATSAPP_GRAPH_URL}/${this.config.phoneNumberId}?fields=display_phone_number,verified_name`,
+        { headers: { authorization: `Bearer ${this.config.accessToken}` }, signal: AbortSignal.timeout(this.config.timeoutMs) },
+      );
+      const body = (await response.json().catch(() => ({}))) as {
+        display_phone_number?: string;
+        verified_name?: string;
+        error?: { message?: string };
+      };
+      if (!response.ok) return { ok: false, message: body.error?.message ?? `WhatsApp Cloud API returned HTTP ${response.status}.` };
+      return { ok: true, message: `Connected: ${body.verified_name ?? "business number"} ${body.display_phone_number ?? ""}`.trim() };
+    } catch (error) {
+      return { ok: false, message: describeError(error) };
+    }
+  }
+
   async send(notification: OutgoingNotification): Promise<DeliveryResult> {
     const content = notification.whatsapp;
     const template = content ? this.config.templates[content.template] : undefined;

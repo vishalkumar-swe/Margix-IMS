@@ -1,10 +1,12 @@
 /**
  * Runs one notification worker pass: the daily jobs that are due (slow-moving
- * scan, digests) and delivery of queued in-app, e-mail and WhatsApp messages.
+ * scan, digests), delivery of queued in-app, e-mail and WhatsApp messages,
+ * and delivery of queued webhook events.
  * Intended for a scheduler (loop, cron, systemd timer), every 1–5 minutes:
  *   npm run notify:run
  */
 import { prisma } from "@/server/db/client";
+import { deliverDueWebhooks } from "@/server/integrations/webhooks/webhook-delivery";
 import { runNotificationWorker } from "@/server/modules/notifications/notification-worker.service";
 
 async function main() {
@@ -22,7 +24,11 @@ async function main() {
     `Notifications: processed ${delivery.processed}, sent ${delivery.sent}, ` +
       `skipped ${delivery.skipped} (channel not configured), failed ${delivery.failed}.`,
   );
-  if (delivery.failed > 0) process.exitCode = 2;
+  const webhooks = await deliverDueWebhooks({ limit: 200 });
+  if (webhooks.processed > 0) {
+    console.log(`Webhooks: processed ${webhooks.processed}, delivered ${webhooks.delivered}, failed ${webhooks.failed}.`);
+  }
+  if (delivery.failed > 0 || webhooks.failed > 0) process.exitCode = 2;
 }
 
 main()

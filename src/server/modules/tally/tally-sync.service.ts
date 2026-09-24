@@ -8,6 +8,7 @@ import { recordAudit } from "@/server/modules/audit/audit.service";
 import { logger } from "@/server/observability/logger";
 import { createTallyClient, type TallyClient, type TallyPushResult } from "./tally-client";
 import { buildTallyVoucher, TallyMappingError } from "./tally-voucher";
+import { retryDelayMinutes } from "@/server/integrations/retry";
 
 /** After this many automatic attempts a job waits for a manual retry. */
 export const MAX_AUTO_ATTEMPTS = 8;
@@ -108,7 +109,7 @@ async function pushJob(client: TallyClient, job: ClaimedJob): Promise<TallyPushR
 }
 
 async function recordAttempt(job: ClaimedJob, result: TallyPushResult, durationMs: number): Promise<void> {
-  const backoffMinutes = Math.min(2 ** job.attempts, 60);
+  const backoffMinutes = retryDelayMinutes(job.attempts);
   await prisma.$transaction([
     prisma.tallySyncJob.update({
       where: { id: job.id },

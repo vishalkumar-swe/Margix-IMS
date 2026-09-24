@@ -116,7 +116,8 @@ Sign in with `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`. With
 | `npm run db:reset` | Drop, re-migrate, grant and re-seed the development database |
 | `npm run db:seed` | Seed (safe to repeat) |
 | `npm run tally:sync` | One Tally sync pass — schedule it with cron/systemd |
-| `npm run notify:run` | One notification worker pass (slow-moving scan, digests, delivery) — schedule it every minute |
+| `npm run notify:run` | One notification worker pass (slow-moving scan, digests, message and webhook delivery) — schedule it every minute |
+| `npm run integration:new -- <key> "<Name>"` | Scaffold a new integration adapter ([docs/integrations.md](docs/integrations.md)) |
 | `npm run db:backup` | Dump the database with retention (`ops/backup/backup.sh`) |
 | `npm run db:verify-backup -- <dump>` | Restore a dump into a scratch database and check it |
 
@@ -140,8 +141,18 @@ Sign in with `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`. With
 | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp Cloud API credentials; blank = log-only |
 | `WHATSAPP_TEMPLATE_LOW_STOCK`, `WHATSAPP_TEMPLATE_SUMMARY`, `WHATSAPP_TEMPLATE_LANGUAGE` | Approved template names (low-stock alert; summaries) and their language (default `en`) |
 | `NOTIFY_TIMEOUT_MS` | Timeout for one e-mail / WhatsApp delivery (default 15 s) |
+| `WEBHOOK_TIMEOUT_MS` | Timeout for one webhook delivery (default 10 s) |
+| `WEBHOOK_ALLOW_PRIVATE_URLS` | `true` to allow webhook endpoints on LAN / plain-http addresses (default `false`) |
 | `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | Initial administrator |
 | `SEED_DEMO_USERS` | `true` to create one demo user per role (ignored in production) |
+
+## Integrations
+
+Tally Prime, e-mail, WhatsApp, in-app notifications and outgoing webhooks share
+one framework (transactional outbox, worker, retry policy, admin screen at
+**Administration → Integrations**). Setup per integration, the webhook event
+catalogue and signature verification, and a step-by-step guide to adding a new
+integration: [docs/integrations.md](docs/integrations.md).
 
 ## API
 

@@ -30,6 +30,8 @@ export type TallyPushResult = { ok: true; voucherId: string } | { ok: false; err
 
 export interface TallyClient {
   push(voucher: TallyVoucher): Promise<TallyPushResult>;
+  /** Connectivity check with no side effects (nothing is posted to Tally). */
+  ping(): Promise<{ ok: boolean; message: string }>;
 }
 
 /** Always accepts (TALLY_MODE=mock). */
@@ -37,12 +39,20 @@ export class MockTallyClient implements TallyClient {
   async push(voucher: TallyVoucher): Promise<TallyPushResult> {
     return { ok: true, voucherId: `MOCK-${voucher.voucherNumber}` };
   }
+
+  async ping() {
+    return { ok: true, message: "Mock mode: vouchers are accepted without contacting Tally." };
+  }
 }
 
 /** Always rejects, simulating an outage (TALLY_MODE=fail). */
 export class UnreachableTallyClient implements TallyClient {
   async push(): Promise<TallyPushResult> {
     return { ok: false, error: "Tally Prime is not reachable. The entry will be retried automatically." };
+  }
+
+  async ping() {
+    return { ok: false, message: "Simulated outage (TALLY_MODE=fail)." };
   }
 }
 
@@ -73,6 +83,19 @@ export class XmlTallyClient implements TallyClient {
     }
     if (!response.ok) return { ok: false, error: `Tally Prime returned HTTP ${response.status}.` };
     return parseImportResponse(await response.text());
+  }
+
+  /** Tally Prime's HTTP server answers a plain GET with "TallyPrime Server is Running". */
+  async ping() {
+    try {
+      const response = await this.fetchImpl(this.options.url, { signal: AbortSignal.timeout(this.options.timeoutMs) });
+      const text = await response.text();
+      return /server is running/i.test(text)
+        ? { ok: true, message: `Tally Prime is running at ${this.options.url} (company "${this.options.company}").` }
+        : { ok: false, message: `${this.options.url} answered, but not like Tally Prime (HTTP ${response.status}).` };
+    } catch {
+      return { ok: false, message: `Tally Prime is not reachable at ${this.options.url}.` };
+    }
   }
 }
 

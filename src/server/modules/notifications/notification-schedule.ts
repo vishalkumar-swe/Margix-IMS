@@ -10,9 +10,8 @@ import { istDateOf, istTimeOf } from "@/lib/dates";
 export const MAX_DELIVERY_ATTEMPTS = 6;
 
 /** Exponential backoff after the n-th failed attempt: 2, 4, 8 … minutes, capped at an hour. */
-export function retryDelayMinutes(attempt: number): number {
-  return Math.min(2 ** Math.max(attempt, 1), 60);
-}
+/** Shared with every integration outbox (src/server/integrations/retry.ts). */
+export { retryDelayMinutes } from "@/server/integrations/retry";
 
 export interface IstClock {
   /** YYYY-MM-DD */

@@ -10,6 +10,7 @@ import { lowStockMessage } from "@/server/modules/notifications/notification-mes
 import { enqueueNotification } from "@/server/modules/notifications/notification-outbox.service";
 import { notifiesImmediately } from "@/server/modules/notifications/notification-schedule";
 import { getNotificationRule } from "@/server/modules/notifications/notification-settings.service";
+import { emitWebhookEvent } from "@/server/integrations/webhooks/webhook-emitter";
 
 export interface SkuGodown {
   skuId: string;
@@ -96,7 +97,16 @@ async function applyRule(tx: Tx, rule: ReorderRule, quantity: Decimal): Promise<
                     "threshold_qty" = EXCLUDED."threshold_qty",
                     "updated_at" = now()
       RETURNING "id", (xmax = 0) AS "inserted"`;
-    if (alert.inserted) await notifyLowStock(tx, alert.id, rule, quantity);
+    if (alert.inserted) {
+      await notifyLowStock(tx, alert.id, rule, quantity);
+      await emitWebhookEvent(tx, "stock.low", {
+        alertId: alert.id,
+        skuId: rule.skuId,
+        godownId: rule.godownId,
+        quantity: quantity.toString(),
+        reorderLevel: rule.reorderLevel.toString(),
+      });
+    }
   } else {
     await resolveActiveAlert(tx, rule.skuId, rule.godownId, quantity);
   }

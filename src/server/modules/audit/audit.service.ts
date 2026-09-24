@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import type { Actor } from "@/server/actor";
 import type { Tx } from "@/server/db/transaction";
 import { toPlainJson } from "@/server/db/serialize";
+import { emitWebhookEvent, webhookEventForAudit } from "@/server/integrations/webhooks/webhook-emitter";
 
 export type AuditAction =
   | "AUTH_LOGIN_SUCCEEDED"
@@ -38,6 +39,12 @@ export type AuditAction =
   | "NOTIFICATION_RULE_SAVED"
   | "NOTIFICATION_TEST_SENT"
   | "NOTIFICATION_RETRIED"
+  | "WEBHOOK_CREATED"
+  | "WEBHOOK_UPDATED"
+  | "WEBHOOK_DELETED"
+  | "WEBHOOK_SECRET_ROTATED"
+  | "WEBHOOK_TEST_SENT"
+  | "WEBHOOK_DELIVERY_RETRIED"
   | "SLOW_MOVING_SCAN_RUN"
   | "CHECKLIST_TASK_CREATED"
   | "CHECKLIST_TASK_UPDATED"
@@ -58,6 +65,7 @@ export interface AuditEntry {
  * transaction so the audit trail can never disagree with what was committed.
  */
 export async function recordAudit(tx: Tx, actor: Actor | null, entry: AuditEntry): Promise<void> {
+  const newData = toJsonInput(entry.newData);
   await tx.auditLog.create({
     data: {
       userId: actor?.userId ?? null,
@@ -65,12 +73,22 @@ export async function recordAudit(tx: Tx, actor: Actor | null, entry: AuditEntry
       entityType: entry.entityType,
       entityId: entry.entityId ?? null,
       oldData: toJsonInput(entry.oldData),
-      newData: toJsonInput(entry.newData),
+      newData,
       ipAddress: actor?.ipAddress ?? null,
       userAgent: actor?.userAgent ?? null,
       requestId: actor?.requestId ?? null,
     },
   });
+
+  // Business events are also published to subscribed webhook endpoints (same transaction).
+  const event = webhookEventForAudit(entry.action, entry.entityType);
+  if (event) {
+    await emitWebhookEvent(tx, event, {
+      entityType: entry.entityType,
+      entityId: entry.entityId ?? null,
+      ...(newData && typeof newData === "object" && !Array.isArray(newData) ? newData : { value: newData ?? null }),
+    } as Prisma.InputJsonValue);
+  }
 }
 
 function toJsonInput(value: unknown): Prisma.InputJsonValue | undefined {
