@@ -58,3 +58,6 @@ next-env.d.ts
 
 # Copied from node_modules on install (scripts/copy-vendor-assets.mjs)
 /public/vendor/
+
+# Bundled workers (npm run build:workers)
+/dist/

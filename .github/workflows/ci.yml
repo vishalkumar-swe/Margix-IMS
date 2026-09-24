@@ -1,9 +1,13 @@
 name: CI
 
+# Every push (any branch) and every pull request from a fork. Pull requests
+# from branches of this repository are already covered by their push run.
 on:
   push:
-    branches: [main]
+    branches: ["**"]
+    paths-ignore: ["**.md", "docs/**"]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -12,11 +16,15 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  NEXT_TELEMETRY_DISABLED: 1
+
 jobs:
   check:
     name: Lint, typecheck, test, build
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     services:
       postgres:
@@ -35,7 +43,6 @@ jobs:
 
     env:
       PGPASSWORD: margix
-      NEXT_TELEMETRY_DISABLED: 1
 
     steps:
       - uses: actions/checkout@v4
@@ -80,13 +87,24 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Restore Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'next.config.ts') }}
+          restore-keys: next-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
+
       - name: Build
         run: npm run build
 
+      - name: Bundle background workers
+        run: npm run build:workers
+
   e2e:
     name: End-to-end (Playwright)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     services:
       postgres:
@@ -107,7 +125,6 @@ jobs:
       E2E_DATABASE_URL: postgresql://margix:margix@127.0.0.1:5432/margix_e2e?schema=public
       # `next build` only needs a syntactically valid URL; E2E runs use E2E_DATABASE_URL.
       DATABASE_URL: postgresql://margix:margix@127.0.0.1:5432/margix_e2e?schema=public
-      NEXT_TELEMETRY_DISABLED: 1
 
     steps:
       - uses: actions/checkout@v4
@@ -117,10 +134,23 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
-      - name: Install dependencies and browser
-        run: |
-          npm ci --no-audit --no-fund
-          npx playwright install --with-deps chromium
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install browser
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install browser system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
 
       - name: Build
         run: npm run build
@@ -138,13 +168,62 @@ jobs:
             test-results/
           retention-days: 7
 
-  image:
-    name: Container image builds
+  security:
+    name: Dependency audit
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Build app and tools images
-        run: |
-          docker build --target tools -t margix-ims-tools:ci .
-          docker build --target app -t margix-ims:ci .
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # Production dependencies with a known high or critical vulnerability fail the build.
+      - name: npm audit (production dependencies)
+        run: npm audit --omit=dev --audit-level=high
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+  image:
+    name: Container images build
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: app
+          tags: margix-ims:ci
+          push: false
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app
+
+      - name: Build tools image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: tools
+          tags: margix-ims-tools:ci
+          push: false
+          cache-from: type=gha,scope=tools
+          cache-to: type=gha,mode=max,scope=tools

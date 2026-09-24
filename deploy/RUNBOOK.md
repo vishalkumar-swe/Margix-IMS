@@ -87,8 +87,18 @@ PG_CONTAINER=margix-postgres-1 BACKUP_DIR=~/backups/margix ops/backup/backup.sh
 PG_CONTAINER=margix-postgres-1 ops/backup/verify-restore.sh ~/backups/margix/margix-<timestamp>.dump
 ```
 
-For nightly backups, install `ops/systemd/margix-backup.{service,timer}` and
-set `PG_CONTAINER=margix-postgres-1` in the service (see docs/operations.md).
+Nightly backups (02:00 IST, 14 days kept in `~/backups/margix`):
+
+```bash
+cp ~/apps/Margix-IMS/deploy/margix-backup.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now margix-backup.timer
+systemctl --user list-timers margix-backup.timer     # next run
+journalctl --user -u margix-backup -n 20             # last result
+```
+
+Dumps on the same disk do not survive a disk failure. Copy `~/backups/margix`
+off the machine regularly (another host, NAS or cloud storage), and restore a
+dump with `verify-restore.sh` once a month.
 
 ## Users and passwords
 

@@ -2,6 +2,7 @@ import { expect, type Browser, type Locator, type Page } from "@playwright/test"
 import { DEMO_PASSWORD } from "./env";
 
 export const USERS = {
+  admin: "admin@margix.local",
   manager: "manager@margix.local",
   operator: "operator@margix.local",
 } as const;

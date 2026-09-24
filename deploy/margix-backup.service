@@ -1,0 +1,18 @@
+# Nightly backup of the production database (the margix compose stack).
+# Triggered by margix-backup.timer. Install (as the owning user):
+#   cp ~/apps/Margix-IMS/deploy/margix-backup.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now margix-backup.timer
+# Check: systemctl --user list-timers margix-backup.timer ; journalctl --user -u margix-backup
+[Unit]
+Description=Margix IMS – production database backup
+After=margix.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/apps/Margix-IMS
+Environment=PG_CONTAINER=margix-postgres-1
+Environment=BACKUP_DIR=%h/backups/margix
+Environment=BACKUP_KEEP_DAYS=14
+Nice=15
+IOSchedulingClass=idle
+ExecStart=%h/apps/Margix-IMS/ops/backup/backup.sh

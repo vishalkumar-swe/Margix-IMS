@@ -51,12 +51,7 @@ cp -a prisma/schema.prisma prisma/migrations "$NEW/prisma/"
 cp -a ops/postgres/app-role-grants.sql "$NEW/ops/postgres/"
 cp -a ops/railway/pre-deploy.sh "$NEW/ops/railway/"
 # The background workers, bundled so they run with the release's own node_modules.
-for worker in tally-sync notify; do
-  npx esbuild "scripts/$worker.ts" --bundle --platform=node --format=esm --target=node22 \
-    --external:@prisma/client --external:.prisma/client --external:pg-native --tsconfig=tsconfig.json \
-    --banner:js="import { createRequire } from 'module'; const require = createRequire(import.meta.url);" \
-    --log-level=warning --outfile="$NEW/scripts/$worker.mjs"
-done
+node scripts/build-workers.mjs "$NEW/scripts" >/dev/null
 chmod -R a+rX "$NEW"
 
 log "Running migrations"
