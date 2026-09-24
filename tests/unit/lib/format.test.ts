@@ -13,6 +13,8 @@ describe("formatting", () => {
   it("shows signs explicitly for movements", () => {
     expect(formatSignedQuantity("500")).toBe("+500");
     expect(formatSignedQuantity("-25")).toBe("−25");
+    expect(formatSignedQuantity("0.000")).toBe("0");
+    expect(formatSignedQuantity("-0")).toBe("0");
     expect(negateQuantity("500")).toBe("-500");
     expect(negateQuantity("-25")).toBe("25");
   });

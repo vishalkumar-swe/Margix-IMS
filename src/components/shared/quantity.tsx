@@ -1,5 +1,5 @@
 import { cn } from "@/lib/cn";
-import { formatQuantity, formatSignedQuantity } from "@/lib/format";
+import { formatQuantity, formatSignedQuantity, isZeroQuantity } from "@/lib/format";
 
 /**
  * Renders a decimal quantity exactly (string in, no float). `signed` shows
@@ -17,15 +17,9 @@ export function Quantity({
   className?: string;
 }) {
   const text = String(value);
-  const negative = text.startsWith("-");
+  const tone = !signed || isZeroQuantity(text) ? null : text.startsWith("-") ? "text-red-700" : "text-emerald-700";
   return (
-    <span
-      className={cn(
-        "tabular-nums",
-        signed && (negative ? "text-red-700" : "text-emerald-700"),
-        className,
-      )}
-    >
+    <span className={cn("tabular-nums", tone, className)}>
       {signed ? formatSignedQuantity(text) : formatQuantity(text)}
       {unit && <span className="ml-1 text-xs text-slate-400">{unit}</span>}
     </span>

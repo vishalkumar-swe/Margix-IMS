@@ -1,15 +1,15 @@
-import { dateOnlyToUtc, todayIst } from "@/lib/dates";
+import { istDayStart, todayIst } from "@/lib/dates";
 import { prisma } from "@/server/db/client";
 import { countPendingAdjustments } from "@/server/modules/adjustments/adjustments.queries";
+import { countActiveAlerts } from "@/server/modules/alerts/alerts.queries";
 import { ledgerEntrySelect } from "@/server/modules/inventory/ledger.queries";
 import { countTallyJobsByStatus } from "@/server/modules/tally/tally.queries";
 
-const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 const EXPIRY_WINDOW_DAYS = 30;
 
 /** Operational indicators for the dashboard (spec §6.6), plus exceptions (§6.8). */
 export async function getDashboardSummary() {
-  const todayStartUtc = new Date(dateOnlyToUtc(todayIst()).getTime() - IST_OFFSET_MS);
+  const todayStartUtc = istDayStart(todayIst());
   const expiryHorizon = new Date(Date.now() + EXPIRY_WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
   const [
@@ -23,6 +23,7 @@ export async function getDashboardSummary() {
     recentMovements,
     expiringBatches,
     godownStock,
+    exceptions,
   ] = await Promise.all([
     prisma.sku.count({ where: { status: "ACTIVE" } }),
     prisma.stockBalance.count({ where: { quantity: { gt: 0 } } }),
@@ -50,6 +51,7 @@ export async function getDashboardSummary() {
       where: { quantity: { gt: 0 } },
       _count: { _all: true },
     }),
+    getExceptionCounts(),
   ]);
 
   const godowns = await prisma.godown.findMany({
@@ -68,8 +70,23 @@ export async function getDashboardSummary() {
     tally,
     recentMovements,
     expiringBatches,
+    exceptions,
     godowns: godownStock
       .map((g) => ({ godown: godownById.get(g.godownId)!, stockLines: g._count._all }))
       .sort((a, b) => a.godown.code.localeCompare(b.godown.code)),
   };
+}
+
+/**
+ * Exceptions as first-class business objects (spec §6.8): things someone must
+ * act on, surfaced on the dashboard rather than buried in logs.
+ */
+async function getExceptionCounts() {
+  const [lowStock, invoicesAwaitingDispatch, unmappedSkus, unmappedGodowns] = await Promise.all([
+    countActiveAlerts(),
+    prisma.invoice.count({ where: { status: { in: ["OPEN", "PARTIALLY_DISPATCHED"] } } }),
+    prisma.sku.count({ where: { status: "ACTIVE", tallyStockItemName: null } }),
+    prisma.godown.count({ where: { isActive: true, tallySyncEnabled: true, tallyGodownName: null } }),
+  ]);
+  return { lowStock, invoicesAwaitingDispatch, unmappedSkus, unmappedGodowns };
 }

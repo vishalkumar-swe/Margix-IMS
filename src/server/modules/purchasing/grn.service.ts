@@ -168,12 +168,19 @@ async function postGrnInTx(tx: Tx, actor: Actor, purchaseOrderId: string, input:
 /**
  * Side effects of reversing a GRN ledger entry: the accepted quantity no
  * longer counts as received on the PO, and the GRN's status reflects it.
+ * A line with supplier returns must have those reversed first.
  */
 export async function onGrnEntryReversed(tx: Tx, entry: InventoryLedger): Promise<void> {
   const item = await tx.grnItem.findUniqueOrThrow({
     where: { ledgerEntryId: entry.id },
     include: { grn: true, purchaseOrderItem: true },
   });
+  if (item.returnedQty.greaterThan(0)) {
+    throw new ConflictError(
+      "CANNOT_REVERSE",
+      "Goods from this receipt line were returned to the supplier. Reverse the purchase return first.",
+    );
+  }
 
   await lockPurchaseOrder(tx, item.grn.purchaseOrderId);
   await tx.purchaseOrderItem.update({

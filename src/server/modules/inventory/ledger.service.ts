@@ -4,20 +4,91 @@ import type { Tx } from "@/server/db/transaction";
 import { lockRowForUpdate } from "@/server/db/locks";
 import { isUniqueViolation } from "@/server/db/pg-error";
 import { ConflictError, NotFoundError } from "@/server/errors";
+import { evaluateStockAlerts } from "@/server/modules/alerts/alerts.service";
 import type { PostMovementInput, StockKey } from "./inventory.types";
 import { assertQuantitySign } from "./movement-rules";
 import { applyStockDelta } from "./stock-balance";
 
 /**
- * Posts one immutable ledger entry and updates the stock projection in the
- * same transaction. This (with reverseLedgerEntry) is the ONLY code path that
- * changes stock.
+ * The inventory engine's write API. These functions are the ONLY code paths
+ * that change stock: each posts immutable ledger entries, updates the
+ * stock_balance projection and re-evaluates low-stock alerts, all inside the
+ * caller's transaction.
  */
-export async function postMovement(
+
+/** Posts one immutable ledger entry. */
+export async function postMovement(tx: Tx, actor: Actor, input: PostMovementInput): Promise<InventoryLedger> {
+  const [entry] = await postMovements(tx, actor, [input]);
+  return entry;
+}
+
+/**
+ * Posts several movements. Stock rows are locked in a deterministic key order
+ * to prevent deadlocks between concurrent multi-line documents; the result is
+ * returned in input order.
+ */
+export async function postMovements(
   tx: Tx,
   actor: Actor,
-  input: PostMovementInput,
-): Promise<InventoryLedger> {
+  inputs: PostMovementInput[],
+): Promise<InventoryLedger[]> {
+  const order = inputs
+    .map((input, index) => ({ input, index }))
+    .sort((a, b) => compareKeys(a.input.key, b.input.key) || a.index - b.index);
+
+  const results = new Array<InventoryLedger>(inputs.length);
+  for (const { input, index } of order) {
+    results[index] = await insertMovement(tx, actor, input);
+  }
+  await evaluateStockAlerts(
+    tx,
+    inputs.map((i) => i.key),
+  );
+  return results;
+}
+
+/**
+ * Posts a REVERSAL that exactly counter-balances `entryId` (spec §6.4). The
+ * original entry stays untouched. A unique constraint on reverses_entry_id
+ * guarantees an entry can be reversed at most once, even under concurrency.
+ * Document-level side effects are handled by the reversals module.
+ */
+export async function reverseLedgerEntry(
+  tx: Tx,
+  actor: Actor,
+  entryId: string,
+  reason: string,
+): Promise<{ original: InventoryLedger; reversal: InventoryLedger }> {
+  const [result] = await reverseLedgerEntries(tx, actor, [entryId], reason);
+  return result;
+}
+
+/**
+ * Reverses several entries atomically (e.g. both legs of a transfer), taking
+ * stock locks in key order like postMovements. Results follow input order.
+ */
+export async function reverseLedgerEntries(
+  tx: Tx,
+  actor: Actor,
+  entryIds: string[],
+  reason: string,
+): Promise<{ original: InventoryLedger; reversal: InventoryLedger }[]> {
+  const originals: InventoryLedger[] = [];
+  for (const entryId of entryIds) originals.push(await loadReversible(tx, entryId));
+
+  const order = originals
+    .map((original, index) => ({ original, index }))
+    .sort((a, b) => compareKeys(a.original, b.original) || a.index - b.index);
+
+  const results = new Array<{ original: InventoryLedger; reversal: InventoryLedger }>(originals.length);
+  for (const { original, index } of order) {
+    results[index] = { original, reversal: await insertReversal(tx, actor, original, reason) };
+  }
+  await evaluateStockAlerts(tx, originals);
+  return results;
+}
+
+async function insertMovement(tx: Tx, actor: Actor, input: PostMovementInput): Promise<InventoryLedger> {
   assertQuantitySign(input.movementType, input.quantity);
   const balanceAfter = await applyStockDelta(tx, input.key, input.quantity);
 
@@ -40,39 +111,7 @@ export async function postMovement(
   });
 }
 
-/**
- * Posts several movements. Stock rows are locked in a deterministic key order
- * to prevent deadlocks between concurrent multi-line documents; the result is
- * returned in input order.
- */
-export async function postMovements(
-  tx: Tx,
-  actor: Actor,
-  inputs: PostMovementInput[],
-): Promise<InventoryLedger[]> {
-  const order = inputs
-    .map((input, index) => ({ input, index }))
-    .sort((a, b) => compareKeys(a.input.key, b.input.key) || a.index - b.index);
-
-  const results = new Array<InventoryLedger>(inputs.length);
-  for (const { input, index } of order) {
-    results[index] = await postMovement(tx, actor, input);
-  }
-  return results;
-}
-
-/**
- * Posts a REVERSAL that exactly counter-balances `entryId` (spec §6.4). The
- * original entry stays untouched. A unique constraint on reverses_entry_id
- * guarantees an entry can be reversed at most once, even under concurrency.
- * Document-level side effects are handled by the reversals module.
- */
-export async function reverseLedgerEntry(
-  tx: Tx,
-  actor: Actor,
-  entryId: string,
-  reason: string,
-): Promise<{ original: InventoryLedger; reversal: InventoryLedger }> {
+async function loadReversible(tx: Tx, entryId: string): Promise<InventoryLedger> {
   // Row lock (not a write, so the append-only trigger does not fire) serialises
   // concurrent reversals of the same entry; the loser then sees ALREADY_REVERSED.
   if (!(await lockRowForUpdate(tx, "inventory_ledger", entryId))) {
@@ -90,13 +129,21 @@ export async function reverseLedgerEntry(
   if (existingReversal) {
     throw new ConflictError("ALREADY_REVERSED", "This ledger entry has already been reversed.");
   }
+  return original;
+}
 
+async function insertReversal(
+  tx: Tx,
+  actor: Actor,
+  original: InventoryLedger,
+  reason: string,
+): Promise<InventoryLedger> {
   const key: StockKey = { skuId: original.skuId, godownId: original.godownId, batchId: original.batchId };
   const quantity = original.quantity.negated();
   const balanceAfter = await applyStockDelta(tx, key, quantity);
 
   try {
-    const reversal = await tx.inventoryLedger.create({
+    return await tx.inventoryLedger.create({
       data: {
         ...key,
         movementType: "REVERSAL",
@@ -112,7 +159,6 @@ export async function reverseLedgerEntry(
         createdById: actor.userId,
       },
     });
-    return { original, reversal };
   } catch (error) {
     if (isUniqueViolation(error, "reverses_entry_id")) {
       throw new ConflictError("ALREADY_REVERSED", "This ledger entry has already been reversed.");

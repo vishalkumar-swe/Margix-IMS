@@ -4,7 +4,7 @@ import { optionalText, requiredText } from "./common";
 export const ROLE_CODES = ["ADMIN", "STORE_MANAGER", "WAREHOUSE_OPERATOR", "ACCOUNTS", "MANAGEMENT"] as const;
 
 /** Password policy (single source of truth). */
-const passwordSchema = z
+export const passwordSchema = z
   .string()
   .min(10, "Use at least 10 characters.")
   .max(200)
@@ -27,5 +27,16 @@ export const userUpdateSchema = z.object({
 
 export const passwordResetSchema = z.object({ password: passwordSchema });
 
+export const passwordChangeSchema = z
+  .object({
+    currentPassword: z.string().min(1, "Enter your current password.").max(200),
+    newPassword: passwordSchema,
+  })
+  .refine((v) => v.currentPassword !== v.newPassword, {
+    path: ["newPassword"],
+    message: "Choose a password different from the current one.",
+  });
+
 export type UserCreateInput = z.infer<typeof userCreateSchema>;
 export type UserUpdateInput = z.infer<typeof userUpdateSchema>;
+export type PasswordChangeInput = z.infer<typeof passwordChangeSchema>;

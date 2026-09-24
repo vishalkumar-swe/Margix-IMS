@@ -14,6 +14,28 @@ export function utcToDateOnly(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
 
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+/** The instant an IST calendar day begins, e.g. "2026-09-24" → 2026-09-23T18:30:00Z. */
+export function istDayStart(value: string): Date {
+  return new Date(dateOnlyToUtc(value).getTime() - IST_OFFSET_MS);
+}
+
+/** Calendar arithmetic on YYYY-MM-DD strings. */
+export function addDays(value: string, days: number): string {
+  return utcToDateOnly(new Date(dateOnlyToUtc(value).getTime() + days * 24 * 60 * 60 * 1000));
+}
+
+/** The IST calendar date (YYYY-MM-DD) of an instant. */
+export function istDateOf(instant: Date): string {
+  return utcToDateOnly(new Date(instant.getTime() + IST_OFFSET_MS));
+}
+
+/** First day of the IST month containing `value` (YYYY-MM-DD). */
+export function startOfMonth(value: string): string {
+  return `${value.slice(0, 7)}-01`;
+}
+
 /** Today's calendar date in IST as YYYY-MM-DD. */
 export function todayIst(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: DISPLAY_TIME_ZONE }).format(new Date());

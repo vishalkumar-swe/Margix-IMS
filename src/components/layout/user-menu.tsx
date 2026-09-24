@@ -1,6 +1,7 @@
 "use client";
 
 import { LogOut } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -29,13 +30,15 @@ export function UserMenu({ name, roleLabel }: { name: string; roleLabel: string 
 
   return (
     <div className="flex items-center gap-3">
-      <div className="hidden text-right sm:block">
-        <p className="text-sm font-medium text-slate-900">{name}</p>
-        <p className="text-xs text-slate-500">{roleLabel}</p>
-      </div>
-      <span className="flex size-8 items-center justify-center rounded-full bg-brand-100 text-xs font-semibold text-brand-700">
-        {initials}
-      </span>
+      <Link href="/account" className="flex items-center gap-3 rounded-md px-1 py-1 hover:bg-slate-100" title="My account">
+        <span className="hidden text-right sm:block">
+          <span className="block text-sm font-medium text-slate-900">{name}</span>
+          <span className="block text-xs text-slate-500">{roleLabel}</span>
+        </span>
+        <span className="flex size-8 items-center justify-center rounded-full bg-brand-100 text-xs font-semibold text-brand-700">
+          {initials}
+        </span>
+      </Link>
       <Button variant="ghost" size="icon" onClick={signOut} loading={pending} aria-label="Sign out" title="Sign out">
         {!pending && <LogOut aria-hidden />}
       </Button>

@@ -1,8 +1,15 @@
 import {
+  ArrowLeftRight,
+  BellRing,
   Boxes,
   Building2,
+  ChartColumn,
   ClipboardCheck,
   ClipboardList,
+  CornerDownLeft,
+  CornerUpRight,
+  FileText,
+  History,
   LayoutDashboard,
   Package,
   PackageCheck,
@@ -45,9 +52,20 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "Purchase orders", href: "/purchase-orders", icon: ClipboardList, permission: "po.view" },
       { label: "Goods receipts", href: "/grns", icon: PackageCheck, permission: "grn.view" },
+      { label: "Invoices", href: "/invoices", icon: FileText, permission: "invoice.view" },
       { label: "Dispatches", href: "/dispatches", icon: Truck, permission: "dispatch.view" },
+      { label: "Transfers", href: "/transfers", icon: ArrowLeftRight, permission: "transfer.view" },
+      { label: "Customer returns", href: "/sales-returns", icon: CornerDownLeft, permission: "return.view" },
+      { label: "Supplier returns", href: "/purchase-returns", icon: CornerUpRight, permission: "return.view" },
       { label: "Adjustments", href: "/adjustments", icon: SlidersHorizontal, permission: "adjustment.view" },
       { label: "Opening stock", href: "/opening-stock", icon: ClipboardCheck, permission: "opening.post" },
+    ],
+  },
+  {
+    title: "Insight",
+    items: [
+      { label: "Stock alerts", href: "/alerts", icon: BellRing, permission: "alert.view" },
+      { label: "Reports", href: "/reports", icon: ChartColumn, permission: "report.view" },
     ],
   },
   {
@@ -65,6 +83,7 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "Tally sync", href: "/tally", icon: RefreshCw, permission: "tally.view" },
       { label: "Users", href: "/admin/users", icon: Users, permission: "user.manage" },
+      { label: "Audit trail", href: "/audit", icon: History, permission: "audit.view" },
     ],
   },
 ];

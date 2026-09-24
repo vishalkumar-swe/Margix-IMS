@@ -20,6 +20,8 @@ export const dispatchCreateSchema = z
   .object({
     godownId: idSchema,
     customerId: idSchema.optional(),
+    /** When set, the dispatch fulfils (part of) this invoice. */
+    invoiceId: idSchema.optional(),
     vehicleNo: optionalText(30),
     referenceNo: optionalText(60),
     remarks: optionalText(500),

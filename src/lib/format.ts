@@ -22,9 +22,15 @@ export function formatQuantity(value: string | number | { toString(): string }):
   return `${negative ? "−" : ""}${grouped}${trimmedFrac ? `.${trimmedFrac}` : ""}`;
 }
 
-/** Signed quantity with an explicit "+" for increases, e.g. "+500", "−200". */
+/** True for any representation of zero ("0", "0.000", "-0"). */
+export function isZeroQuantity(value: string | number | { toString(): string }): boolean {
+  return /^-?0*(\.0*)?$/.test(String(value));
+}
+
+/** Signed quantity with an explicit "+" for increases, e.g. "+500", "−200"; zero is unsigned. */
 export function formatSignedQuantity(value: string | number | { toString(): string }): string {
   const text = String(value);
+  if (isZeroQuantity(text)) return "0";
   return text.startsWith("-") ? formatQuantity(text) : `+${formatQuantity(text)}`;
 }
 

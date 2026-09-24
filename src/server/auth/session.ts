@@ -91,6 +91,11 @@ export async function deleteUserSessions(userId: string): Promise<void> {
   await prisma.session.deleteMany({ where: { userId } });
 }
 
+/** Signs a user out of every session except the one making the request. */
+export async function deleteOtherSessions(userId: string, keepToken: string): Promise<void> {
+  await prisma.session.deleteMany({ where: { userId, id: { not: hashToken(keepToken) } } });
+}
+
 /** Reads the session token from a raw Cookie header. */
 export function readSessionToken(cookieHeader: string | null): string | null {
   if (!cookieHeader) return null;

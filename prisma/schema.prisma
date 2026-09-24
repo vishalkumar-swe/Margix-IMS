@@ -11,8 +11,11 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  /// Runtime connection (least-privilege app login in production).
+  url       = env("DATABASE_URL")
+  /// Schema owner, used by Prisma Migrate only.
+  directUrl = env("DIRECT_DATABASE_URL")
 }
 
 // ==========================
@@ -69,7 +72,21 @@ enum PurchaseOrderStatus {
   OPEN
   PARTIALLY_RECEIVED
   FULLY_RECEIVED
+  /// Closed early: nothing more will be received against it.
+  SHORT_CLOSED
   CANCELLED
+}
+
+enum InvoiceStatus {
+  OPEN
+  PARTIALLY_DISPATCHED
+  COMPLETE
+  CANCELLED
+}
+
+enum StockAlertStatus {
+  ACTIVE
+  RESOLVED
 }
 
 enum PostedDocStatus {
@@ -97,6 +114,9 @@ enum TallyEntityType {
   DISPATCH
   ADJUSTMENT
   REVERSAL
+  TRANSFER
+  SALES_RETURN
+  PURCHASE_RETURN
 }
 
 // ==========================
@@ -132,6 +152,12 @@ model User {
   sessions             Session[]
   purchaseOrders       PurchaseOrder[]   @relation("PoCreatedBy")
   cancelledPos         PurchaseOrder[]   @relation("PoCancelledBy")
+  closedPos            PurchaseOrder[]   @relation("PoClosedBy")
+  invoicesCreated      Invoice[]         @relation("InvoiceCreatedBy")
+  invoicesCancelled    Invoice[]         @relation("InvoiceCancelledBy")
+  transfers            Transfer[]
+  salesReturns         SalesReturn[]
+  purchaseReturns      PurchaseReturn[]
   grns                 Grn[]
   outwards             Outward[]
   openingBalances      OpeningBalance[]
@@ -204,17 +230,20 @@ model Sku {
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  batches            Batch[]
-  ledgerEntries      InventoryLedger[]
-  stockBalances      StockBalance[]
-  purchaseOrderItems PurchaseOrderItem[]
-  grnItems           GrnItem[]
-  outwardItems       OutwardItem[]
-  openingItems       OpeningBalanceItem[]
-  adjustmentItems    AdjustmentItem[]
-  invoiceItems       InvoiceItem[]
-  reorderRules       ReorderRule[]
-  stockAlerts        StockAlert[]
+  batches             Batch[]
+  ledgerEntries       InventoryLedger[]
+  stockBalances       StockBalance[]
+  purchaseOrderItems  PurchaseOrderItem[]
+  grnItems            GrnItem[]
+  outwardItems        OutwardItem[]
+  openingItems        OpeningBalanceItem[]
+  adjustmentItems     AdjustmentItem[]
+  invoiceItems        InvoiceItem[]
+  transferItems       TransferItem[]
+  salesReturnItems    SalesReturnItem[]
+  purchaseReturnItems PurchaseReturnItem[]
+  reorderRules        ReorderRule[]
+  stockAlerts         StockAlert[]
 
   @@index([status])
   @@map("sku")
@@ -229,12 +258,15 @@ model Batch {
   expiryDate        DateTime? @map("expiry_date") @db.Date
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  ledgerEntries   InventoryLedger[]
-  stockBalances   StockBalance[]
-  grnItems        GrnItem[]
-  outwardItems    OutwardItem[]
-  openingItems    OpeningBalanceItem[]
-  adjustmentItems AdjustmentItem[]
+  ledgerEntries       InventoryLedger[]
+  stockBalances       StockBalance[]
+  grnItems            GrnItem[]
+  outwardItems        OutwardItem[]
+  openingItems        OpeningBalanceItem[]
+  adjustmentItems     AdjustmentItem[]
+  transferItems       TransferItem[]
+  salesReturnItems    SalesReturnItem[]
+  purchaseReturnItems PurchaseReturnItem[]
 
   @@unique([skuId, batchNumber])
   /// Target of composite foreign keys that guarantee a batch belongs to the line's SKU.
@@ -262,37 +294,43 @@ model Godown {
   adjustments     Adjustment[]
   reorderRules    ReorderRule[]
   stockAlerts     StockAlert[]
+  transfersOut    Transfer[]        @relation("TransferFrom")
+  transfersIn     Transfer[]        @relation("TransferTo")
+  salesReturns    SalesReturn[]
+  purchaseReturns PurchaseReturn[]
 
   @@map("godown")
 }
 
 model Supplier {
-  id             String          @id @default(uuid()) @db.Uuid
-  code           String          @unique
-  name           String
-  gstin          String?
-  email          String?
-  phone          String?
-  address        String?
-  isActive       Boolean         @default(true) @map("is_active")
-  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
-  purchaseOrders PurchaseOrder[]
+  id              String           @id @default(uuid()) @db.Uuid
+  code            String           @unique
+  name            String
+  gstin           String?
+  email           String?
+  phone           String?
+  address         String?
+  isActive        Boolean          @default(true) @map("is_active")
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  purchaseOrders  PurchaseOrder[]
+  purchaseReturns PurchaseReturn[]
 
   @@map("supplier")
 }
 
 model Customer {
-  id        String    @id @default(uuid()) @db.Uuid
-  code      String    @unique
-  name      String
-  gstin     String?
-  email     String?
-  phone     String?
-  address   String?
-  isActive  Boolean   @default(true) @map("is_active")
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  outwards  Outward[]
-  invoices  Invoice[]
+  id           String        @id @default(uuid()) @db.Uuid
+  code         String        @unique
+  name         String
+  gstin        String?
+  email        String?
+  phone        String?
+  address      String?
+  isActive     Boolean       @default(true) @map("is_active")
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  outwards     Outward[]
+  invoices     Invoice[]
+  salesReturns SalesReturn[]
 
   @@map("customer")
 }
@@ -318,6 +356,10 @@ model PurchaseOrder {
   cancelledById  String?             @map("cancelled_by_id") @db.Uuid
   cancelledBy    User?               @relation("PoCancelledBy", fields: [cancelledById], references: [id])
   cancelReason   String?             @map("cancel_reason")
+  closedAt       DateTime?           @map("closed_at") @db.Timestamptz(3)
+  closedById     String?             @map("closed_by_id") @db.Uuid
+  closedBy       User?               @relation("PoClosedBy", fields: [closedById], references: [id])
+  closeReason    String?             @map("close_reason")
   createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -365,7 +407,8 @@ model Grn {
   createdBy         User            @relation(fields: [createdById], references: [id])
   createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  items GrnItem[]
+  items           GrnItem[]
+  purchaseReturns PurchaseReturn[]
 
   @@index([purchaseOrderId])
   @@index([createdAt])
@@ -373,22 +416,25 @@ model Grn {
 }
 
 model GrnItem {
-  id                  String            @id @default(uuid()) @db.Uuid
-  grnId               String            @map("grn_id") @db.Uuid
-  grn                 Grn               @relation(fields: [grnId], references: [id])
-  purchaseOrderItemId String            @map("purchase_order_item_id") @db.Uuid
-  purchaseOrderItem   PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id])
-  skuId               String            @map("sku_id") @db.Uuid
-  sku                 Sku               @relation(fields: [skuId], references: [id])
-  batchId             String            @map("batch_id") @db.Uuid
-  batch               Batch             @relation(fields: [batchId, skuId], references: [id, skuId])
-  receivedQty         Decimal           @map("received_qty") @db.Decimal(18, 3)
-  acceptedQty         Decimal           @map("accepted_qty") @db.Decimal(18, 3)
-  rejectedQty         Decimal           @map("rejected_qty") @db.Decimal(18, 3)
-  rejectionReason     String?           @map("rejection_reason")
+  id                  String               @id @default(uuid()) @db.Uuid
+  grnId               String               @map("grn_id") @db.Uuid
+  grn                 Grn                  @relation(fields: [grnId], references: [id])
+  purchaseOrderItemId String               @map("purchase_order_item_id") @db.Uuid
+  purchaseOrderItem   PurchaseOrderItem    @relation(fields: [purchaseOrderItemId], references: [id])
+  skuId               String               @map("sku_id") @db.Uuid
+  sku                 Sku                  @relation(fields: [skuId], references: [id])
+  batchId             String               @map("batch_id") @db.Uuid
+  batch               Batch                @relation(fields: [batchId, skuId], references: [id, skuId])
+  receivedQty         Decimal              @map("received_qty") @db.Decimal(18, 3)
+  acceptedQty         Decimal              @map("accepted_qty") @db.Decimal(18, 3)
+  rejectedQty         Decimal              @map("rejected_qty") @db.Decimal(18, 3)
+  rejectionReason     String?              @map("rejection_reason")
+  /// Accepted quantity sent back to the supplier (purchase returns), net of reversals.
+  returnedQty         Decimal              @default(0) @map("returned_qty") @db.Decimal(18, 3)
   /// Null when nothing was accepted.
-  ledgerEntryId       String?           @unique @map("ledger_entry_id") @db.Uuid
-  ledgerEntry         InventoryLedger?  @relation("GrnItemEntry", fields: [ledgerEntryId], references: [id])
+  ledgerEntryId       String?              @unique @map("ledger_entry_id") @db.Uuid
+  ledgerEntry         InventoryLedger?     @relation("GrnItemEntry", fields: [ledgerEntryId], references: [id])
+  purchaseReturnItems PurchaseReturnItem[]
 
   @@index([grnId])
   @@map("grn_item")
@@ -405,8 +451,9 @@ model Outward {
   godown         Godown          @relation(fields: [godownId], references: [id])
   customerId     String?         @map("customer_id") @db.Uuid
   customer       Customer?       @relation(fields: [customerId], references: [id])
-  /// Phase 2: link to Invoice for partial-dispatch tracking.
+  /// Set when the dispatch fulfils (part of) an invoice.
   invoiceId      String?         @map("invoice_id") @db.Uuid
+  invoice        Invoice?        @relation(fields: [invoiceId], references: [id])
   dispatchedAt   DateTime        @map("dispatched_at") @db.Timestamptz(3)
   vehicleNo      String?         @map("vehicle_no")
   referenceNo    String?         @map("reference_no")
@@ -417,27 +464,33 @@ model Outward {
   createdBy      User            @relation(fields: [createdById], references: [id])
   createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  items OutwardItem[]
+  items        OutwardItem[]
+  salesReturns SalesReturn[]
 
   @@index([createdAt])
+  @@index([invoiceId])
   @@map("outward")
 }
 
 model OutwardItem {
-  id            String          @id @default(uuid()) @db.Uuid
-  outwardId     String          @map("outward_id") @db.Uuid
-  outward       Outward         @relation(fields: [outwardId], references: [id])
-  skuId         String          @map("sku_id") @db.Uuid
-  sku           Sku             @relation(fields: [skuId], references: [id])
-  batchId       String          @map("batch_id") @db.Uuid
-  batch         Batch           @relation(fields: [batchId, skuId], references: [id, skuId])
-  quantity      Decimal         @db.Decimal(18, 3)
-  /// Phase 2: link to InvoiceItem.
-  invoiceItemId String?         @map("invoice_item_id") @db.Uuid
-  ledgerEntryId String          @unique @map("ledger_entry_id") @db.Uuid
-  ledgerEntry   InventoryLedger @relation("OutwardItemEntry", fields: [ledgerEntryId], references: [id])
+  id               String            @id @default(uuid()) @db.Uuid
+  outwardId        String            @map("outward_id") @db.Uuid
+  outward          Outward           @relation(fields: [outwardId], references: [id])
+  skuId            String            @map("sku_id") @db.Uuid
+  sku              Sku               @relation(fields: [skuId], references: [id])
+  batchId          String            @map("batch_id") @db.Uuid
+  batch            Batch             @relation(fields: [batchId, skuId], references: [id, skuId])
+  quantity         Decimal           @db.Decimal(18, 3)
+  invoiceItemId    String?           @map("invoice_item_id") @db.Uuid
+  invoiceItem      InvoiceItem?      @relation(fields: [invoiceItemId], references: [id])
+  /// Quantity returned by the customer (sales returns), net of reversals.
+  returnedQty      Decimal           @default(0) @map("returned_qty") @db.Decimal(18, 3)
+  ledgerEntryId    String            @unique @map("ledger_entry_id") @db.Uuid
+  ledgerEntry      InventoryLedger   @relation("OutwardItemEntry", fields: [ledgerEntryId], references: [id])
+  salesReturnItems SalesReturnItem[]
 
   @@index([outwardId])
+  @@index([invoiceItemId])
   @@map("outward_item")
 }
 
@@ -561,10 +614,14 @@ model InventoryLedger {
   createdBy       User              @relation(fields: [createdById], references: [id])
   createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  grnItem        GrnItem?            @relation("GrnItemEntry")
-  outwardItem    OutwardItem?        @relation("OutwardItemEntry")
-  openingItem    OpeningBalanceItem? @relation("OpeningItemEntry")
-  adjustmentItem AdjustmentItem?     @relation("AdjustmentItemEntry")
+  grnItem            GrnItem?            @relation("GrnItemEntry")
+  outwardItem        OutwardItem?        @relation("OutwardItemEntry")
+  openingItem        OpeningBalanceItem? @relation("OpeningItemEntry")
+  adjustmentItem     AdjustmentItem?     @relation("AdjustmentItemEntry")
+  transferOutItem    TransferItem?       @relation("TransferOutEntry")
+  transferInItem     TransferItem?       @relation("TransferInEntry")
+  salesReturnItem    SalesReturnItem?    @relation("SalesReturnItemEntry")
+  purchaseReturnItem PurchaseReturnItem? @relation("PurchaseReturnItemEntry")
 
   @@index([skuId, godownId, batchId, createdAt])
   @@index([godownId, createdAt])
@@ -665,19 +722,32 @@ model AuditLog {
 }
 
 // ==========================
-// Phase 2 (tables only — no services yet)
+// Sales: invoices
 // ==========================
 
 model Invoice {
-  id            String        @id @default(uuid()) @db.Uuid
-  invoiceNumber String        @unique @map("invoice_number")
-  customerId    String        @map("customer_id") @db.Uuid
-  customer      Customer      @relation(fields: [customerId], references: [id])
-  invoiceDate   DateTime      @map("invoice_date") @db.Date
-  status        String        @default("DRAFT")
-  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  items         InvoiceItem[]
+  id             String        @id @default(uuid()) @db.Uuid
+  invoiceNumber  String        @unique @map("invoice_number")
+  customerId     String        @map("customer_id") @db.Uuid
+  customer       Customer      @relation(fields: [customerId], references: [id])
+  invoiceDate    DateTime      @map("invoice_date") @db.Date
+  status         InvoiceStatus @default(OPEN)
+  remarks        String?
+  idempotencyKey String?       @unique @map("idempotency_key")
+  createdById    String        @map("created_by_id") @db.Uuid
+  createdBy      User          @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
+  cancelledAt    DateTime?     @map("cancelled_at") @db.Timestamptz(3)
+  cancelledById  String?       @map("cancelled_by_id") @db.Uuid
+  cancelledBy    User?         @relation("InvoiceCancelledBy", fields: [cancelledById], references: [id])
+  cancelReason   String?       @map("cancel_reason")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
+  items    InvoiceItem[]
+  outwards Outward[]
+
+  @@index([status])
+  @@index([customerId])
   @@map("invoice")
 }
 
@@ -685,14 +755,161 @@ model InvoiceItem {
   id            String   @id @default(uuid()) @db.Uuid
   invoiceId     String   @map("invoice_id") @db.Uuid
   invoice       Invoice  @relation(fields: [invoiceId], references: [id])
+  lineNo        Int      @map("line_no")
   skuId         String   @map("sku_id") @db.Uuid
   sku           Sku      @relation(fields: [skuId], references: [id])
   quantity      Decimal  @db.Decimal(18, 3)
+  /// Dispatched against this line, net of reversals. Maintained in-transaction.
   dispatchedQty Decimal  @default(0) @map("dispatched_qty") @db.Decimal(18, 3)
   rate          Decimal? @db.Decimal(18, 2)
+  gstRate       Decimal? @map("gst_rate") @db.Decimal(5, 2)
 
+  outwardItems OutwardItem[]
+
+  @@unique([invoiceId, skuId])
+  @@unique([invoiceId, lineNo])
   @@map("invoice_item")
 }
+
+// ==========================
+// Transfers between godowns
+// ==========================
+
+model Transfer {
+  id             String          @id @default(uuid()) @db.Uuid
+  transferNumber String          @unique @map("transfer_number")
+  fromGodownId   String          @map("from_godown_id") @db.Uuid
+  fromGodown     Godown          @relation("TransferFrom", fields: [fromGodownId], references: [id])
+  toGodownId     String          @map("to_godown_id") @db.Uuid
+  toGodown       Godown          @relation("TransferTo", fields: [toGodownId], references: [id])
+  transferredAt  DateTime        @map("transferred_at") @db.Timestamptz(3)
+  remarks        String?
+  status         PostedDocStatus @default(POSTED)
+  idempotencyKey String?         @unique @map("idempotency_key")
+  createdById    String          @map("created_by_id") @db.Uuid
+  createdBy      User            @relation(fields: [createdById], references: [id])
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  items TransferItem[]
+
+  @@index([createdAt])
+  @@map("transfer")
+}
+
+/// One line moves one batch; it posts a TRANSFER_OUT and a TRANSFER_IN entry.
+model TransferItem {
+  id         String          @id @default(uuid()) @db.Uuid
+  transferId String          @map("transfer_id") @db.Uuid
+  transfer   Transfer        @relation(fields: [transferId], references: [id])
+  skuId      String          @map("sku_id") @db.Uuid
+  sku        Sku             @relation(fields: [skuId], references: [id])
+  batchId    String          @map("batch_id") @db.Uuid
+  batch      Batch           @relation(fields: [batchId, skuId], references: [id, skuId])
+  quantity   Decimal         @db.Decimal(18, 3)
+  outEntryId String          @unique @map("out_entry_id") @db.Uuid
+  outEntry   InventoryLedger @relation("TransferOutEntry", fields: [outEntryId], references: [id])
+  inEntryId  String          @unique @map("in_entry_id") @db.Uuid
+  inEntry    InventoryLedger @relation("TransferInEntry", fields: [inEntryId], references: [id])
+
+  @@index([transferId])
+  @@map("transfer_item")
+}
+
+// ==========================
+// Returns
+// ==========================
+
+/// Goods coming back from a customer, always against a dispatch.
+model SalesReturn {
+  id             String          @id @default(uuid()) @db.Uuid
+  returnNumber   String          @unique @map("return_number")
+  outwardId      String          @map("outward_id") @db.Uuid
+  outward        Outward         @relation(fields: [outwardId], references: [id])
+  customerId     String?         @map("customer_id") @db.Uuid
+  customer       Customer?       @relation(fields: [customerId], references: [id])
+  godownId       String          @map("godown_id") @db.Uuid
+  godown         Godown          @relation(fields: [godownId], references: [id])
+  returnedAt     DateTime        @map("returned_at") @db.Timestamptz(3)
+  reason         String
+  remarks        String?
+  status         PostedDocStatus @default(POSTED)
+  idempotencyKey String?         @unique @map("idempotency_key")
+  createdById    String          @map("created_by_id") @db.Uuid
+  createdBy      User            @relation(fields: [createdById], references: [id])
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  items SalesReturnItem[]
+
+  @@index([outwardId])
+  @@index([createdAt])
+  @@map("sales_return")
+}
+
+model SalesReturnItem {
+  id            String          @id @default(uuid()) @db.Uuid
+  salesReturnId String          @map("sales_return_id") @db.Uuid
+  salesReturn   SalesReturn     @relation(fields: [salesReturnId], references: [id])
+  outwardItemId String          @map("outward_item_id") @db.Uuid
+  outwardItem   OutwardItem     @relation(fields: [outwardItemId], references: [id])
+  skuId         String          @map("sku_id") @db.Uuid
+  sku           Sku             @relation(fields: [skuId], references: [id])
+  batchId       String          @map("batch_id") @db.Uuid
+  batch         Batch           @relation(fields: [batchId, skuId], references: [id, skuId])
+  quantity      Decimal         @db.Decimal(18, 3)
+  ledgerEntryId String          @unique @map("ledger_entry_id") @db.Uuid
+  ledgerEntry   InventoryLedger @relation("SalesReturnItemEntry", fields: [ledgerEntryId], references: [id])
+
+  @@index([salesReturnId])
+  @@map("sales_return_item")
+}
+
+/// Goods sent back to a supplier, always against a GRN.
+model PurchaseReturn {
+  id             String          @id @default(uuid()) @db.Uuid
+  returnNumber   String          @unique @map("return_number")
+  grnId          String          @map("grn_id") @db.Uuid
+  grn            Grn             @relation(fields: [grnId], references: [id])
+  supplierId     String          @map("supplier_id") @db.Uuid
+  supplier       Supplier        @relation(fields: [supplierId], references: [id])
+  godownId       String          @map("godown_id") @db.Uuid
+  godown         Godown          @relation(fields: [godownId], references: [id])
+  returnedAt     DateTime        @map("returned_at") @db.Timestamptz(3)
+  reason         String
+  remarks        String?
+  status         PostedDocStatus @default(POSTED)
+  idempotencyKey String?         @unique @map("idempotency_key")
+  createdById    String          @map("created_by_id") @db.Uuid
+  createdBy      User            @relation(fields: [createdById], references: [id])
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  items PurchaseReturnItem[]
+
+  @@index([grnId])
+  @@index([createdAt])
+  @@map("purchase_return")
+}
+
+model PurchaseReturnItem {
+  id               String          @id @default(uuid()) @db.Uuid
+  purchaseReturnId String          @map("purchase_return_id") @db.Uuid
+  purchaseReturn   PurchaseReturn  @relation(fields: [purchaseReturnId], references: [id])
+  grnItemId        String          @map("grn_item_id") @db.Uuid
+  grnItem          GrnItem         @relation(fields: [grnItemId], references: [id])
+  skuId            String          @map("sku_id") @db.Uuid
+  sku              Sku             @relation(fields: [skuId], references: [id])
+  batchId          String          @map("batch_id") @db.Uuid
+  batch            Batch           @relation(fields: [batchId, skuId], references: [id, skuId])
+  quantity         Decimal         @db.Decimal(18, 3)
+  ledgerEntryId    String          @unique @map("ledger_entry_id") @db.Uuid
+  ledgerEntry      InventoryLedger @relation("PurchaseReturnItemEntry", fields: [ledgerEntryId], references: [id])
+
+  @@index([purchaseReturnId])
+  @@map("purchase_return_item")
+}
+
+// ==========================
+// Reorder rules and alerts
+// ==========================
 
 model ReorderRule {
   id           String   @id @default(uuid()) @db.Uuid
@@ -700,27 +917,32 @@ model ReorderRule {
   sku          Sku      @relation(fields: [skuId], references: [id])
   godownId     String   @map("godown_id") @db.Uuid
   godown       Godown   @relation(fields: [godownId], references: [id])
+  /// Alert when godown stock of the SKU falls below this level.
   reorderLevel Decimal  @map("reorder_level") @db.Decimal(18, 3)
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([skuId, godownId])
   @@map("reorder_rule")
 }
 
+/// At most one ACTIVE alert per SKU × godown (partial unique index in SQL).
 model StockAlert {
-  id           String    @id @default(uuid()) @db.Uuid
-  skuId        String    @map("sku_id") @db.Uuid
-  sku          Sku       @relation(fields: [skuId], references: [id])
-  godownId     String    @map("godown_id") @db.Uuid
-  godown       Godown    @relation(fields: [godownId], references: [id])
-  alertType    String    @default("LOW_STOCK") @map("alert_type")
-  currentQty   Decimal   @map("current_qty") @db.Decimal(18, 3)
-  thresholdQty Decimal   @map("threshold_qty") @db.Decimal(18, 3)
-  status       String    @default("ACTIVE")
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  resolvedAt   DateTime? @map("resolved_at") @db.Timestamptz(3)
+  id           String           @id @default(uuid()) @db.Uuid
+  skuId        String           @map("sku_id") @db.Uuid
+  sku          Sku              @relation(fields: [skuId], references: [id])
+  godownId     String           @map("godown_id") @db.Uuid
+  godown       Godown           @relation(fields: [godownId], references: [id])
+  alertType    String           @default("LOW_STOCK") @map("alert_type")
+  currentQty   Decimal          @map("current_qty") @db.Decimal(18, 3)
+  thresholdQty Decimal          @map("threshold_qty") @db.Decimal(18, 3)
+  status       StockAlertStatus @default(ACTIVE)
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  resolvedAt   DateTime?        @map("resolved_at") @db.Timestamptz(3)
 
+  @@index([status, createdAt])
   @@index([skuId, godownId, status])
   @@map("stock_alert")
 }

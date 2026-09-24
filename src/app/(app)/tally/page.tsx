@@ -11,6 +11,7 @@ import { StatCard } from "@/components/ui/stat-card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { RetryTallyJobButton, RunTallySyncButton } from "@/features/tally/tally-actions";
 import { formatDateTime } from "@/lib/dates";
+import { documentHref } from "@/lib/document-links";
 import { humanize } from "@/lib/format";
 import { can } from "@/lib/permissions";
 import { parseSearchParams } from "@/lib/search-params";
@@ -19,12 +20,6 @@ import { requirePagePermission } from "@/server/auth/current-user";
 import { countTallyJobsByStatus, listTallyJobs } from "@/server/modules/tally/tally.queries";
 
 export const metadata: Metadata = { title: "Tally sync" };
-
-const DOCUMENT_PATHS: Partial<Record<string, string>> = {
-  GRN: "/grns",
-  DISPATCH: "/dispatches",
-  ADJUSTMENT: "/adjustments",
-};
 
 export default async function TallyPage({ searchParams }: PageProps<"/tally">) {
   const user = await requirePagePermission("tally.view");
@@ -82,12 +77,12 @@ export default async function TallyPage({ searchParams }: PageProps<"/tally">) {
               </THead>
               <TBody>
                 {items.map((job) => {
-                  const base = DOCUMENT_PATHS[job.entityType];
+                  const href = documentHref(job.entityType, job.entityId);
                   return (
                     <TR key={job.id}>
                       <TD>
-                        {base ? (
-                          <Link href={`${base}/${job.entityId}`} className="font-mono text-xs font-medium text-brand-700 hover:underline">
+                        {href ? (
+                          <Link href={href} className="font-mono text-xs font-medium text-brand-700 hover:underline">
                             {job.entityNo}
                           </Link>
                         ) : (

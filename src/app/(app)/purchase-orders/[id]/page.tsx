@@ -49,6 +49,7 @@ export default async function PurchaseOrderPage({ params }: PageProps<"/purchase
               canEdit={po.status === "DRAFT"}
               canSubmit={po.status === "DRAFT"}
               canCancel={(po.status === "DRAFT" || po.status === "OPEN") && !hasReceipts}
+              canShortClose={po.status === "PARTIALLY_RECEIVED"}
             />
           )
         }
@@ -58,6 +59,13 @@ export default async function PurchaseOrderPage({ params }: PageProps<"/purchase
         <Card className="mb-6 border-slate-300 bg-slate-50">
           <CardBody className="text-sm text-slate-700">
             Cancelled {formatDateTime(po.cancelledAt)} by {po.cancelledBy?.name}: {po.cancelReason}
+          </CardBody>
+        </Card>
+      )}
+      {po.status === "SHORT_CLOSED" && (
+        <Card className="mb-6 border-slate-300 bg-slate-50">
+          <CardBody className="text-sm text-slate-700">
+            Short-closed {formatDateTime(po.closedAt)} by {po.closedBy?.name}: {po.closeReason}
           </CardBody>
         </Card>
       )}

@@ -44,6 +44,7 @@ export function getDispatchDetail(id: string) {
     include: {
       godown: { select: { id: true, code: true, name: true } },
       customer: { select: { id: true, code: true, name: true } },
+      invoice: { select: { id: true, invoiceNumber: true } },
       createdBy: { select: userRefSelect },
       items: {
         orderBy: { id: "asc" },

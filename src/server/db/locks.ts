@@ -8,6 +8,10 @@ export type LockableTable =
   | "outward"
   | "opening_balance"
   | "adjustment"
+  | "invoice"
+  | "transfer"
+  | "sales_return"
+  | "purchase_return"
   | "inventory_ledger";
 
 /**

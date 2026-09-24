@@ -44,6 +44,7 @@ export function getPurchaseOrderDetail(id: string) {
       supplier: true,
       createdBy: { select: userRefSelect },
       cancelledBy: { select: userRefSelect },
+      closedBy: { select: userRefSelect },
       items: {
         orderBy: { lineNo: "asc" },
         include: {

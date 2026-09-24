@@ -31,8 +31,9 @@ prisma/
   migrations/                Versioned SQL; hand-reviewed (created with --create-only).
                              The init migration appends CHECKs, triggers and the drift view.
   seed.ts                    Idempotent seed — posts stock through the real services
-scripts/tally-sync.ts        CLI for a scheduler: one Tally sync pass
-docs/                        Architecture and operational docs
+scripts/                     CLI entry points: tally-sync.ts (one sync pass), db-grants.ts
+ops/                         Deployment assets: postgres/app-role-grants.sql, systemd units
+docs/                        Architecture and operations docs
 tests/
   helpers/                   Test DB setup/reset, factories, route-calling helper
   unit/<area>/               Pure logic, no database
@@ -81,29 +82,43 @@ src/
 | `audit`       | Audit log writes (in-transaction) and reads |
 | `masters`     | SKUs, godowns, suppliers, customers, categories, UOMs |
 | `users`       | User administration |
-| `purchasing`  | Purchase orders and GRNs |
-| `dispatch`    | Outward dispatch |
+| `purchasing`  | Purchase orders (incl. short-close) and GRNs |
+| `invoices`    | Customer invoices and dispatched/remaining quantities |
+| `dispatch`    | Outward dispatch, optionally against an invoice |
+| `transfers`   | Godown-to-godown transfers (TRANSFER_OUT + TRANSFER_IN) |
+| `returns`     | Customer returns (against a dispatch) and supplier returns (against a GRN) |
 | `adjustments` | Adjustment requests, approval/rejection (maker/checker) |
 | `opening`     | Opening balances |
-| `reversals`   | Reversal use case: counter-entry + document side effects + Tally + audit |
-| `tally`       | Sync queue, worker, voucher builder, Tally client interface |
-| `dashboard`   | Cross-module read model for the dashboard |
+| `reversals`   | Reversal use case: counter-entries + document side effects + Tally + audit |
+| `alerts`      | Reorder rules and low-stock alerts (evaluated by the inventory engine) |
+| `reports`     | Stock summary / daily inventory, movements, slow & dead stock, CSV layouts |
+| `tally`       | Sync queue, worker, voucher builder, XML wire format, Tally clients |
+| `dashboard`   | Cross-module read model for the dashboard and exceptions |
 
-`inventory` is the only module that writes `inventory_ledger` / `stock_balance`.
-Document modules depend on `inventory`, never the other way round;
-`reversals` orchestrates the document-specific effects.
+`inventory` is the only module that writes `inventory_ledger` / `stock_balance`,
+and it re-evaluates `alerts` after every posting, so an alert can never
+disagree with stock. Document modules depend on `inventory`, never the other
+way round; `reversals` orchestrates the document-specific effects.
 
 ## Concurrency model
 
 READ COMMITTED with explicit locks, always taken in this order to avoid deadlocks:
 
-1. the owning document row (`purchase_order`, `adjustment`, …) — `lockRowForUpdate`
+1. the owning document row(s) (`purchase_order` → `grn`, `invoice` → `outward`,
+   `adjustment`, `transfer`, …) — `lockRowForUpdate`
 2. the ledger entry being reversed
 3. `stock_balance` rows, sorted by (sku, godown, batch)
 
 Stock decreases are a single conditional `UPDATE … WHERE quantity + delta >= 0`;
 state transitions are conditional updates; one reversal per entry is enforced by
 a unique index. `withTx` retries deadlocks/serialisation failures.
+
+## Database access
+
+- The app connects as a least-privilege login (`margix_app`): row access only,
+  no TRUNCATE, no UPDATE/DELETE on the ledger or audit log.
+- Migrations and `npm run db:grants` use the schema owner (`DIRECT_DATABASE_URL`).
+- See [operations.md](operations.md).
 
 ## Naming conventions
 

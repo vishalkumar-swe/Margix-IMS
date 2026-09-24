@@ -1,7 +1,10 @@
+import { CornerDownLeft } from "lucide-react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { LedgerTable } from "@/features/ledger/ledger-table";
 import { formatDateTime } from "@/lib/dates";
@@ -37,7 +40,27 @@ export default async function DispatchPage({ params }: PageProps<"/dispatches/[i
         back={{ href: "/dispatches", label: "Dispatches" }}
         title={dispatch.outwardNumber}
         meta={<StatusBadge status={dispatch.status} />}
-        description={details.join(" · ")}
+        description={
+          <>
+            {details.join(" · ")}
+            {dispatch.invoice && (
+              <>
+                {" · against "}
+                <Link href={`/invoices/${dispatch.invoice.id}`} className="text-brand-700 hover:underline">
+                  {dispatch.invoice.invoiceNumber}
+                </Link>
+              </>
+            )}
+          </>
+        }
+        actions={
+          can(user.role, "return.create") &&
+          dispatch.status !== "REVERSED" && (
+            <Link href={`/sales-returns/new?outwardId=${dispatch.id}`} className={buttonVariants({ variant: "secondary" })}>
+              <CornerDownLeft aria-hidden /> Record customer return
+            </Link>
+          )
+        }
       />
       {dispatch.remarks && <p className="-mt-3 mb-6 text-sm text-slate-600">{dispatch.remarks}</p>}
       <Card>

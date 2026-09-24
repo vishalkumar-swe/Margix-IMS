@@ -5,6 +5,7 @@ import type { Actor } from "@/server/actor";
 import { prisma } from "@/server/db/client";
 import { toDecimal } from "@/server/db/decimal";
 import { withTx, type Tx } from "@/server/db/transaction";
+import { ConflictError } from "@/server/errors";
 import { recordAudit } from "@/server/modules/audit/audit.service";
 import {
   derivePostedDocStatus,
@@ -12,6 +13,7 @@ import {
   withIdempotency,
 } from "@/server/modules/documents/documents.service";
 import { getBatchForSku } from "@/server/modules/inventory/batch.service";
+import { applyDispatchToInvoice, releaseInvoiceDispatch } from "@/server/modules/invoices/invoice.service";
 import { postMovements } from "@/server/modules/inventory/ledger.service";
 import { assertUomPrecision } from "@/server/modules/inventory/movement-rules";
 import {
@@ -24,7 +26,9 @@ import { enqueueTallySync } from "@/server/modules/tally/tally-queue.service";
 /**
  * Posts an outward dispatch (spec §6.2). Every line names a batch; stock is
  * validated per batch atomically, so a dispatch beyond available stock is
- * rejected with INSUFFICIENT_STOCK and nothing is written.
+ * rejected with INSUFFICIENT_STOCK and nothing is written. A dispatch linked
+ * to an invoice books its quantities against the invoice (partial dispatch),
+ * refusing anything beyond the remaining invoiced quantity.
  */
 export function postDispatch(actor: Actor, input: DispatchCreateInput): Promise<Outward> {
   return withIdempotency(
@@ -51,12 +55,24 @@ async function postDispatchInTx(tx: Tx, actor: Actor, input: DispatchCreateInput
     lines.push({ id: randomUUID(), item, sku, quantity });
   }
 
+  // Invoice first: document lock before stock rows (see docs/architecture.md).
+  const invoiceLink = input.invoiceId
+    ? await applyDispatchToInvoice(
+        tx,
+        input.invoiceId,
+        input.customerId,
+        lines.map((l) => ({ skuId: l.sku.id, quantity: l.quantity })),
+      )
+    : null;
+  const customerId = invoiceLink?.customerId ?? input.customerId;
+
   const outwardNumber = await nextDocumentNumber(tx, "DSP");
   const outward = await tx.outward.create({
     data: {
       outwardNumber,
       godownId: input.godownId,
-      customerId: input.customerId,
+      customerId,
+      invoiceId: input.invoiceId,
       dispatchedAt: new Date(),
       vehicleNo: input.vehicleNo,
       referenceNo: input.referenceNo,
@@ -84,6 +100,7 @@ async function postDispatchInTx(tx: Tx, actor: Actor, input: DispatchCreateInput
       skuId: l.sku.id,
       batchId: l.item.batchId,
       quantity: l.quantity,
+      invoiceItemId: invoiceLink?.itemIdBySku.get(l.sku.id) ?? null,
       ledgerEntryId: entries[index].id,
     })),
   });
@@ -106,8 +123,20 @@ async function postDispatchInTx(tx: Tx, actor: Actor, input: DispatchCreateInput
   return outward;
 }
 
+/**
+ * Side effects of reversing a dispatch line: the quantity is released on the
+ * invoice and the dispatch status updated. A line with customer returns must
+ * have those returns reversed first, or stock would be restored twice.
+ */
 export async function onDispatchEntryReversed(tx: Tx, entry: InventoryLedger): Promise<void> {
   const item = await tx.outwardItem.findUniqueOrThrow({ where: { ledgerEntryId: entry.id } });
+  if (item.returnedQty.greaterThan(0)) {
+    throw new ConflictError(
+      "CANNOT_REVERSE",
+      "Goods from this dispatch line were returned. Reverse the customer return first.",
+    );
+  }
+  if (item.invoiceItemId) await releaseInvoiceDispatch(tx, item.invoiceItemId, item.quantity);
   const [total, reversed] = await Promise.all([
     tx.outwardItem.count({ where: { outwardId: item.outwardId } }),
     tx.outwardItem.count({ where: { outwardId: item.outwardId, ledgerEntry: { reversedBy: { isNot: null } } } }),

@@ -1,6 +1,7 @@
 import {
   ArrowDownRight,
   ArrowUpRight,
+  BellRing,
   Boxes,
   ClipboardList,
   Package,
@@ -89,6 +90,8 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
         </Card>
 
         <div className="space-y-6">
+          <NeedsAttention exceptions={summary.exceptions} failedSync={summary.tally.FAILED} pendingAdjustments={summary.pendingAdjustments} />
+
           <Card>
             <CardHeader title="Expiring within 30 days" />
             {summary.expiringBatches.length > 0 ? (
@@ -146,5 +149,48 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
         </div>
       </div>
     </>
+  );
+}
+
+/** Exceptions as first-class items (spec §6.8), each linking to where it is resolved. */
+function NeedsAttention({
+  exceptions,
+  failedSync,
+  pendingAdjustments,
+}: {
+  exceptions: { lowStock: number; invoicesAwaitingDispatch: number; unmappedSkus: number; unmappedGodowns: number };
+  failedSync: number;
+  pendingAdjustments: number;
+}) {
+  const items = [
+    { count: exceptions.lowStock, label: "SKUs below reorder level", href: "/alerts", tone: "danger" },
+    { count: failedSync, label: "Tally syncs failed", href: "/tally?status=FAILED", tone: "danger" },
+    { count: pendingAdjustments, label: "Adjustments awaiting approval", href: "/adjustments?status=SUBMITTED", tone: "warning" },
+    { count: exceptions.invoicesAwaitingDispatch, label: "Invoices awaiting dispatch", href: "/invoices", tone: "warning" },
+    { count: exceptions.unmappedSkus, label: "Active SKUs without Tally mapping", href: "/masters/skus", tone: "warning" },
+    { count: exceptions.unmappedGodowns, label: "Godowns without Tally mapping", href: "/masters/godowns", tone: "warning" },
+  ].filter((item) => item.count > 0);
+
+  return (
+    <Card>
+      <CardHeader title="Needs attention" />
+      {items.length > 0 ? (
+        <ul className="divide-y divide-slate-100">
+          {items.map((item) => (
+            <li key={item.label}>
+              <Link href={item.href} className="flex items-center justify-between px-5 py-3 text-sm hover:bg-slate-50">
+                <span className="flex items-center gap-2 text-slate-700">
+                  <BellRing className={item.tone === "danger" ? "size-4 text-red-500" : "size-4 text-amber-500"} aria-hidden />
+                  {item.label}
+                </span>
+                <span className="font-semibold tabular-nums text-slate-900">{item.count}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <CardBody className="text-sm text-slate-500">Nothing needs attention.</CardBody>
+      )}
+    </Card>
   );
 }

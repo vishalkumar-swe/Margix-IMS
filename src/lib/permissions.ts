@@ -18,6 +18,15 @@ export type Permission =
   | "adjustment.view"
   | "adjustment.request"
   | "adjustment.approve"
+  | "invoice.view"
+  | "invoice.manage"
+  | "transfer.view"
+  | "transfer.create"
+  | "return.view"
+  | "return.create"
+  | "alert.view"
+  | "alert.manage"
+  | "report.view"
   | "opening.post"
   | "master.view"
   | "master.manage"
@@ -48,6 +57,15 @@ const PERMISSION_ROLES: Record<Permission, readonly RoleCode[]> = {
   "adjustment.view": ALL_ROLES,
   "adjustment.request": ["ADMIN", "STORE_MANAGER", "WAREHOUSE_OPERATOR"],
   "adjustment.approve": ["ADMIN", "STORE_MANAGER"],
+  "invoice.view": ALL_ROLES,
+  "invoice.manage": ["ADMIN", "STORE_MANAGER", "ACCOUNTS"],
+  "transfer.view": ALL_ROLES,
+  "transfer.create": ["ADMIN", "STORE_MANAGER", "WAREHOUSE_OPERATOR"],
+  "return.view": ALL_ROLES,
+  "return.create": ["ADMIN", "STORE_MANAGER", "WAREHOUSE_OPERATOR"],
+  "alert.view": ALL_ROLES,
+  "alert.manage": ["ADMIN", "STORE_MANAGER"],
+  "report.view": ALL_ROLES,
   "opening.post": ["ADMIN"],
   "master.view": ALL_ROLES,
   "master.manage": ["ADMIN"],

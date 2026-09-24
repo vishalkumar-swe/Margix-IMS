@@ -1,9 +1,15 @@
 import { prisma } from "@/server/db/client";
 import { withTx } from "@/server/db/transaction";
-import { AuthenticationError } from "@/server/errors";
+import { AuthenticationError, ValidationError } from "@/server/errors";
 import { recordAudit } from "@/server/modules/audit/audit.service";
-import { getDummyPasswordHash, verifyPassword } from "./password";
-import { createSession, deleteSession, type SessionMetadata, type SessionUser } from "./session";
+import { getDummyPasswordHash, hashPassword, verifyPassword } from "./password";
+import {
+  createSession,
+  deleteOtherSessions,
+  deleteSession,
+  type SessionMetadata,
+  type SessionUser,
+} from "./session";
 
 export const MAX_FAILED_LOGINS = 5;
 export const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
@@ -86,6 +92,37 @@ export async function logout(token: string, user: SessionUser | null, meta: Sess
       }),
     );
   }
+}
+
+/**
+ * Changes the signed-in user's own password after verifying the current one.
+ * Other sessions are ended (a leaked password stops working everywhere); the
+ * current session stays signed in.
+ */
+export async function changeOwnPassword(
+  user: SessionUser,
+  sessionToken: string,
+  currentPassword: string,
+  newPassword: string,
+  meta: SessionMetadata,
+): Promise<void> {
+  const record = await prisma.user.findUniqueOrThrow({ where: { id: user.id }, select: { passwordHash: true } });
+  if (!(await verifyPassword(currentPassword, record.passwordHash))) {
+    throw new ValidationError("The current password is incorrect.", [
+      { path: "currentPassword", message: "The current password is incorrect." },
+    ]);
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+  await withTx(async (tx) => {
+    await tx.user.update({ where: { id: user.id }, data: { passwordHash, passwordChangedAt: new Date() } });
+    await recordAudit(tx, { userId: user.id, role: user.role, ...meta }, {
+      action: "AUTH_PASSWORD_CHANGED",
+      entityType: "User",
+      entityId: user.id,
+    });
+  });
+  await deleteOtherSessions(user.id, sessionToken);
 }
 
 async function registerFailedAttempt(

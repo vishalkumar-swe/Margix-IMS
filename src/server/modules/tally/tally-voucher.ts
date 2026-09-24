@@ -1,24 +1,28 @@
 import type { ReferenceType, TallyEntityType } from "@prisma/client";
 import { utcToDateOnly } from "@/lib/dates";
 import { prisma } from "@/server/db/client";
+import { DEFAULT_BATCH_NUMBER } from "@/server/modules/inventory/batch.service";
 import type { TallyVoucher, TallyVoucherType } from "./tally-client";
 
 /** A problem the business can fix (e.g. missing mapping); its message is shown to users as-is. */
 export class TallyMappingError extends Error {}
 
-const VOUCHER_TYPES: Record<TallyEntityType, TallyVoucherType> = {
-  OPENING_BALANCE: "Stock Journal",
-  GRN: "Receipt Note",
-  DISPATCH: "Delivery Note",
-  ADJUSTMENT: "Physical Stock",
-  REVERSAL: "Stock Journal",
-};
+/**
+ * Every Margix document is a pure stock movement, so it is sent as a Tally
+ * Stock Journal (inward lines as destination, outward lines as source).
+ * Accounting vouchers (Receipt/Delivery Notes) need party ledgers and belong
+ * with invoice accounting, which is out of scope for V1.
+ */
+const VOUCHER_TYPE: TallyVoucherType = "Stock Journal";
 
 const REFERENCE_TYPES: Record<Exclude<TallyEntityType, "REVERSAL">, ReferenceType> = {
   OPENING_BALANCE: "OPENING_BALANCE",
   GRN: "GRN",
   DISPATCH: "DISPATCH",
   ADJUSTMENT: "ADJUSTMENT",
+  TRANSFER: "TRANSFER",
+  SALES_RETURN: "SALES_RETURN",
+  PURCHASE_RETURN: "PURCHASE_RETURN",
 };
 
 interface JobRef {
@@ -62,7 +66,8 @@ export async function buildTallyVoucher(job: JobRef): Promise<TallyVoucher> {
     return {
       stockItem: entry.sku.tallyStockItemName,
       godown: entry.godown.tallyGodownName,
-      batch: entry.batch.batchNumber,
+      // Tally's name for the batch of non-batch-tracked items.
+      batch: entry.batch.batchNumber === DEFAULT_BATCH_NUMBER ? "Primary Batch" : entry.batch.batchNumber,
       quantity: entry.quantity.toString(),
       unit: entry.sku.baseUom.code,
     };
@@ -70,7 +75,7 @@ export async function buildTallyVoucher(job: JobRef): Promise<TallyVoucher> {
 
   const first = entries[0];
   return {
-    voucherType: VOUCHER_TYPES[job.entityType],
+    voucherType: VOUCHER_TYPE,
     voucherNumber: job.entityNo,
     date: utcToDateOnly(first.createdAt),
     narration:

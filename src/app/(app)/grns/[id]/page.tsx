@@ -1,9 +1,11 @@
+import { CornerUpRight } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { Quantity } from "@/components/shared/quantity";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { LedgerTable } from "@/features/ledger/ledger-table";
@@ -42,6 +44,15 @@ export default async function GrnPage({ params }: PageProps<"/grns/[id]">) {
             {grn.supplierInvoiceNo && <> · supplier invoice {grn.supplierInvoiceNo}</>}
           </>
         }
+        actions={
+          can(user.role, "return.create") &&
+          grn.status !== "REVERSED" &&
+          grn.items.some((item) => item.acceptedQty.greaterThan(item.returnedQty)) && (
+            <Link href={`/purchase-returns/new?grnId=${grn.id}`} className={buttonVariants({ variant: "secondary" })}>
+              <CornerUpRight aria-hidden /> Return to supplier
+            </Link>
+          )
+        }
       />
 
       <Card>
@@ -55,6 +66,7 @@ export default async function GrnPage({ params }: PageProps<"/grns/[id]">) {
               <TH numeric>Received</TH>
               <TH numeric>Accepted</TH>
               <TH numeric>Rejected</TH>
+              <TH numeric>Returned</TH>
               <TH>Rejection reason</TH>
             </tr>
           </THead>
@@ -75,6 +87,9 @@ export default async function GrnPage({ params }: PageProps<"/grns/[id]">) {
                 </TD>
                 <TD numeric>
                   <Quantity value={item.rejectedQty} className={item.rejectedQty.greaterThan(0) ? "text-red-700" : undefined} />
+                </TD>
+                <TD numeric>
+                  <Quantity value={item.returnedQty} />
                 </TD>
                 <TD className="text-xs">{item.rejectionReason ?? "—"}</TD>
               </TR>

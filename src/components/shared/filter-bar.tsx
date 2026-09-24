@@ -15,10 +15,12 @@ interface SelectFilter {
  */
 export function FilterBar({
   search,
+  dates = [],
   selects = [],
   checkbox,
 }: {
   search?: { name: string; placeholder: string; value?: string };
+  dates?: { name: string; label: string; value?: string }[];
   selects?: SelectFilter[];
   checkbox?: { name: string; label: string; checked: boolean };
 }) {
@@ -37,6 +39,12 @@ export function FilterBar({
           />
         </div>
       )}
+      {dates.map((filter) => (
+        <label key={filter.name} className="flex items-center gap-2 text-sm text-slate-600">
+          {filter.label}
+          <Input type="date" name={filter.name} defaultValue={filter.value} className="w-40" />
+        </label>
+      ))}
       {selects.map((filter) => (
         <Select key={filter.name} name={filter.name} defaultValue={filter.value ?? ""} aria-label={filter.label} className="w-auto">
           <option value="">{filter.label}</option>

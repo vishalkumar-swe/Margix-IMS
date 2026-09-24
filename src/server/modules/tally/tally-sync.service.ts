@@ -35,7 +35,7 @@ interface ClaimedJob {
  * block or roll back an inventory transaction.
  */
 export async function runTallySync(options: { client?: TallyClient | null; limit?: number } = {}): Promise<TallySyncSummary> {
-  const client = options.client !== undefined ? options.client : createTallyClient(getEnv().TALLY_MODE);
+  const client = options.client !== undefined ? options.client : createTallyClient(getEnv());
   if (!client) return { enabled: false, processed: 0, synced: 0, failed: 0 };
 
   const jobs = await claimDueJobs(options.limit ?? 20);

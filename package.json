@@ -11,12 +11,13 @@
     "postinstall": "prisma generate",
     "db:up": "podman start margix-postgres",
     "db:migrate": "prisma migrate dev",
-    "db:deploy": "prisma migrate deploy",
-    "db:reset": "prisma migrate reset --force",
+    "db:deploy": "prisma migrate deploy && npm run db:grants",
+    "db:reset": "prisma migrate reset --force --skip-seed && npm run db:grants && npm run db:seed",
     "db:seed": "prisma db seed",
     "test": "dotenv -e .env.test -- vitest run",
     "test:watch": "dotenv -e .env.test -- vitest",
-    "tally:sync": "tsx --env-file=.env scripts/tally-sync.ts"
+    "tally:sync": "tsx --env-file=.env scripts/tally-sync.ts",
+    "db:grants": "tsx --env-file=.env scripts/db-grants.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

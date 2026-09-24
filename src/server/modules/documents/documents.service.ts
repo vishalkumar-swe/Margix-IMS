@@ -1,18 +1,16 @@
 import type { PostedDocStatus } from "@prisma/client";
+import { istDateOf } from "@/lib/dates";
 import { isUniqueViolation } from "@/server/db/pg-error";
 import type { Tx } from "@/server/db/transaction";
 
-export type DocumentPrefix = "PO" | "GRN" | "DSP" | "ADJ" | "OPN";
-
-const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+export type DocumentPrefix = "PO" | "GRN" | "DSP" | "ADJ" | "OPN" | "INV" | "TRF" | "SRN" | "PRN";
 
 /**
  * Indian financial year code (April–March, evaluated in IST), e.g. 2026-09-24 → "2627".
  */
 export function financialYearCode(date: Date): string {
-  const ist = new Date(date.getTime() + IST_OFFSET_MS);
-  const year = ist.getUTCFullYear();
-  const startYear = ist.getUTCMonth() >= 3 ? year : year - 1;
+  const [year, month] = istDateOf(date).split("-").map(Number);
+  const startYear = month >= 4 ? year : year - 1;
   const endYear = startYear + 1;
   return `${String(startYear % 100).padStart(2, "0")}${String(endYear % 100).padStart(2, "0")}`;
 }

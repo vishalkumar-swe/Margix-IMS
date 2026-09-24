@@ -8,7 +8,11 @@ const STATUS_TONES: Record<string, BadgeTone> = {
   OPEN: "info",
   PARTIALLY_RECEIVED: "warning",
   FULLY_RECEIVED: "success",
+  SHORT_CLOSED: "neutral",
   CANCELLED: "neutral",
+  // Invoices
+  PARTIALLY_DISPATCHED: "warning",
+  COMPLETE: "success",
   // Posted documents
   POSTED: "success",
   PARTIALLY_REVERSED: "warning",
@@ -22,6 +26,8 @@ const STATUS_TONES: Record<string, BadgeTone> = {
   IN_PROGRESS: "info",
   SYNCED: "success",
   FAILED: "danger",
+  // Stock alerts
+  RESOLVED: "neutral",
   // SKUs
   ACTIVE: "success",
   INACTIVE: "neutral",

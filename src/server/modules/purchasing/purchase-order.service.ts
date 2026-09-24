@@ -131,10 +131,40 @@ export async function lockPurchaseOrder(tx: Tx, id: string): Promise<LockedPurch
   });
 }
 
-/** Derives the receipt status from line quantities (never for DRAFT/CANCELLED orders). */
+/**
+ * Short-closes a partially received order: the remaining quantity will not
+ * be delivered, so no further receipts are accepted.
+ */
+export function shortClosePurchaseOrder(actor: Actor, id: string, reason: string): Promise<PurchaseOrder> {
+  return withTx(async (tx) => {
+    const po = await lockPurchaseOrder(tx, id);
+    if (po.status !== "PARTIALLY_RECEIVED") {
+      throw new ConflictError(
+        "INVALID_STATE",
+        `Only partially received orders can be short-closed (${po.poNumber} is ${po.status}).`,
+      );
+    }
+    const closed = await tx.purchaseOrder.update({
+      where: { id },
+      data: { status: "SHORT_CLOSED", closedAt: new Date(), closedById: actor.userId, closeReason: reason },
+    });
+    await recordAudit(tx, actor, {
+      action: "PO_SHORT_CLOSED",
+      entityType: "PurchaseOrder",
+      entityId: id,
+      newData: {
+        reason,
+        pending: po.items.map((i) => ({ skuId: i.skuId, pending: i.orderedQty.minus(i.receivedQty) })),
+      },
+    });
+    return closed;
+  });
+}
+
+/** Derives the receipt status from line quantities (never for DRAFT/SHORT_CLOSED/CANCELLED orders). */
 export async function recomputePurchaseOrderStatus(tx: Tx, id: string): Promise<PurchaseOrderStatus> {
   const po = await tx.purchaseOrder.findUniqueOrThrow({ where: { id }, include: { items: true } });
-  if (po.status === "DRAFT" || po.status === "CANCELLED") return po.status;
+  if (po.status === "DRAFT" || po.status === "CANCELLED" || po.status === "SHORT_CLOSED") return po.status;
 
   const status: PurchaseOrderStatus = po.items.every((i) => i.receivedQty.greaterThanOrEqualTo(i.orderedQty))
     ? "FULLY_RECEIVED"

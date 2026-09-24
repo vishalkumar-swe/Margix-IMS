@@ -17,6 +17,8 @@ export type ErrorCode =
   | "CANNOT_REVERSE"
   | "INSUFFICIENT_STOCK"
   | "OVER_RECEIPT"
+  | "OVER_DISPATCH"
+  | "OVER_RETURN"
   | "BATCH_MISMATCH"
   | "IMMUTABLE_RECORD"
   | "INTERNAL_ERROR";
@@ -96,7 +98,7 @@ export class InsufficientStockError extends AppError {
 }
 
 export class BusinessRuleError extends AppError {
-  constructor(code: "OVER_RECEIPT", message: string, details?: ErrorDetails) {
+  constructor(code: "OVER_RECEIPT" | "OVER_DISPATCH" | "OVER_RETURN", message: string, details?: ErrorDetails) {
     super(code, message, 422, details);
   }
 }

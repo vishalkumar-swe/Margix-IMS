@@ -62,6 +62,8 @@ export const poUpdateSchema = z.object(poFields).superRefine(refinePo);
 
 export const poCancelSchema = z.object({ reason: requiredText(500, "Reason") });
 
+export const poShortCloseSchema = z.object({ reason: requiredText(500, "Reason") });
+
 export const grnItemSchema = z
   .object({
     purchaseOrderItemId: idSchema,
