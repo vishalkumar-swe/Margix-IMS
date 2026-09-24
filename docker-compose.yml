@@ -1,18 +1,18 @@
-version: '3.8'
-
+# Local Postgres for development. Works with `docker compose up -d` or `podman compose up -d`.
+# Matches the DATABASE_URL in .env.example.
 services:
   postgres:
-    image: postgres:16
-    container_name: margix_postgres
+    image: docker.io/library/postgres:16-alpine
+    container_name: margix-postgres
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgrespassword
-      POSTGRES_DB: margix_db
+      POSTGRES_USER: margix
+      POSTGRES_PASSWORD: margix
+      POSTGRES_DB: margix
     ports:
-      - "15432:5432"
+      - "127.0.0.1:15432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - margix_pgdata:/var/lib/postgresql/data
     restart: unless-stopped
 
 volumes:
-  pgdata:
+  margix_pgdata:

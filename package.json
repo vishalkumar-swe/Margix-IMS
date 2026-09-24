@@ -7,30 +7,56 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "postinstall": "prisma skills sync || exit 0"
+    "typecheck": "next typegen && tsc --noEmit",
+    "postinstall": "prisma generate",
+    "db:up": "podman start margix-postgres",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy && npm run db:grants",
+    "db:reset": "prisma migrate reset --force --skip-seed && npm run db:grants && npm run db:seed",
+    "db:seed": "prisma db seed",
+    "test": "dotenv -e .env.test -- vitest run",
+    "test:watch": "dotenv -e .env.test -- vitest",
+    "test:e2e": "playwright test",
+    "tally:sync": "tsx --env-file=.env scripts/tally-sync.ts",
+    "db:grants": "tsx --env-file=.env scripts/db-grants.ts",
+    "db:backup": "ops/backup/backup.sh",
+    "db:verify-backup": "ops/backup/verify-restore.sh"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
+    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "lucide-react": "^1.47.0",
     "next": "16.3.5",
+    "pg": "^8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "tailwind-merge": "^3.7.0"
+    "tailwind-merge": "^3.7.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.3",
-    "@types/node": "^20",
+    "@types/node": "^22.20.4",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "autoprefixer": "^10.6.1",
     "babel-plugin-react-compiler": "1.0.0",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "postcss": "^8.5.28",
     "prisma": "^5.22.0",
     "tailwindcss": "^4.3.3",
-    "typescript": "^5"
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vitest": "^5.0.1"
+  },
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   }
 }

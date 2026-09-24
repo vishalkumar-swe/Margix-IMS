@@ -1,0 +1,3 @@
+code,name,unit,category,description,hsn_code,gst_rate,batch_tracked,tally_stock_item_name
+RM-101,Polymer Resin (Grade B),KG,Raw Materials,,3901,18,yes,Polymer Resin Grade B
+PK-201,Carton (Small),PCS,Packaging,,4819,12,no,Carton Small
