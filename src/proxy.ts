@@ -37,5 +37,6 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)"],
+  // Static files (images, the camera-scan engine under /vendor, CSV templates) need no session.
+  matcher: ["/((?!_next/static|_next/image|vendor/|templates/|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|wasm|csv)$).*)"],
 };
