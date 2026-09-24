@@ -4,6 +4,7 @@ import {
   amountSchema,
   compareQuantities,
   dateSchema,
+  discountPercentSchema,
   gstRateSchema,
   idempotencyKeySchema,
   idSchema,
@@ -31,6 +32,7 @@ export const poItemSchema = z.object({
   orderedQty: quantitySchema,
   uomId: idSchema.optional(),
   rate: amountSchema.optional(),
+  discountPercent: discountPercentSchema.optional(),
   gstRate: gstRateSchema.optional(),
 });
 
@@ -39,6 +41,9 @@ const poFields = {
   orderDate: dateSchema,
   expectedDate: dateSchema.optional(),
   remarks: optionalText(500),
+  /** Freight, packing etc.: added after tax, not taxed. */
+  otherCharges: amountSchema.optional(),
+  otherChargesLabel: optionalText(60),
   items: z.array(poItemSchema).min(1, "Add at least one item.").max(200),
 };
 

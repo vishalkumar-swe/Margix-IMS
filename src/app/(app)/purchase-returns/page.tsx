@@ -4,11 +4,13 @@ import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { FilterBar } from "@/components/shared/filter-bar";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/ui/pagination";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { formatDateTime } from "@/lib/dates";
+import { can } from "@/lib/permissions";
 import { parseSearchParams } from "@/lib/search-params";
 import { returnListQuerySchema } from "@/lib/validation/returns";
 import { requirePagePermission } from "@/server/auth/current-user";
@@ -17,7 +19,7 @@ import { listPurchaseReturns } from "@/server/modules/returns/returns.queries";
 export const metadata: Metadata = { title: "Supplier returns" };
 
 export default async function PurchaseReturnsPage({ searchParams }: PageProps<"/purchase-returns">) {
-  await requirePagePermission("return.view");
+  const user = await requirePagePermission("return.view");
   const raw = await searchParams;
   const query = parseSearchParams(returnListQuerySchema, raw);
   const { items, total } = await listPurchaseReturns(query);
@@ -26,7 +28,14 @@ export default async function PurchaseReturnsPage({ searchParams }: PageProps<"/
     <>
       <PageHeader
         title="Supplier returns"
-        description="Goods sent back to suppliers. Record a return from the goods receipt it belongs to."
+        description="Goods sent back to suppliers, always against the goods receipt they came in on."
+        actions={
+          can(user.role, "return.create") && (
+            <Link href="/purchase-returns/new" className={buttonVariants()}>
+              <CornerUpRight aria-hidden /> Return to supplier
+            </Link>
+          )
+        }
       />
       <Card>
         <FilterBar search={{ name: "q", placeholder: "Return, GRN or supplier", value: query.q }} />

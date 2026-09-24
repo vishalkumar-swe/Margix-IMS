@@ -55,7 +55,8 @@ src/
     (auth)/login/            Public pages
     (app)/                   Authenticated shell (layout reads the session → dynamic)
       <feature>/page.tsx     Server components: auth guard + queries + render
-    (print)/                 Chrome-less printable documents (GRN note, delivery challan)
+    (print)/                 Chrome-less printable documents (tax invoice, purchase order, GRN note,
+                             delivery challan) and product barcode labels
     api/v1/**/route.ts       Versioned HTTP API, one-liners over modules
     api/health, api/ready    Liveness (process up) and readiness (database reachable)
   components/
@@ -71,9 +72,14 @@ src/
     format.ts, dates.ts      Display formatting (exact decimals, IST dates)
     options.ts               Serialisable picker shapes passed to client forms
     csv.ts                   RFC 4180 CSV parser used by the imports
+    tax.ts                   GST arithmetic in paise (see "Pricing and GST"); gst-states.ts state codes
+    amount-in-words.ts       Rupees in words, Indian numbering (lakh, crore)
+    barcode.ts               EAN-13 check digits, internal codes, barcode validation and matching
+    document-codes.ts        Document QR payload format and scanned-code parsing
     search-params.ts         Parses page searchParams with the validation schemas
   server/                    Server-only code
-    config/env.ts            Validated environment; config/company.ts (print letterhead)
+    config/env.ts            Validated environment; config/company.ts (letterhead, GST state)
+    print/barcodes.ts        Barcode (Code 128 / EAN-13) and QR SVGs for printed documents and labels
     observability/logger.ts  JSON-lines logger (LOG_LEVEL); access log from apiRoute
     db/                      Prisma client, transactions (withTx + retry), row locks,
                              Postgres error decoding, Decimal/JSON helpers
@@ -92,7 +98,7 @@ src/
 | Module        | Responsibility |
 |---------------|----------------|
 | `inventory`   | Ledger posting (`postMovement(s)`), stock projection, low-level reversal, batches, stock & ledger queries, FEFO allocation (`fefo.ts`), unit conversion (`units.ts`) |
-| `documents`   | Document numbers (`GRN-2627-00001`), idempotent creation, posted-document status |
+| `documents`   | Document numbers (`GRN-2627-00001`), idempotent creation, posted-document status, GST terms and priced views of documents (`pricing.ts`), lookup by scanned number / QR (`documents.queries.ts`) |
 | `audit`       | Audit log writes (in-transaction) and reads |
 | `masters`     | SKUs (incl. alternate units), godowns, suppliers, customers, categories, UOMs |
 | `imports`     | All-or-nothing CSV import of SKUs and opening stock with per-line errors |
@@ -144,6 +150,47 @@ quantity plus an as-entered snapshot (`entry_uom_id`, `entry_quantity`,
 `entry_factor`, with a CHECK that they multiply to the base quantity), and the
 rate is per entered unit. Changing a factor later never alters past documents.
 A conversion that is not exact in the base unit (0.1 BOX = 2.4 PCS) is refused.
+
+## Pricing and GST
+
+All tax arithmetic lives in `lib/tax.ts` — one isomorphic implementation used by
+the forms (live totals), the detail pages, the printed documents and the server
+(audit totals). Money is integer paise (`bigint`), never a float:
+
+- line gross = quantity × rate (the quantity as entered; the rate is per the
+  entered unit — a delivery counted in base units divides by the unit factor),
+  discount = `discount_percent` of gross, taxable = gross − discount;
+- intra-state: CGST = SGST = taxable × rate/2, each rounded; inter-state:
+  IGST = taxable × rate; rounding is half-up to the paisa, per line;
+- document totals are sums of line values; `other_charges` (freight, packing…)
+  are added after tax and are not taxed.
+
+Intra vs inter is decided when a purchase order or invoice is saved: the
+company's state (`COMPANY_GSTIN`, else `COMPANY_STATE_CODE`) against the
+party's (its GSTIN, else its `state_code`; `lib/gst-states.ts`). If either is
+unknown the document is intra-state and the form says so. `tax_type`,
+`place_of_supply` (the customer's state on a sale, ours on a purchase) and
+each line's `hsn_code` and `gst_rate` are stored on the document, so later
+master edits never change it. GRN and delivery notes are valued at the
+prices of the order / invoice lines they fulfil.
+
+## Barcodes and scanning
+
+- **Products:** `sku.barcode` is an EAN-13 (check digit verified) or any
+  Code 128 value, unique. New products get an internal EAN-13 (prefix 2, the
+  in-store range) from the `BARCODE:EAN13` counter, skipping values already
+  used; admins can type or regenerate one, or fill in all missing ones.
+- **Documents:** every printed document carries a QR code
+  `MARGIX|<type>|<number>|<date>|<party GSTIN or ->|<grand total or ->`
+  (`lib/document-codes.ts`) and a Code 128 barcode of its number.
+- **Lookups:** `GET /api/v1/skus/lookup?code=` (barcode, else SKU code) and
+  `GET /api/v1/documents/lookup?code=` (number or QR payload → `{ type, id,
+  number, url }` across PO, GRN, INV, DSP, TRF, SRN, PRN).
+- **Scanning UI:** `features/scan/scan-input.tsx` serves keyboard-wedge
+  scanners (USB/Bluetooth: fast keystrokes + Enter) and, where the browser has
+  `BarcodeDetector`, the camera. It is used by the PO/invoice and
+  dispatch/transfer line editors, the return forms, the dispatch
+  verification panel, the label picker and the header scan box.
 
 ## Observability
 

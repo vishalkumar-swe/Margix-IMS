@@ -77,12 +77,14 @@ export async function createBatch(skuId: string, batchNumber = `B-${nextId()}`) 
   return prisma.batch.create({ data: { skuId, batchNumber } });
 }
 
-export async function createSupplier() {
+type PartyGst = { gstin?: string | null; stateCode?: string | null };
+
+export async function createSupplier(gst: PartyGst = {}) {
   const id = nextId();
-  return prisma.supplier.create({ data: { code: `SUP-${id}`, name: `Supplier ${id}` } });
+  return prisma.supplier.create({ data: { code: `SUP-${id}`, name: `Supplier ${id}`, ...gst } });
 }
 
-export async function createCustomer() {
+export async function createCustomer(gst: PartyGst = {}) {
   const id = nextId();
-  return prisma.customer.create({ data: { code: `CUS-${id}`, name: `Customer ${id}` } });
+  return prisma.customer.create({ data: { code: `CUS-${id}`, name: `Customer ${id}`, ...gst } });
 }

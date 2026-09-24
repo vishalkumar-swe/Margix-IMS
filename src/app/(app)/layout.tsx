@@ -4,6 +4,7 @@ import { NavigationIntent } from "@/components/layout/navigation-intent";
 import { NavigationProgress } from "@/components/layout/navigation-progress";
 import { Sidebar } from "@/components/layout/sidebar";
 import { UserMenu } from "@/components/layout/user-menu";
+import { GlobalScan } from "@/features/scan/global-scan";
 import { permissionsFor, ROLE_LABELS } from "@/lib/permissions";
 import { requireUser } from "@/server/auth/current-user";
 
@@ -20,7 +21,8 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
       </Suspense>
       <Sidebar permissions={permissionsFor(user.role)} />
       <div className="lg:pl-64">
-        <header className="sticky top-0 z-20 flex h-14 items-center justify-end border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6">
+        <header className="sticky top-0 z-20 flex h-14 items-center justify-end gap-4 border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6">
+          <GlobalScan className="ml-12 w-full max-w-sm lg:ml-0" />
           <UserMenu name={user.name} roleLabel={ROLE_LABELS[user.role]} />
         </header>
         <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">{children}</main>

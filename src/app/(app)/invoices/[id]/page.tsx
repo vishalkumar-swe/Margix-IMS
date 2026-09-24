@@ -1,4 +1,4 @@
-import { Truck } from "lucide-react";
+import { Printer, Truck } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Quantity } from "@/components/shared/quantity";
 import { ReasonActionButton } from "@/components/shared/reason-action-button";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { TaxBreakdown } from "@/components/shared/tax-breakdown";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
@@ -13,6 +14,7 @@ import { formatDate, formatDateTime } from "@/lib/dates";
 import { can } from "@/lib/permissions";
 import { idSchema } from "@/lib/validation/common";
 import { requirePagePermission } from "@/server/auth/current-user";
+import { invoicePricing } from "@/server/modules/documents/pricing";
 import { getInvoiceDetail } from "@/server/modules/invoices/invoice.queries";
 
 export const metadata: Metadata = { title: "Invoice" };
@@ -37,6 +39,9 @@ export default async function InvoicePage({ params }: PageProps<"/invoices/[id]"
         description={`${invoice.customer.name} · ${formatDate(invoice.invoiceDate)} · created by ${invoice.createdBy.name}`}
         actions={
           <>
+            <Link href={`/invoices/${invoice.id}/print`} className={buttonVariants({ variant: "secondary" })}>
+              <Printer aria-hidden /> Print tax invoice
+            </Link>
             {invoice.status === "OPEN" && nothingDispatched && can(user.role, "invoice.manage") && (
               <ReasonActionButton
                 endpoint={`/invoices/${invoice.id}/cancel`}
@@ -72,8 +77,6 @@ export default async function InvoicePage({ params }: PageProps<"/invoices/[id]"
               <TH numeric>Invoiced</TH>
               <TH numeric>Dispatched</TH>
               <TH numeric>Remaining</TH>
-              <TH numeric>Rate (₹)</TH>
-              <TH numeric>GST %</TH>
             </tr>
           </THead>
           <TBody>
@@ -102,16 +105,16 @@ export default async function InvoicePage({ params }: PageProps<"/invoices/[id]"
                   <TD numeric>
                     <Quantity value={remaining} className={remaining.greaterThan(0) ? "font-medium text-amber-700" : undefined} />
                   </TD>
-                  <TD numeric>
-                    {item.rate ? `${item.rate.toFixed(2)} / ${item.entryUom?.code ?? item.sku.baseUom.code}` : "—"}
-                  </TD>
-                  <TD numeric>{item.gstRate?.toString() ?? "—"}</TD>
                 </TR>
               );
             })}
           </TBody>
         </Table>
       </Card>
+
+      <div className="mt-6">
+        <TaxBreakdown view={invoicePricing(invoice)} />
+      </div>
 
       <Card className="mt-6">
         <CardHeader title="Dispatches" />

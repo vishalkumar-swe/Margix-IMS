@@ -27,7 +27,12 @@ export const TALLY_SYNC_STATUSES = ["PENDING", "IN_PROGRESS", "SYNCED", "FAILED"
 
 export const INVOICE_STATUSES = ["OPEN", "PARTIALLY_DISPATCHED", "COMPLETE", "CANCELLED"] as const;
 
-export const ADJUSTMENT_STATUSES = ["SUBMITTED", "APPROVED", "REJECTED", "REVERSED"] as const;
+/** GST treatment of a priced document: CGST + SGST (same state) or IGST (across states). */
+export const TAX_TYPES = ["INTRA", "INTER"] as const;
+
+export type TaxType = (typeof TAX_TYPES)[number];
+
+export const ADJUSTMENT_STATUSES =["SUBMITTED", "APPROVED", "REJECTED", "REVERSED"] as const;
 
 export const ADJUSTMENT_REASONS = ["DAMAGE", "THEFT", "EXPIRY", "COUNTING_ERROR", "OTHER"] as const;
 

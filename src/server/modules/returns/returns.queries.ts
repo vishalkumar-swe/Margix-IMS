@@ -95,6 +95,24 @@ export function getPurchaseReturnDetail(id: string) {
   });
 }
 
+/** Dispatches of an invoice that goods can come back against (a scanned invoice has several). */
+export function listInvoiceDispatchesForReturn(invoiceId: string) {
+  return prisma.outward.findMany({
+    where: { invoiceId, status: { not: "REVERSED" } },
+    orderBy: { dispatchedAt: "asc" },
+    select: { id: true, outwardNumber: true, dispatchedAt: true, godown: { select: { name: true } } },
+  });
+}
+
+/** GRNs of a purchase order that goods can be returned against (a scanned PO has several). */
+export function listPurchaseOrderGrnsForReturn(purchaseOrderId: string) {
+  return prisma.grn.findMany({
+    where: { purchaseOrderId, status: { not: "REVERSED" } },
+    orderBy: { receivedAt: "asc" },
+    select: { id: true, grnNumber: true, receivedAt: true, godown: { select: { name: true } } },
+  });
+}
+
 /** Dispatch lines that can still be returned (for the sales-return form). */
 export function getReturnableDispatch(outwardId: string) {
   return prisma.outward.findUnique({
@@ -109,7 +127,7 @@ export function getReturnableDispatch(outwardId: string) {
           id: true,
           quantity: true,
           returnedQty: true,
-          sku: { select: { id: true, code: true, name: true, isBatchTracked: true, baseUom: true } },
+          sku: { select: { id: true, code: true, name: true, barcode: true, isBatchTracked: true, baseUom: true } },
           batch: { select: { batchNumber: true } },
           ledgerEntry: { select: { reversedBy: { select: { id: true } } } },
         },
@@ -132,7 +150,7 @@ export function getReturnableGrn(grnId: string) {
           id: true,
           acceptedQty: true,
           returnedQty: true,
-          sku: { select: { id: true, code: true, name: true, isBatchTracked: true, baseUom: true } },
+          sku: { select: { id: true, code: true, name: true, barcode: true, isBatchTracked: true, baseUom: true } },
           batch: { select: { batchNumber: true } },
           ledgerEntry: { select: { reversedBy: { select: { id: true } } } },
         },

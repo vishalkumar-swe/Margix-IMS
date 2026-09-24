@@ -8,15 +8,18 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Field } from "@/components/ui/field";
 import { Input, Select, Textarea } from "@/components/ui/form-controls";
 import { Table, TBody, TD, TH, THead } from "@/components/ui/table";
+import { ScanInput, type ScanStatus } from "@/features/scan/scan-input";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
 import { formatQuantity } from "@/lib/format";
+import { formatScaled, parseScaled } from "@/lib/tax";
 import type { NamedOption } from "@/lib/options";
 import { pushFresh } from "@/lib/navigation";
 
 export interface ReturnableLine {
   id: string;
   skuCode: string;
+  skuBarcode: string | null;
   skuName: string;
   unit: string;
   batchNumber: string;
@@ -32,15 +35,22 @@ export interface ReturnFormConfig {
   submitLabel: string;
 }
 
+/** Exact decimal arithmetic on quantity strings (3 decimal places). */
+const toThousandths = (value: string) => parseScaled(value, 3) ?? 0n;
+const fromThousandths = (value: bigint) => formatScaled(value, 3).replace(/\.?0+$/, "");
+
 export function ReturnForm({
   config,
   sourceId,
+  sourceNumber,
   lines,
   godowns,
   defaultGodownId,
 }: {
   config: ReturnFormConfig;
   sourceId: string;
+  /** Number of the dispatch / GRN being returned against (for messages). */
+  sourceNumber: string;
   lines: ReturnableLine[];
   godowns: NamedOption[];
   defaultGodownId: string;
@@ -52,6 +62,27 @@ export function ReturnForm({
   const [remarks, setRemarks] = useState("");
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [clientError, setClientError] = useState<string | null>(null);
+  const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null);
+
+  /** A scanned product adds one unit to its first line (batch) that can still take it. */
+  function onScanProduct(code: string) {
+    const upper = code.toUpperCase();
+    const matching = lines.filter((line) => line.skuBarcode === code || line.skuCode.toUpperCase() === upper);
+    if (matching.length === 0) {
+      setScanStatus({ tone: "error", text: `"${code}" is not on ${sourceNumber}.` });
+      return;
+    }
+    const target = matching.find(
+      (line) => toThousandths(quantities[line.id] ?? "") + 1000n <= toThousandths(line.returnable),
+    );
+    if (!target) {
+      setScanStatus({ tone: "error", text: `No more of ${matching[0].skuCode} can be returned against ${sourceNumber}.` });
+      return;
+    }
+    const next = fromThousandths(toThousandths(quantities[target.id] ?? "") + 1000n);
+    setQuantities((current) => ({ ...current, [target.id]: next }));
+    setScanStatus({ tone: "success", text: `${target.skuCode} batch ${target.batchNumber}: returning ${next}.` });
+  }
 
   const post = useApiMutation((body: unknown) => apiRequest<{ id: string }>(config.endpoint, { body }));
   const submitted = lines.filter((line) => (quantities[line.id] ?? "").trim() !== "");
@@ -115,7 +146,10 @@ export function ReturnForm({
       </Card>
 
       <Card>
-        <CardHeader title="Lines" description="Leave a line empty to skip it." />
+        <CardHeader title="Lines" description="Leave a line empty to skip it. Scan a product to add one unit." />
+        <div className="border-b border-slate-200 px-5 py-3">
+          <ScanInput label="Scan returned product" onScan={onScanProduct} status={scanStatus} className="max-w-xl" />
+        </div>
         <Table>
           <THead>
             <tr>

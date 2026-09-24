@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
+import { DispatchVerification, type VerifiableLine } from "@/features/dispatch/dispatch-verification";
 import { LedgerTable } from "@/features/ledger/ledger-table";
 import { formatDateTime } from "@/lib/dates";
 import { can } from "@/lib/permissions";
@@ -24,6 +25,21 @@ export default async function DispatchPage({ params }: PageProps<"/dispatches/[i
   const dispatch = await getDispatchDetail(id);
   if (!dispatch) notFound();
   const entries = await listEntriesForDocument(dispatch.id);
+
+  // What should be on the vehicle: dispatched quantity per product, reversed lines excluded.
+  const toVerify = new Map<string, VerifiableLine>();
+  for (const item of dispatch.items) {
+    if (item.ledgerEntry.reversedBy) continue;
+    const line = toVerify.get(item.sku.id);
+    toVerify.set(item.sku.id, {
+      skuId: item.sku.id,
+      code: item.sku.code,
+      name: item.sku.name,
+      barcode: item.sku.barcode,
+      unit: item.sku.baseUom.code,
+      expected: line ? item.quantity.plus(line.expected).toString() : item.quantity.toString(),
+    });
+  }
 
   const details = [
     `From ${dispatch.godown.name}`,
@@ -67,6 +83,11 @@ export default async function DispatchPage({ params }: PageProps<"/dispatches/[i
         }
       />
       {dispatch.remarks && <p className="-mt-3 mb-6 text-sm text-slate-600">{dispatch.remarks}</p>}
+      {toVerify.size > 0 && (
+        <div className="mb-6">
+          <DispatchVerification lines={[...toVerify.values()]} />
+        </div>
+      )}
       <Card>
         <CardHeader title="Ledger entries" description="One OUTWARD entry per dispatched batch." />
         <LedgerTable entries={entries} canReverse={can(user.role, "ledger.reverse")} />

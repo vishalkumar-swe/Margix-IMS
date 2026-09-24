@@ -4,11 +4,13 @@ import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { FilterBar } from "@/components/shared/filter-bar";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/ui/pagination";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { formatDateTime } from "@/lib/dates";
+import { can } from "@/lib/permissions";
 import { parseSearchParams } from "@/lib/search-params";
 import { returnListQuerySchema } from "@/lib/validation/returns";
 import { requirePagePermission } from "@/server/auth/current-user";
@@ -17,7 +19,7 @@ import { listSalesReturns } from "@/server/modules/returns/returns.queries";
 export const metadata: Metadata = { title: "Customer returns" };
 
 export default async function SalesReturnsPage({ searchParams }: PageProps<"/sales-returns">) {
-  await requirePagePermission("return.view");
+  const user = await requirePagePermission("return.view");
   const raw = await searchParams;
   const query = parseSearchParams(returnListQuerySchema, raw);
   const { items, total } = await listSalesReturns(query);
@@ -26,7 +28,14 @@ export default async function SalesReturnsPage({ searchParams }: PageProps<"/sal
     <>
       <PageHeader
         title="Customer returns"
-        description="Goods coming back from customers. Record a return from the dispatch it belongs to."
+        description="Goods coming back from customers, always against the dispatch they went out on."
+        actions={
+          can(user.role, "return.create") && (
+            <Link href="/sales-returns/new" className={buttonVariants()}>
+              <CornerDownLeft aria-hidden /> Record return
+            </Link>
+          )
+        }
       />
       <Card>
         <FilterBar search={{ name: "q", placeholder: "Return, dispatch or customer", value: query.q }} />

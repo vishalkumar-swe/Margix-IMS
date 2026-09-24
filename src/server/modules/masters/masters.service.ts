@@ -1,3 +1,5 @@
+import { internalEan13, MAX_INTERNAL_SEQUENCE } from "@/lib/barcode";
+import { stateCodeOfGstin } from "@/lib/gst-states";
 import type {
   CategoryCreateInput,
   CategoryUpdateInput,
@@ -11,7 +13,7 @@ import type {
   UomCreateInput,
 } from "@/lib/validation/masters";
 import type { Actor } from "@/server/actor";
-import { withTx } from "@/server/db/transaction";
+import { withTx, type Tx } from "@/server/db/transaction";
 import { ConflictError, NotFoundError, ValidationError } from "@/server/errors";
 import { recordAudit } from "@/server/modules/audit/audit.service";
 import { requireActiveHsn } from "@/server/modules/hsn/hsn.service";
@@ -29,8 +31,15 @@ export function createSku(actor: Actor, input: SkuCreateInput) {
   return withTx(async (tx) => {
     // The GST rate follows the HSN master unless one is given deliberately.
     const hsn = input.hsnCode ? await requireActiveHsn(tx, input.hsnCode) : null;
+    // Every product gets a barcode: the one given, or a generated internal EAN-13.
+    if (input.barcode) await assertBarcodeFree(tx, input.barcode);
     const sku = await tx.sku.create({
-      data: { ...input, gstRate: input.gstRate ?? hsn?.gstRate, code: input.code ?? (await allocateCode(tx, "SKU")) },
+      data: {
+        ...input,
+        gstRate: input.gstRate ?? hsn?.gstRate,
+        code: input.code ?? (await allocateCode(tx, "SKU")),
+        barcode: input.barcode ?? (await allocateBarcode(tx)),
+      },
     });
     await recordAudit(tx, actor, { action: "MASTER_CREATED", entityType: "Sku", entityId: sku.id, newData: sku });
     return sku;
@@ -55,6 +64,8 @@ export function updateSku(actor: Actor, id: string, input: SkuUpdateInput) {
       throw new ConflictError("INVALID_STATE", `SKU ${before.code} still has stock on hand and cannot be archived.`);
     }
 
+    if (input.barcode && input.barcode !== before.barcode) await assertBarcodeFree(tx, input.barcode, id);
+
     // A new HSN brings its GST rate, unless a rate is set in the same change.
     const data = { ...input };
     if (input.hsnCode && input.hsnCode !== before.hsnCode) {
@@ -72,6 +83,79 @@ export function updateSku(actor: Actor, id: string, input: SkuUpdateInput) {
     });
     return after;
   });
+}
+
+/**
+ * Gives a SKU a generated internal EAN-13. A SKU that already has a barcode
+ * keeps it unless `replace` is set (labels already printed would stop scanning).
+ */
+export function generateSkuBarcode(actor: Actor, id: string, options: { replace: boolean }) {
+  return withTx(async (tx) => {
+    const before = await tx.sku.findUnique({ where: { id }, select: { id: true, code: true, barcode: true } });
+    if (!before) throw new NotFoundError("SKU", id);
+    if (before.barcode && !options.replace) {
+      throw new ConflictError("INVALID_STATE", `SKU ${before.code} already has barcode ${before.barcode}.`);
+    }
+    const after = await tx.sku.update({ where: { id }, data: { barcode: await allocateBarcode(tx) } });
+    await recordAudit(tx, actor, {
+      action: "MASTER_UPDATED",
+      entityType: "Sku",
+      entityId: id,
+      oldData: { barcode: before.barcode },
+      newData: { barcode: after.barcode },
+    });
+    return after;
+  });
+}
+
+/** Generates internal EAN-13s for every SKU (not archived) that has no barcode yet. */
+export function generateMissingSkuBarcodes(actor: Actor) {
+  return withTx(async (tx) => {
+    const skus = await tx.sku.findMany({
+      where: { barcode: null, status: { not: "ARCHIVED" } },
+      orderBy: { code: "asc" },
+      select: { id: true, code: true },
+    });
+    const assigned: { code: string; barcode: string }[] = [];
+    for (const sku of skus) {
+      const barcode = await allocateBarcode(tx);
+      await tx.sku.update({ where: { id: sku.id }, data: { barcode } });
+      assigned.push({ code: sku.code, barcode });
+    }
+    if (assigned.length > 0) {
+      await recordAudit(tx, actor, { action: "MASTER_UPDATED", entityType: "Sku", newData: { barcodesGenerated: assigned } });
+    }
+    return { count: assigned.length };
+  });
+}
+
+/**
+ * Allocates the next free internal EAN-13 (prefix 2 + counter + check digit).
+ * The counter row stays locked until the transaction ends, and values already
+ * taken (typed by hand) are skipped, so the result is unique.
+ */
+export async function allocateBarcode(tx: Tx): Promise<string> {
+  for (;;) {
+    const rows = await tx.$queryRaw<{ last_value: number }[]>`
+      INSERT INTO "document_sequence" ("key", "last_value")
+      VALUES ('BARCODE:EAN13', 1)
+      ON CONFLICT ("key") DO UPDATE SET "last_value" = "document_sequence"."last_value" + 1
+      RETURNING "last_value"`;
+    const sequence = Number(rows[0].last_value);
+    if (sequence > MAX_INTERNAL_SEQUENCE) throw new ConflictError("INVALID_STATE", "Internal barcodes are exhausted.");
+    const barcode = internalEan13(sequence);
+    if (!(await tx.sku.findUnique({ where: { barcode }, select: { id: true } }))) return barcode;
+  }
+}
+
+/** A barcode may belong to one SKU only (reported against the form field). */
+async function assertBarcodeFree(tx: Tx, barcode: string, exceptSkuId?: string) {
+  const owner = await tx.sku.findUnique({ where: { barcode }, select: { id: true, code: true } });
+  if (owner && owner.id !== exceptSkuId) {
+    throw new ValidationError(`Barcode ${barcode} is already used by ${owner.code}.`, [
+      { path: "barcode", message: `Already used by ${owner.code}.` },
+    ]);
+  }
 }
 
 /**
@@ -158,9 +242,24 @@ export function updateGodown(actor: Actor, id: string, input: GodownUpdateInput)
 
 // ---- Suppliers & customers ----
 
+/**
+ * A GSTIN carries its state, so a party with a GSTIN always gets that state
+ * (a different state typed alongside it would be contradictory).
+ */
+function withGstinState<T extends { gstin?: string | null; stateCode?: string | null }>(
+  input: T,
+  before?: { gstin: string | null; stateCode: string | null },
+): T {
+  const gstin = input.gstin !== undefined ? input.gstin : before?.gstin;
+  const fromGstin = stateCodeOfGstin(gstin);
+  return fromGstin ? { ...input, stateCode: fromGstin } : input;
+}
+
 export function createSupplier(actor: Actor, input: PartyCreateInput) {
   return withTx(async (tx) => {
-    const supplier = await tx.supplier.create({ data: { ...input, code: input.code ?? (await allocateCode(tx, "SUPPLIER")) } });
+    const supplier = await tx.supplier.create({
+      data: { ...withGstinState(input), code: input.code ?? (await allocateCode(tx, "SUPPLIER")) },
+    });
     await recordAudit(tx, actor, {
       action: "MASTER_CREATED",
       entityType: "Supplier",
@@ -175,7 +274,7 @@ export function updateSupplier(actor: Actor, id: string, input: PartyUpdateInput
   return withTx(async (tx) => {
     const before = await tx.supplier.findUnique({ where: { id } });
     if (!before) throw new NotFoundError("Supplier", id);
-    const after = await tx.supplier.update({ where: { id }, data: input });
+    const after = await tx.supplier.update({ where: { id }, data: withGstinState(input, before) });
     await recordAudit(tx, actor, {
       action: "MASTER_UPDATED",
       entityType: "Supplier",
@@ -189,7 +288,9 @@ export function updateSupplier(actor: Actor, id: string, input: PartyUpdateInput
 
 export function createCustomer(actor: Actor, input: PartyCreateInput) {
   return withTx(async (tx) => {
-    const customer = await tx.customer.create({ data: { ...input, code: input.code ?? (await allocateCode(tx, "CUSTOMER")) } });
+    const customer = await tx.customer.create({
+      data: { ...withGstinState(input), code: input.code ?? (await allocateCode(tx, "CUSTOMER")) },
+    });
     await recordAudit(tx, actor, {
       action: "MASTER_CREATED",
       entityType: "Customer",
@@ -204,7 +305,7 @@ export function updateCustomer(actor: Actor, id: string, input: PartyUpdateInput
   return withTx(async (tx) => {
     const before = await tx.customer.findUnique({ where: { id } });
     if (!before) throw new NotFoundError("Customer", id);
-    const after = await tx.customer.update({ where: { id }, data: input });
+    const after = await tx.customer.update({ where: { id }, data: withGstinState(input, before) });
     await recordAudit(tx, actor, {
       action: "MASTER_UPDATED",
       entityType: "Customer",

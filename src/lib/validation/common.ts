@@ -64,6 +64,15 @@ export const amountSchema = z.preprocess(
   z.string().regex(/^\d{1,15}(?:\.\d{1,2})?$/, "Enter an amount with at most 2 decimal places."),
 );
 
+/** Line discount as a percentage, 0–100 with at most 2 decimal places. */
+export const discountPercentSchema = z.preprocess(
+  normaliseNumberInput,
+  z
+    .string()
+    .regex(/^\d{1,3}(?:\.\d{1,2})?$/, "Enter a discount between 0 and 100 with at most 2 decimal places.")
+    .refine((v) => Number(v) <= 100, "Discount cannot exceed 100%."),
+);
+
 export const gstRateSchema = z.preprocess(
   normaliseNumberInput,
   z

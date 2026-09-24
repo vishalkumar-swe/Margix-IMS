@@ -43,13 +43,23 @@ export function getDispatchDetail(id: string) {
     where: { id },
     include: {
       godown: { select: { id: true, code: true, name: true } },
-      customer: { select: { id: true, code: true, name: true } },
-      invoice: { select: { id: true, invoiceNumber: true } },
+      customer: { select: { id: true, code: true, name: true, gstin: true, stateCode: true, address: true } },
+      invoice: { select: { id: true, invoiceNumber: true, invoiceDate: true, taxType: true, placeOfSupply: true } },
       createdBy: { select: userRefSelect },
       items: {
         orderBy: { id: "asc" },
         include: {
-          sku: { select: { id: true, code: true, name: true, baseUom: { select: { code: true } } } },
+          sku: { select: { id: true, code: true, name: true, barcode: true, baseUom: { select: { code: true } } } },
+          invoiceItem: {
+            select: {
+              hsnCode: true,
+              rate: true,
+              discountPercent: true,
+              gstRate: true,
+              entryFactor: true,
+              entryUom: { select: { code: true } },
+            },
+          },
           batch: { select: { id: true, batchNumber: true, expiryDate: true } },
           ledgerEntry: { select: { id: true, entryNo: true, reversedBy: { select: { id: true, entryNo: true } } } },
         },

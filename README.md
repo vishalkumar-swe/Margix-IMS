@@ -28,7 +28,9 @@ Stock = Opening + Inward + Transfer in + Return in
 | Reversals | Counter-entries that keep documents consistent (PO received quantities, document status) |
 | Opening stock | Go-live balances per godown |
 | Imports | CSV import of SKUs and opening stock with downloadable templates; the whole file is checked first and nothing is imported until every line is valid |
-| Printing | Printable GRN notes and delivery challans with company letterhead and signature blocks |
+| Printing | Printable tax invoices, purchase orders, GRN notes and delivery challans with company letterhead, full GST breakdown, amount in words, a QR code (top right) and a Code 128 barcode of the document number (bottom); product barcode labels (3 × 8 per A4) |
+| Pricing & GST | Line discounts, other charges (freight, packing) and live totals on POs and invoices; CGST + SGST within the state, IGST across states — decided from the company and party GST states and fixed on the document; per-line and document breakdown on screen and in print |
+| Barcodes & scanning | Product barcodes (EAN-13 or Code 128; internal EAN-13s generated automatically), scan-to-add on POs and invoices, scan-to-pick on dispatches and transfers, dispatch verification by scan (matched / short / extra), returns started by scanning the original document, and a header scan box that opens any scanned document or product. Works with USB/Bluetooth scanners everywhere and the camera where the browser supports it |
 | Alerts | Reorder rules per SKU × godown; low-stock alerts raised and resolved in the same transaction as the stock change, never duplicated |
 | Reports | Stock summary and daily inventory (opening + inward − outward ± adjustments = closing), movement report, slow and dead stock — on screen and as CSV |
 | Tally | Every posted document is queued; failures show a plain-language reason, back off and can be retried; a Tally outage never blocks stock operations |
@@ -120,7 +122,9 @@ Sign in with `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`. With
 | `DATABASE_URL` | Runtime connection — the least-privilege `margix_app` login |
 | `DIRECT_DATABASE_URL` | Schema owner — used only by migrations and `db:grants` |
 | `LOG_LEVEL` | `debug`, `info` (default), `warn` or `error` |
-| `COMPANY_NAME`, `COMPANY_ADDRESS`, `COMPANY_GSTIN` | Letterhead on printed GRN notes and delivery challans |
+| `COMPANY_NAME`, `COMPANY_ADDRESS`, `COMPANY_GSTIN` | Letterhead on printed documents; the GSTIN's state decides CGST + SGST vs IGST |
+| `COMPANY_STATE_CODE` | GST state code (e.g. `29`) when `COMPANY_GSTIN` is blank |
+| `COMPANY_BANK_DETAILS` | Payment details printed on tax invoices |
 | `LOGIN_MAX_ATTEMPTS`, `LOGIN_LOCKOUT_MINUTES` | Wrong passwords in a row before an account locks (default 5), and for how long (default 15 min) |
 | `SESSION_TTL_HOURS` | Idle session timeout (sliding; sessions also end after 7 days) |
 | `TALLY_MODE` | `mock` (accepts vouchers), `fail` (simulates an outage), `xml` (real Tally Prime) or `disabled` |
