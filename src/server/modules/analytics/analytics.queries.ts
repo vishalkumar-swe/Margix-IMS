@@ -9,9 +9,9 @@ import {
   type TrendPoint,
 } from "@/lib/analytics";
 import { addDays, istDayStart, todayIst } from "@/lib/dates";
-import { getEnv } from "@/server/config/env";
 import { prisma } from "@/server/db/client";
 import { Decimal, ZERO } from "@/server/db/decimal";
+import { getStockAgingSettings } from "@/server/modules/settings/stock-aging";
 
 /**
  * Analytics read models (inventory, sales, purchasing, operations). Every
@@ -692,11 +692,11 @@ export interface IdleStockRow {
  * Dead: idle for DEAD_STOCK_DAYS or more. (The two are exclusive here.)
  */
 export async function getIdleStock(f: AnalyticsFilters, kind: "slow" | "dead", limit = TOP_N) {
-  const env = getEnv();
+  const { slowStockDays, deadStockDays } = await getStockAgingSettings();
   const band =
     kind === "dead"
-      ? Prisma.sql`"days_idle" >= ${env.DEAD_STOCK_DAYS}::int`
-      : Prisma.sql`"days_idle" >= ${env.SLOW_STOCK_DAYS}::int AND "days_idle" < ${env.DEAD_STOCK_DAYS}::int`;
+      ? Prisma.sql`"days_idle" >= ${deadStockDays}::int`
+      : Prisma.sql`"days_idle" >= ${slowStockDays}::int AND "days_idle" < ${deadStockDays}::int`;
   const [[summary], rows] = await Promise.all([
     prisma.$queryRaw<IdleStockSummary[]>`
       WITH ${agedStockCte(f)}
@@ -717,7 +717,7 @@ export async function getIdleStock(f: AnalyticsFilters, kind: "slow" | "dead", l
       ORDER BY a."value" DESC, a."days_idle" DESC, s."code", g."code"
       LIMIT ${limit}`,
   ]);
-  return { minDays: kind === "dead" ? env.DEAD_STOCK_DAYS : env.SLOW_STOCK_DAYS, maxDays: kind === "slow" ? env.DEAD_STOCK_DAYS : null, ...summary, rows };
+  return { minDays: kind === "dead" ? deadStockDays : slowStockDays, maxDays: kind === "slow" ? deadStockDays : null, ...summary, rows };
 }
 
 export interface LowStockRow {

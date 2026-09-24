@@ -40,6 +40,7 @@ import { setSkuUnit } from "@/server/modules/masters/masters.service";
 import { postOpeningBalance } from "@/server/modules/opening/opening.service";
 import { postGrn } from "@/server/modules/purchasing/grn.service";
 import { cancelPurchaseOrder, createPurchaseOrder } from "@/server/modules/purchasing/purchase-order.service";
+import { saveStockAgingSettings } from "@/server/modules/settings/stock-aging";
 import { GET as analyticsExportGet } from "@/app/api/v1/analytics/export/route";
 import { callRoute, sessionCookieFor } from "../../helpers/http";
 import { actorFor, createCustomer, createGodown, createSku, createSupplier, createUom, createUser } from "../../helpers/factories";
@@ -415,6 +416,16 @@ describe("inventory analytics", () => {
       { band: "91–180 days", lines: 1, quantity: "4", value: "0.00" },
       { band: "Over 180 days", lines: 0, quantity: "0", value: "0.00" },
     ]);
+
+    // Administrators may override the env-default thresholds (Admin → Notifications). Every
+    // consumer of the slow/dead-stock bands must honour the override, this one included.
+    await saveStockAgingSettings(admin, { slowStockDays: 40, deadStockDays: 100, scanTime: "08:00" });
+    const slowAfterOverride = await getIdleStock(filters(august), "slow");
+    const deadAfterOverride = await getIdleStock(filters(august), "dead");
+    expect(slowAfterOverride).toMatchObject({ minDays: 40, maxDays: 100, lines: 1, skus: 1 });
+    expect(slowAfterOverride.rows.map((r) => r.skuId)).toEqual([slowSku.id]);
+    expect(deadAfterOverride).toMatchObject({ minDays: 100, maxDays: null, lines: 1, skus: 1 });
+    expect(deadAfterOverride.rows.map((r) => r.skuId)).toEqual([deadSku.id]);
   });
 
   it("counts low-stock and out-of-stock products", async () => {

@@ -27,6 +27,9 @@ export function TransferForm({ godowns, skus }: { godowns: NamedOption[]; skus: 
 
   function changeSource(godownId: string) {
     setFromGodownId(godownId);
+    // The "To" list excludes whatever "From" is now set to; if that was the selected
+    // destination, clear it instead of silently submitting the same godown on both ends.
+    setToGodownId((current) => (current === godownId ? "" : current));
     setLines((current) => current.map((line) => ({ ...line, batchId: "", available: null })));
   }
 
