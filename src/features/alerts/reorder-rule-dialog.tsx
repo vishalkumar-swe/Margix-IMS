@@ -11,6 +11,7 @@ import { Input, Select } from "@/components/ui/form-controls";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
 import type { NamedOption, SkuOption } from "@/lib/options";
+import { LineScanBar } from "@/features/scan/line-scan-bar";
 
 export interface ReorderRuleValues {
   skuId: string;
@@ -82,6 +83,14 @@ export function ReorderRuleDialog({
             </p>
           ) : (
             <>
+              <LineScanBar
+                products={skus}
+                label="Scan product"
+                onProduct={(sku) => {
+                  setForm({ ...form, skuId: sku.id });
+                  return `${sku.code} · ${sku.name} selected.`;
+                }}
+              />
               <Field label="SKU" htmlFor={id("sku")} error={errors.skuId} required>
                 <Select id={id("sku")} value={form.skuId} onChange={(e) => setForm({ ...form, skuId: e.target.value })}>
                   <option value="">Select SKU</option>

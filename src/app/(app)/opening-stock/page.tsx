@@ -50,7 +50,7 @@ export default async function OpeningStockPage({ searchParams }: PageProps<"/ope
       />
       <Card>
         <FilterBar
-          search={{ name: "q", placeholder: "SKU, batch or document", value: query.q }}
+          search={{ name: "q", placeholder: "SKU, batch, document or barcode", value: query.q }}
           selects={[
             {
               name: "godownId",

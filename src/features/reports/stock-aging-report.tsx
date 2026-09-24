@@ -124,7 +124,7 @@ function RowActions({ row, canReorder }: { row: StockAgingRow; canReorder: boole
       <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 [&::-webkit-details-marker]:hidden">
         Actions <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" aria-hidden />
       </summary>
-      <ul className="glass-strong mt-1 w-56 rounded-md border py-1 shadow-sm">
+      <ul className="surface-solid mt-1 w-56 rounded-md border py-1 shadow-lg">
         {links.map((link) => (
           <li key={link.href}>
             <Link href={link.href} className="block px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">

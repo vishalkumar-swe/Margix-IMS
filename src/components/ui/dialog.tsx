@@ -38,7 +38,7 @@ export function Dialog({
       onClose={onClose}
       aria-labelledby="dialog-title"
       className={cn(
-        "glass-strong m-auto w-full max-w-lg rounded-xl border p-0 text-slate-900 shadow-2xl",
+        "surface-solid m-auto w-full max-w-lg rounded-xl border p-0 text-slate-900 shadow-2xl",
         className,
       )}
     >

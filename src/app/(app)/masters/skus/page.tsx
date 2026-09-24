@@ -59,7 +59,7 @@ export default async function SkusPage({ searchParams }: PageProps<"/masters/sku
       />
       <Card>
         <FilterBar
-          search={{ name: "q", placeholder: "Code, name or barcode", value: query.q }}
+          search={{ name: "q", placeholder: "Code, name or scan a barcode", value: query.q }}
           selects={[
             {
               name: "status",

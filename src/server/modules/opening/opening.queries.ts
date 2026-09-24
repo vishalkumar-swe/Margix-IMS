@@ -39,6 +39,7 @@ export async function listOpeningLines(query: OpeningLineListQuery) {
           { sku: { code: { contains: query.q, mode: "insensitive" } } },
           { sku: { name: { contains: query.q, mode: "insensitive" } } },
           { batch: { batchNumber: { contains: query.q, mode: "insensitive" } } },
+          { sku: { barcode: query.q.trim() } },
           { openingBalance: { openingNumber: { contains: query.q, mode: "insensitive" } } },
         ]
       : undefined,

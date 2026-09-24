@@ -102,7 +102,7 @@ function NotificationPanel({ unread, onClose }: { unread: number; onClose: () =>
     <div
       role="dialog"
       aria-label="Notifications"
-      className="absolute right-0 z-30 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] glass-strong rounded-xl border shadow-2xl"
+      className="absolute right-0 z-30 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] surface-solid rounded-xl border shadow-2xl"
     >
       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5">
         <p className="text-sm font-semibold text-slate-900">Notifications</p>

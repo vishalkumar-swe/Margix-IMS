@@ -13,6 +13,7 @@ import { apiRequest } from "@/lib/api-client";
 import { humanize } from "@/lib/format";
 import { SKU_STATUSES } from "@/lib/enums";
 import { HsnPicker } from "./hsn-picker";
+import { CameraScanButton, preventEnterSubmit } from "@/features/scan/camera-scan-button";
 
 export interface SkuFormValues {
   code: string;
@@ -202,9 +203,12 @@ export function SkuFormDialog({
                   id={id("barcode")}
                   value={form.barcode}
                   autoComplete="off"
+                  placeholder="Scan or type"
                   onChange={(e) => set("barcode", e.target.value)}
+                  onKeyDown={preventEnterSubmit}
                   aria-invalid={Boolean(errors.barcode)}
                 />
+                <CameraScanButton title="Scan barcode" onScan={(code) => set("barcode", code)} />
                 {editing && (
                   <Button
                     variant="secondary"

@@ -16,6 +16,7 @@ import { formatQuantity } from "@/lib/format";
 import type { NamedOption, SkuOption } from "@/lib/options";
 import { ADJUSTMENT_REASON_LABELS, ADJUSTMENT_REASONS, type AdjustmentReasonCode } from "@/lib/enums";
 import { pushFresh } from "@/lib/navigation";
+import { LineScanBar } from "@/features/scan/line-scan-bar";
 
 type Direction = "decrease" | "increase";
 
@@ -65,6 +66,14 @@ export function AdjustmentForm({
 
   function updateLine(key: string, patch: Partial<Line>) {
     setLines((current) => current.map((line) => (line.key === key ? { ...line, ...patch } : line)));
+  }
+
+  /** A scanned product fills the first empty line, or gets a new one. */
+  function addScannedProduct(sku: SkuOption): string {
+    const empty = lines.find((line) => !line.skuId);
+    if (empty) updateLine(empty.key, { skuId: sku.id, batchId: "", batchNumber: "" });
+    else setLines([...lines, { ...emptyLine(), skuId: sku.id }]);
+    return `${sku.code} · ${sku.name} added. Choose its batch and quantity.`;
   }
 
   async function onSubmit(event: FormEvent) {
@@ -147,6 +156,9 @@ export function AdjustmentForm({
             </Button>
           }
         />
+        <CardBody className="border-b border-slate-200 py-3">
+          <LineScanBar products={skus} onProduct={addScannedProduct} className="max-w-xl" />
+        </CardBody>
         <Table>
           <THead>
             <tr>

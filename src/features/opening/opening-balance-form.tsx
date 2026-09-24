@@ -13,6 +13,7 @@ import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
 import type { NamedOption, SkuOption } from "@/lib/options";
 import { pushFresh } from "@/lib/navigation";
+import { LineScanBar } from "@/features/scan/line-scan-bar";
 
 interface Line {
   key: string;
@@ -39,6 +40,23 @@ export function OpeningBalanceForm({ godowns, skus, today }: { godowns: NamedOpt
 
   function updateLine(key: string, patch: Partial<Line>) {
     setLines((current) => current.map((line) => (line.key === key ? { ...line, ...patch } : line)));
+  }
+
+  /**
+   * Counting by scan: each scan adds 1 to the product's most recent line (add
+   * a new line for another batch); otherwise it fills an empty line or adds one.
+   */
+  function countScannedProduct(sku: SkuOption): string {
+    const current = [...lines].reverse().find((line) => line.skuId === sku.id);
+    if (current) {
+      const quantity = (Number(current.quantity) || 0) + 1;
+      updateLine(current.key, { quantity: String(quantity) });
+      return `${sku.code} · ${sku.name}: ${quantity} ${sku.unit}${current.batchNumber ? ` (batch ${current.batchNumber})` : ""}.`;
+    }
+    const empty = lines.find((line) => !line.skuId);
+    if (empty) updateLine(empty.key, { skuId: sku.id, quantity: "1" });
+    else setLines([...lines, { ...emptyLine(), skuId: sku.id, quantity: "1" }]);
+    return `${sku.code} · ${sku.name}: 1 ${sku.unit}.${sku.isBatchTracked ? " Enter its batch." : ""}`;
   }
 
   async function onSubmit(event: FormEvent) {
@@ -94,6 +112,9 @@ export function OpeningBalanceForm({ godowns, skus, today }: { godowns: NamedOpt
             </Button>
           }
         />
+        <CardBody className="border-b border-slate-200 py-3">
+          <LineScanBar products={skus} onProduct={countScannedProduct} label="Scan to count" className="max-w-xl" />
+        </CardBody>
         <Table>
           <THead>
             <tr>

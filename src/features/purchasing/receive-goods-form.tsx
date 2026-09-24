@@ -13,6 +13,7 @@ import { apiRequest } from "@/lib/api-client";
 import { formatQuantity } from "@/lib/format";
 import { replaceFresh } from "@/lib/navigation";
 import type { NamedOption, SkuOption } from "@/lib/options";
+import { LineScanBar } from "@/features/scan/line-scan-bar";
 
 export interface ReceivableLine {
   purchaseOrderItemId: string;
@@ -73,6 +74,18 @@ export function ReceiveGoodsForm({
       }
       return { ...current, [id]: next };
     });
+  }
+
+  /** Receiving by scan: each scan counts one more received (and accepted) unit on that order line. */
+  function receiveScannedProduct(sku: SkuOption): string {
+    const line = lines.find((l) => l.sku.id === sku.id);
+    if (!line) return `!${sku.code} · ${sku.name} is not pending on this order.`;
+    const received = (Number(inputFor(line.purchaseOrderItemId).receivedQty) || 0) + 1;
+    if (received > Number(line.pending)) {
+      return `!${sku.code}: only ${formatQuantity(line.pending)} ${sku.unit} is pending on this order.`;
+    }
+    update(line.purchaseOrderItemId, { receivedQty: String(received) });
+    return `${sku.code} · ${sku.name}: ${received} of ${formatQuantity(line.pending)} ${sku.unit} received.`;
   }
 
   const submitted = lines.filter((line) => inputFor(line.purchaseOrderItemId).receivedQty.trim() !== "");
@@ -140,6 +153,13 @@ export function ReceiveGoodsForm({
               <Input id="grn-invoice" value={supplierInvoiceNo} onChange={(e) => setSupplierInvoiceNo(e.target.value)} />
             </Field>
           </div>
+          <LineScanBar
+            products={lines.map((l) => l.sku)}
+            onProduct={receiveScannedProduct}
+            label="Scan received items"
+            notOfferedReason="is not on this purchase order"
+            className="max-w-xl"
+          />
         </CardBody>
 
         <Table>

@@ -79,6 +79,7 @@ export async function listStockBalances(filters: StockListFilters) {
           { sku: { code: { contains: filters.q, mode: "insensitive" } } },
           { sku: { name: { contains: filters.q, mode: "insensitive" } } },
           { batch: { batchNumber: { contains: filters.q, mode: "insensitive" } } },
+          { sku: { barcode: filters.q.trim() } },
         ]
       : undefined,
   };
