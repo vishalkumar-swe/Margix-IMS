@@ -8,7 +8,11 @@ import {
   quantitySchema,
 } from "./common";
 
-export const dispatchListQuerySchema = pageQuerySchema.extend({ godownId: idSchema.optional() });
+export const dispatchListQuerySchema = pageQuerySchema.extend({
+  godownId: idSchema.optional(),
+  /** Dispatches with a line for this SKU (sales history). */
+  skuId: idSchema.optional(),
+});
 
 export const dispatchItemSchema = z.object({
   skuId: idSchema,

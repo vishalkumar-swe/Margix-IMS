@@ -72,7 +72,7 @@ export function ReorderRuleDialog({
         open={open}
         onClose={() => setOpen(false)}
         title={editing ? "Edit reorder rule" : "New reorder rule"}
-        description="An alert is raised when the SKU's total stock in the godown falls below the level."
+        description="An alert is raised when the SKU's total stock in the godown reaches or falls below the level."
       >
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
           {save.error && !Object.keys(errors).length && <Alert tone="error">{save.error.message}</Alert>}

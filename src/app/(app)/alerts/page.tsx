@@ -11,6 +11,7 @@ import { Pagination } from "@/components/ui/pagination";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { EMPTY_RULE, ReorderRuleDialog } from "@/features/alerts/reorder-rule-dialog";
 import { formatDateTime } from "@/lib/dates";
+import { NOTIFICATION_ALERT_TYPE_LABELS, NOTIFICATION_ALERT_TYPES } from "@/lib/enums";
 import { toNamedOption, toSkuOption } from "@/lib/options";
 import { can } from "@/lib/permissions";
 import { parseSearchParams } from "@/lib/search-params";
@@ -33,19 +34,26 @@ export default async function AlertsPage({ searchParams }: PageProps<"/alerts">)
     canManage ? listSkuOptions() : Promise.resolve([]),
   ]);
   const skuOptions = skus.map(toSkuOption);
+  const slow = query.type === "SLOW_MOVING";
   const godownOptions = godowns.filter((g) => g.isActive).map(toNamedOption);
 
   return (
     <>
       <PageHeader
         title="Stock alerts"
-        description="Low-stock alerts are raised and cleared automatically as stock moves. One alert per SKU and godown."
+        description="Low-stock alerts are raised and cleared automatically as stock moves; slow-moving alerts by a daily scan. One alert per SKU, godown and type."
       />
 
       <Card>
         <FilterBar
           search={{ name: "q", placeholder: "SKU code or name", value: query.q }}
           selects={[
+            {
+              name: "type",
+              label: "Type",
+              value: query.type,
+              options: NOTIFICATION_ALERT_TYPES.map((t) => ({ value: t, label: NOTIFICATION_ALERT_TYPE_LABELS[t] })),
+            },
             {
               name: "status",
               label: "Status",
@@ -71,7 +79,7 @@ export default async function AlertsPage({ searchParams }: PageProps<"/alerts">)
                   <TH>SKU</TH>
                   <TH>Godown</TH>
                   <TH numeric>Stock</TH>
-                  <TH numeric>Reorder level</TH>
+                  <TH numeric>{slow ? "Days idle" : "Reorder level"}</TH>
                   <TH>Raised</TH>
                   <TH>{query.status === "ACTIVE" ? "Status" : "Resolved"}</TH>
                 </tr>
@@ -90,15 +98,19 @@ export default async function AlertsPage({ searchParams }: PageProps<"/alerts">)
                       <Quantity
                         value={alert.currentQty}
                         unit={alert.sku.baseUom.code}
-                        className={alert.status === "ACTIVE" ? "font-semibold text-red-700" : undefined}
+                        className={alert.status === "ACTIVE" && !slow ? "font-semibold text-red-700" : undefined}
                       />
                     </TD>
                     <TD numeric>
-                      <Quantity value={alert.thresholdQty} />
+                      {slow ? <span className="font-medium text-amber-700">{alert.daysIdle ?? "—"}</span> : <Quantity value={alert.thresholdQty} />}
                     </TD>
                     <TD className="text-xs">{formatDateTime(alert.createdAt)}</TD>
                     <TD className="text-xs">
-                      {alert.status === "ACTIVE" ? <Badge tone="danger">Low stock</Badge> : formatDateTime(alert.resolvedAt)}
+                      {alert.status === "ACTIVE" ? (
+                        <Badge tone={slow ? "warning" : "danger"}>{NOTIFICATION_ALERT_TYPE_LABELS[query.type]}</Badge>
+                      ) : (
+                        formatDateTime(alert.resolvedAt)
+                      )}
                     </TD>
                   </TR>
                 ))}
@@ -110,7 +122,13 @@ export default async function AlertsPage({ searchParams }: PageProps<"/alerts">)
           <EmptyState
             icon={BellRing}
             title={query.status === "ACTIVE" ? "No active alerts" : "No resolved alerts"}
-            description={query.status === "ACTIVE" ? "Every SKU with a reorder rule is above its level." : undefined}
+            description={
+              query.status !== "ACTIVE"
+                ? undefined
+                : slow
+                  ? "No stock is idle beyond the slow-stock period (checked daily)."
+                  : "Every SKU with a reorder rule is above its level."
+            }
           />
         )}
       </Card>
@@ -118,7 +136,7 @@ export default async function AlertsPage({ searchParams }: PageProps<"/alerts">)
       <Card className="mt-6">
         <CardHeader
           title="Reorder rules"
-          description="Set the minimum stock per SKU and godown."
+          description="Set the minimum stock per SKU and godown. Who is notified, and how, is set under Administration → Notifications."
           actions={canManage && <ReorderRuleDialog initial={EMPTY_RULE} skus={skuOptions} godowns={godownOptions} />}
         />
         {rules.length > 0 ? (

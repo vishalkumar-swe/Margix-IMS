@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { FilterBar } from "@/components/shared/filter-bar";
+import { ProductFilterNotice } from "@/components/shared/product-filter-notice";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -16,6 +17,7 @@ import { parseSearchParams } from "@/lib/search-params";
 import { INVOICE_STATUSES, invoiceListQuerySchema } from "@/lib/validation/invoices";
 import { requirePagePermission } from "@/server/auth/current-user";
 import { listInvoices } from "@/server/modules/invoices/invoice.queries";
+import { getSku } from "@/server/modules/masters/masters.queries";
 
 export const metadata: Metadata = { title: "Invoices" };
 
@@ -23,7 +25,7 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/invoice
   const user = await requirePagePermission("invoice.view");
   const raw = await searchParams;
   const query = parseSearchParams(invoiceListQuerySchema, raw);
-  const { items, total } = await listInvoices(query);
+  const [{ items, total }, sku] = await Promise.all([listInvoices(query), query.skuId ? getSku(query.skuId) : null]);
   const newButton = can(user.role, "invoice.manage") && (
     <Link href="/invoices/new" className={buttonVariants()}>
       <Plus aria-hidden /> New invoice
@@ -38,7 +40,9 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/invoice
         actions={newButton}
       />
       <Card>
+        <ProductFilterNotice sku={sku} clearHref="/invoices" />
         <FilterBar
+          hidden={{ skuId: query.skuId }}
           search={{ name: "q", placeholder: "Invoice number or customer", value: query.q }}
           selects={[
             {

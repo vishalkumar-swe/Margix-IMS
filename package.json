@@ -18,6 +18,7 @@
     "test:watch": "dotenv -e .env.test -- vitest",
     "test:e2e": "playwright test",
     "tally:sync": "tsx --env-file=.env scripts/tally-sync.ts",
+    "notify:run": "tsx --env-file=.env scripts/notify.ts",
     "db:grants": "tsx --env-file=.env scripts/db-grants.ts",
     "db:backup": "ops/backup/backup.sh",
     "db:verify-backup": "ops/backup/verify-restore.sh"
@@ -29,6 +30,7 @@
     "date-fns": "^4.4.0",
     "lucide-react": "^1.47.0",
     "next": "16.3.5",
+    "nodemailer": "^10.0.10",
     "pg": "^8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -39,6 +41,7 @@
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^22.20.4",
+    "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",

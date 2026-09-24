@@ -3,10 +3,11 @@ import type { PageQuery } from "@/lib/validation/common";
 import { prisma } from "@/server/db/client";
 import { userRefSelect } from "@/server/modules/users/users.queries";
 
-export async function listInvoices(query: PageQuery & { status?: InvoiceStatus; customerId?: string }) {
+export async function listInvoices(query: PageQuery & { status?: InvoiceStatus; customerId?: string; skuId?: string }) {
   const where: Prisma.InvoiceWhereInput = {
     status: query.status,
     customerId: query.customerId,
+    items: query.skuId ? { some: { skuId: query.skuId } } : undefined,
     OR: query.q
       ? [
           { invoiceNumber: { contains: query.q, mode: "insensitive" } },

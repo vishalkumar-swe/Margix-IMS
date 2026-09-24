@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { FilterBar } from "@/components/shared/filter-bar";
+import { ProductFilterNotice } from "@/components/shared/product-filter-notice";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -15,6 +16,7 @@ import { can } from "@/lib/permissions";
 import { parseSearchParams } from "@/lib/search-params";
 import { PO_STATUSES, poListQuerySchema } from "@/lib/validation/purchasing";
 import { requirePagePermission } from "@/server/auth/current-user";
+import { getSku } from "@/server/modules/masters/masters.queries";
 import { listPurchaseOrders } from "@/server/modules/purchasing/purchasing.queries";
 
 export const metadata: Metadata = { title: "Purchase orders" };
@@ -23,7 +25,7 @@ export default async function PurchaseOrdersPage({ searchParams }: PageProps<"/p
   const user = await requirePagePermission("po.view");
   const raw = await searchParams;
   const query = parseSearchParams(poListQuerySchema, raw);
-  const { items, total } = await listPurchaseOrders(query);
+  const [{ items, total }, sku] = await Promise.all([listPurchaseOrders(query), query.skuId ? getSku(query.skuId) : null]);
   const newButton = can(user.role, "po.manage") && (
     <Link href="/purchase-orders/new" className={buttonVariants()}>
       <Plus aria-hidden /> New purchase order
@@ -34,7 +36,9 @@ export default async function PurchaseOrdersPage({ searchParams }: PageProps<"/p
     <>
       <PageHeader title="Purchase orders" description="Orders placed with suppliers and their receipt progress." actions={newButton} />
       <Card>
+        <ProductFilterNotice sku={sku} clearHref="/purchase-orders" />
         <FilterBar
+          hidden={{ skuId: query.skuId }}
           search={{ name: "q", placeholder: "PO number or supplier", value: query.q }}
           selects={[
             {

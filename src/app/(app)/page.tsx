@@ -18,6 +18,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatCard } from "@/components/ui/stat-card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { OpenChecklistButton } from "@/features/checklist/open-checklist-button";
 import { LedgerTable } from "@/features/ledger/ledger-table";
 import { formatDate } from "@/lib/dates";
 import { requirePagePermission } from "@/server/auth/current-user";
@@ -31,7 +32,11 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
 
   return (
     <>
-      <PageHeader title="Dashboard" description="Live position derived from the inventory ledger." />
+      <PageHeader
+        title="Dashboard"
+        description="Live position derived from the inventory ledger."
+        actions={<OpenChecklistButton variant="labelled" />}
+      />
 
       {denied && (
         <Alert tone="error" className="mb-6">

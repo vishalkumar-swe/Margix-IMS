@@ -8,8 +8,13 @@ internet over HTTPS.
 ```
   internet ──▶ Tailscale Funnel ──▶ margix-ts-1 ──▶ margix-app-1 ──▶ margix-postgres-1
                                     (sidecar)       (Next.js :3000)   (db_data volume)
-                                                    margix-tally-sync-1 ──┘
+                                                    margix-tally-sync-1 ──┤
+                                                    margix-notify-1 ──────┘
 ```
+
+`margix-notify-1` runs the notification worker every `NOTIFY_INTERVAL`
+seconds (slow-moving scan, digests, e-mail/WhatsApp/in-app delivery). Check it
+with `podman logs -f margix-notify-1`; channel setup is in docs/operations.md.
 
 | | |
 |---|---|

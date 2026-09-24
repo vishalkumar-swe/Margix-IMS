@@ -9,6 +9,8 @@ import { ROLE_LABELS } from "@/lib/permissions";
 import { todayIst } from "@/lib/dates";
 import type { Actor } from "@/server/actor";
 import { hashPassword } from "@/server/auth/password";
+import { saveReorderRule } from "@/server/modules/alerts/alerts.service";
+import { DEFAULT_NOTIFICATION_RULES } from "@/server/modules/notifications/notification-settings.service";
 import { postOpeningBalance } from "@/server/modules/opening/opening.service";
 import { createPurchaseOrder } from "@/server/modules/purchasing/purchase-order.service";
 
@@ -16,6 +18,7 @@ const prisma = new PrismaClient();
 
 const OPENING_KEY = "6d3f0c1e-5b1a-4f37-9d2e-0a1b2c3d4e01";
 const PO_KEY = "6d3f0c1e-5b1a-4f37-9d2e-0a1b2c3d4e02";
+const SAMPLE_TASK_ID = "6d3f0c1e-5b1a-4f37-9d2e-0a1b2c3d4e03";
 const DEMO_PASSWORD = "Margix@2026";
 
 const DEMO_USERS: { email: string; name: string; role: RoleCode }[] = [
@@ -85,6 +88,13 @@ async function main() {
     update: {},
     create: { code: "BOX", name: "Box", decimalPlaces: 0 },
   });
+
+  // ---- Notification defaults: low stock immediately, slow-moving as a morning
+  // digest, in-app to administrators and store managers. Never overwrites
+  // settings an administrator has changed.
+  for (const rule of Object.values(DEFAULT_NOTIFICATION_RULES)) {
+    await prisma.notificationRule.upsert({ where: { alertType: rule.alertType }, update: {}, create: rule });
+  }
 
   // Sample masters and stock: always in development, in production only when
   // explicitly requested (e.g. an acceptance-test install).
@@ -224,6 +234,22 @@ async function main() {
     idempotencyKey: PO_KEY,
     remarks: "Monthly resin replenishment",
     items: [{ skuId: resin.id, orderedQty: "1000", rate: "145.50", gstRate: "18" }],
+  });
+
+  // ---- A reorder rule the sample stock is already below (raises a low-stock
+  // alert and its in-app notification), and a sample daily checklist task ----
+  await saveReorderRule(actor, { skuId: carton.id, godownId: mainWarehouse.id, reorderLevel: "350", isActive: true });
+  await prisma.checklistTask.upsert({
+    where: { id: SAMPLE_TASK_ID },
+    update: {},
+    create: {
+      id: SAMPLE_TASK_ID,
+      title: "Follow up overdue customer payments",
+      description: "Call customers whose invoices are past their credit period and note the promised dates.",
+      roles: ["ADMIN", "ACCOUNTS"],
+      dueTime: "12:00",
+      createdById: admin.id,
+    },
   });
 
   console.log(`Seed complete. Admin: ${adminEmail}`);

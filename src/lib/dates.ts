@@ -31,6 +31,11 @@ export function istDateOf(instant: Date): string {
   return utcToDateOnly(new Date(instant.getTime() + IST_OFFSET_MS));
 }
 
+/** The IST wall-clock time of an instant as "HH:MM" (24-hour). */
+export function istTimeOf(instant: Date): string {
+  return new Date(instant.getTime() + IST_OFFSET_MS).toISOString().slice(11, 16);
+}
+
 /** First day of the IST month containing `value` (YYYY-MM-DD). */
 export function startOfMonth(value: string): string {
   return `${value.slice(0, 7)}-01`;

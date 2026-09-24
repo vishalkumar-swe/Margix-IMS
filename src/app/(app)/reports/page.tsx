@@ -4,7 +4,7 @@ import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { todayIst } from "@/lib/dates";
 import { requirePagePermission } from "@/server/auth/current-user";
-import { getEnv } from "@/server/config/env";
+import { getStockAgingSettings } from "@/server/modules/settings/stock-aging";
 
 export const metadata: Metadata = { title: "Reports" };
 
@@ -17,7 +17,7 @@ interface ReportLink {
 
 export default async function ReportsPage() {
   await requirePagePermission("report.view");
-  const env = getEnv();
+  const aging = await getStockAgingSettings();
   const today = todayIst();
 
   const reports: ReportLink[] = [
@@ -42,13 +42,13 @@ export default async function ReportsPage() {
     {
       href: "/reports/slow-stock",
       title: "Slow stock",
-      description: `Stock with no movement for ${env.SLOW_STOCK_DAYS}+ days.`,
+      description: `Stock with no movement for ${aging.slowStockDays}+ days.`,
       icon: Hourglass,
     },
     {
       href: "/reports/dead-stock",
       title: "Dead stock",
-      description: `Stock with no movement for ${env.DEAD_STOCK_DAYS}+ days.`,
+      description: `Stock with no movement for ${aging.deadStockDays}+ days.`,
       icon: PackageX,
     },
   ];

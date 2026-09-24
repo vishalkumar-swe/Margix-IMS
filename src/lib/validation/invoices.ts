@@ -39,6 +39,8 @@ export const invoiceCancelSchema = z.object({ reason: requiredText(500, "Reason"
 export const invoiceListQuerySchema = pageQuerySchema.extend({
   status: z.enum(INVOICE_STATUSES).optional(),
   customerId: idSchema.optional(),
+  /** Invoices with a line for this SKU (sales history). */
+  skuId: idSchema.optional(),
 });
 
 export type InvoiceCreateInput = z.infer<typeof invoiceCreateSchema>;

@@ -150,23 +150,27 @@ model User {
   updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   sessions             Session[]
-  purchaseOrders       PurchaseOrder[]   @relation("PoCreatedBy")
-  cancelledPos         PurchaseOrder[]   @relation("PoCancelledBy")
-  closedPos            PurchaseOrder[]   @relation("PoClosedBy")
-  invoicesCreated      Invoice[]         @relation("InvoiceCreatedBy")
-  invoicesCancelled    Invoice[]         @relation("InvoiceCancelledBy")
+  purchaseOrders       PurchaseOrder[]           @relation("PoCreatedBy")
+  cancelledPos         PurchaseOrder[]           @relation("PoCancelledBy")
+  closedPos            PurchaseOrder[]           @relation("PoClosedBy")
+  invoicesCreated      Invoice[]                 @relation("InvoiceCreatedBy")
+  invoicesCancelled    Invoice[]                 @relation("InvoiceCancelledBy")
   transfers            Transfer[]
   salesReturns         SalesReturn[]
   purchaseReturns      PurchaseReturn[]
   grns                 Grn[]
   outwards             Outward[]
   openingBalances      OpeningBalance[]
-  adjustmentsCreated   Adjustment[]      @relation("AdjCreatedBy")
-  adjustmentsSubmitted Adjustment[]      @relation("AdjSubmittedBy")
-  adjustmentsReviewed  Adjustment[]      @relation("AdjReviewedBy")
+  adjustmentsCreated   Adjustment[]              @relation("AdjCreatedBy")
+  adjustmentsSubmitted Adjustment[]              @relation("AdjSubmittedBy")
+  adjustmentsReviewed  Adjustment[]              @relation("AdjReviewedBy")
   ledgerEntries        InventoryLedger[]
   auditLogs            AuditLog[]
-  codeSeriesUpdates    CodeSeries[]      @relation("CodeSeriesUpdatedBy")
+  codeSeriesUpdates    CodeSeries[]              @relation("CodeSeriesUpdatedBy")
+  notifications        Notification[]
+  checklistCompletions ChecklistTaskCompletion[]
+  checklistViews       ChecklistView[]
+  checklistTasks       ChecklistTask[]           @relation("ChecklistTaskCreatedBy")
 
   @@map("app_user")
 }
@@ -1004,7 +1008,9 @@ model ReorderRule {
   @@map("reorder_rule")
 }
 
-/// At most one ACTIVE alert per SKU × godown (partial unique index in SQL).
+/// At most one ACTIVE alert per SKU × godown × type (partial unique index in SQL).
+/// LOW_STOCK: reorder rules, evaluated on every posting. SLOW_MOVING: raised by
+/// the daily scan, resolved by the next movement of the SKU in the godown.
 model StockAlert {
   id           String           @id @default(uuid()) @db.Uuid
   skuId        String           @map("sku_id") @db.Uuid
@@ -1015,11 +1021,212 @@ model StockAlert {
   currentQty   Decimal          @map("current_qty") @db.Decimal(18, 3)
   thresholdQty Decimal          @map("threshold_qty") @db.Decimal(18, 3)
   status       StockAlertStatus @default(ACTIVE)
+  /// SLOW_MOVING only: whole days since the last movement, as of the last scan.
+  daysIdle     Int?             @map("days_idle")
   createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
   resolvedAt   DateTime?        @map("resolved_at") @db.Timestamptz(3)
 
+  notifications NotificationOutbox[]
+
   @@index([status, createdAt])
   @@index([skuId, godownId, status])
   @@map("stock_alert")
+}
+
+// ==========================
+// Settings
+// ==========================
+
+/// Admin-editable system settings, one JSON document per key, validated by
+/// zod in src/server/modules/settings. A missing key means "use defaults".
+model AppSetting {
+  key         String   @id
+  value       Json
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedById String?  @map("updated_by_id") @db.Uuid
+
+  @@map("app_setting")
+}
+
+/// Once-a-day jobs of the notification worker (slow-moving scan, digests).
+/// Claiming a day is a conditional upsert, so concurrent workers never both run it.
+model ScheduledJobRun {
+  key       String   @id
+  /// IST calendar day of the last run.
+  lastRunOn DateTime @map("last_run_on") @db.Date
+  lastRunAt DateTime @map("last_run_at") @db.Timestamptz(3)
+
+  @@map("scheduled_job_run")
+}
+
+// ==========================
+// Notifications
+// ==========================
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  WHATSAPP
+}
+
+enum NotificationAlertType {
+  LOW_STOCK
+  SLOW_MOVING
+}
+
+enum NotificationFrequency {
+  /// Sent as soon as the alert is raised (the same transaction queues it).
+  IMMEDIATE
+  /// One summary of all active alerts per day at `digestTime` (IST).
+  DAILY_DIGEST
+}
+
+enum NotificationStatus {
+  PENDING
+  IN_PROGRESS
+  SENT
+  FAILED
+  /// The channel is not configured: recorded (log-only), never retried.
+  SKIPPED
+}
+
+/// Who is told about an alert type, how, and how often. A missing row means
+/// the built-in defaults (see notification-settings.ts).
+model NotificationRule {
+  alertType          NotificationAlertType @id @map("alert_type")
+  isEnabled          Boolean               @default(true) @map("is_enabled")
+  frequency          NotificationFrequency @default(IMMEDIATE)
+  /// "HH:MM" in IST, used when frequency = DAILY_DIGEST.
+  digestTime         String                @default("09:00") @map("digest_time")
+  inAppEnabled       Boolean               @default(true) @map("in_app_enabled")
+  emailEnabled       Boolean               @default(false) @map("email_enabled")
+  whatsappEnabled    Boolean               @default(false) @map("whatsapp_enabled")
+  /// In-app recipients: everyone with one of these roles, plus these users.
+  inAppRoles         RoleCode[]            @default([]) @map("in_app_roles")
+  inAppUserIds       String[]              @default([]) @map("in_app_user_ids") @db.Uuid
+  emailRecipients    String[]              @default([]) @map("email_recipients")
+  /// Phone numbers with country code, digits only, e.g. 919876543210.
+  whatsappRecipients String[]              @default([]) @map("whatsapp_recipients")
+  updatedAt          DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedById        String?               @map("updated_by_id") @db.Uuid
+
+  @@map("notification_rule")
+}
+
+/// Transactional outbox: one row per channel x recipient, written in the same
+/// transaction as the alert it reports and delivered by the notify worker
+/// (FOR UPDATE SKIP LOCKED, exponential backoff), like the Tally queue.
+model NotificationOutbox {
+  id                String                 @id @default(uuid()) @db.Uuid
+  channel           NotificationChannel
+  /// User id (IN_APP), e-mail address (EMAIL) or phone number (WHATSAPP).
+  recipient         String
+  alertType         NotificationAlertType? @map("alert_type")
+  /// Set for an immediate notification about one alert.
+  stockAlertId      String?                @map("stock_alert_id") @db.Uuid
+  stockAlert        StockAlert?            @relation(fields: [stockAlertId], references: [id])
+  subject           String
+  body              String
+  /// App path the message points to, e.g. /alerts.
+  link              String?
+  /// Channel-specific content (WhatsApp template and parameters).
+  payload           Json?
+  status            NotificationStatus     @default(PENDING)
+  attempts          Int                    @default(0)
+  nextAttemptAt     DateTime               @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  lockedUntil       DateTime?              @map("locked_until") @db.Timestamptz(3)
+  lastError         String?                @map("last_error")
+  providerMessageId String?                @map("provider_message_id")
+  sentAt            DateTime?              @map("sent_at") @db.Timestamptz(3)
+  createdAt         DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  attemptLogs NotificationAttempt[]
+
+  @@index([status, nextAttemptAt])
+  @@index([stockAlertId])
+  @@index([createdAt])
+  @@map("notification_outbox")
+}
+
+model NotificationAttempt {
+  id         String             @id @default(uuid()) @db.Uuid
+  outboxId   String             @map("outbox_id") @db.Uuid
+  outbox     NotificationOutbox @relation(fields: [outboxId], references: [id], onDelete: Cascade)
+  attemptNo  Int                @map("attempt_no")
+  status     NotificationStatus
+  error      String?
+  durationMs Int?               @map("duration_ms")
+  createdAt  DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([outboxId])
+  @@map("notification_attempt")
+}
+
+/// In-app notification centre (the bell). Inserting one announces a change on
+/// the live feed, so open screens refresh their unread count.
+model Notification {
+  id        String                 @id @default(uuid()) @db.Uuid
+  userId    String                 @map("user_id") @db.Uuid
+  user      User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  alertType NotificationAlertType? @map("alert_type")
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime?              @map("read_at") @db.Timestamptz(3)
+  createdAt DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([userId, readAt, createdAt])
+  @@map("notification")
+}
+
+// ==========================
+// Daily checklist
+// ==========================
+
+/// Administrator-defined daily task (e.g. "Follow up overdue customer payments").
+model ChecklistTask {
+  id          String     @id @default(uuid()) @db.Uuid
+  title       String
+  description String?
+  /// Roles the task applies to; empty = everyone.
+  roles       RoleCode[] @default([])
+  /// "HH:MM" in IST after which an unfinished task is overdue.
+  dueTime     String?    @map("due_time")
+  isActive    Boolean    @default(true) @map("is_active")
+  sortOrder   Int        @default(0) @map("sort_order")
+  createdById String     @map("created_by_id") @db.Uuid
+  createdBy   User       @relation("ChecklistTaskCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  completions ChecklistTaskCompletion[]
+
+  @@map("checklist_task")
+}
+
+/// A task ticked done by one user on one IST day.
+model ChecklistTaskCompletion {
+  taskId      String        @map("task_id") @db.Uuid
+  task        ChecklistTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId      String        @map("user_id") @db.Uuid
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  day         DateTime      @db.Date
+  completedAt DateTime      @default(now()) @map("completed_at") @db.Timestamptz(3)
+
+  @@id([taskId, userId, day])
+  @@index([userId, day])
+  @@map("checklist_task_completion")
+}
+
+/// The checklist popup was shown to the user on this IST day (shown once a day).
+model ChecklistView {
+  userId String   @map("user_id") @db.Uuid
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  day    DateTime @db.Date
+  seenAt DateTime @default(now()) @map("seen_at") @db.Timestamptz(3)
+
+  @@id([userId, day])
+  @@map("checklist_view")
 }
