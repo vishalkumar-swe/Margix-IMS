@@ -1,0 +1,313 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ==========================
+// 1. SYSTEM & AUTH
+// ==========================
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  permissions Json     @default("{}")
+  createdAt   DateTime @default(now())
+  users       User[]
+}
+
+model User {
+  id               String            @id @default(uuid())
+  name             String
+  email            String?           @unique
+  mobile           String?
+  passwordHash     String
+  roleId           String
+  role             Role              @relation(fields: [roleId], references: [id])
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  
+  // Relations
+  purchaseOrders   PurchaseOrder[]
+  stockMovements   InventoryLedger[]
+  adjustmentsSubmitted AdjustmentRequest[] @relation("SubmittedAdjustments")
+  adjustmentsApproved AdjustmentRequest[] @relation("ApprovedAdjustments")
+  auditLogs        AuditLog[]
+}
+
+// ==========================
+// 2. MASTER DATA
+// ==========================
+
+model Category {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  skus        SKU[]
+}
+
+model UOM {
+  id          String   @id @default(uuid())
+  code        String   @unique // e.g. KG, PCS, BOX
+  name        String
+  createdAt   DateTime @default(now())
+  
+  // Relations to SKU (A single UOM could be used as base, purchase, or sales UOM)
+  skusBase     SKU[] @relation("SkuBaseUom")
+  skusPurchase SKU[] @relation("SkuPurchaseUom")
+  skusSales    SKU[] @relation("SkuSalesUom")
+}
+
+model Company {
+  id      String   @id @default(cuid())
+  name    String
+  godowns Godown[]
+  skus    SKU[]
+}
+
+model Godown {
+  id             String            @id @default(uuid())
+  code           String            @unique
+  name           String
+  address        String?
+  companyId      String
+  company        Company           @relation(fields: [companyId], references: [id])
+  isPactleOnly   Boolean           @default(false)
+  tallyMappingId String?
+  isActive       Boolean           @default(true)
+  createdAt      DateTime          @default(now())
+  
+  ledgers        InventoryLedger[]
+  adjustments    AdjustmentRequest[]
+}
+
+model SKU {
+  id               String            @id @default(uuid())
+  productCode      String            @unique
+  name             String
+  description      String?
+  
+  companyId        String
+  company          Company           @relation(fields: [companyId], references: [id])
+  
+  categoryId       String?
+  category         Category?         @relation(fields: [categoryId], references: [id])
+  
+  baseUomId        String?
+  baseUom          UOM?              @relation("SkuBaseUom", fields: [baseUomId], references: [id])
+  purchaseUomId    String?
+  purchaseUom      UOM?              @relation("SkuPurchaseUom", fields: [purchaseUomId], references: [id])
+  salesUomId       String?
+  salesUom         UOM?              @relation("SkuSalesUom", fields: [salesUomId], references: [id])
+  conversionFactor Float             @default(1.0)
+  
+  hsnCode          String?
+  gstRate          Float?
+  
+  lifecycleStatus  String            @default("ACTIVE") // DRAFT, ACTIVE, INACTIVE, ARCHIVED
+  source           String            @default("MARGIX") // MARGIX or TALLY
+  
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  
+  ledgers          InventoryLedger[]
+  batches          Batch[]
+  purchaseItems    PurchaseOrderItem[]
+  reorderRules     ReorderRule[]
+  stockAlerts      StockAlert[]
+}
+
+model Batch {
+  id                String    @id @default(uuid())
+  batchNumber       String
+  skuId             String
+  sku               SKU       @relation(fields: [skuId], references: [id])
+  manufacturingDate DateTime?
+  expiryDate        DateTime?
+  createdAt         DateTime  @default(now())
+
+  movements         InventoryLedger[]
+  
+  @@unique([skuId, batchNumber])
+}
+
+// ==========================
+// 3. PURCHASE & INWARD
+// ==========================
+
+model Supplier {
+  id           String          @id @default(uuid())
+  supplierCode String          @unique
+  name         String
+  gstin        String?
+  email        String?
+  phone        String?
+  address      String?
+  isActive     Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  
+  purchaseOrders PurchaseOrder[]
+}
+
+model PurchaseOrder {
+  id          String   @id @default(uuid())
+  poNumber    String   @unique
+  supplierId  String
+  supplier    Supplier @relation(fields: [supplierId], references: [id])
+  orderDate   DateTime @default(now())
+  status      String   @default("OPEN") // DRAFT, OPEN, PARTIALLY_RECEIVED, FULLY_RECEIVED, CANCELLED
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  
+  items       PurchaseOrderItem[]
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(uuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  skuId           String
+  sku             SKU           @relation(fields: [skuId], references: [id])
+  orderedQty      Float
+  rate            Float?
+  gstRate         Float?
+  createdAt       DateTime      @default(now())
+}
+
+// ==========================
+// 4. SALES & OUTWARD
+// ==========================
+
+model Customer {
+  id           String    @id @default(uuid())
+  customerCode String    @unique
+  name         String
+  gstin        String?
+  email        String?
+  phone        String?
+  address      String?
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  
+  invoices     Invoice[]
+}
+
+model Invoice {
+  id            String   @id @default(uuid())
+  invoiceNumber String   @unique
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id])
+  invoiceDate   DateTime @default(now())
+  status        String   @default("POSTED")
+  createdAt     DateTime @default(now())
+}
+
+// ==========================
+// 5. CORE LEDGER & MOVEMENTS
+// ==========================
+
+model InventoryLedger {
+  id            String   @id @default(uuid())
+  skuId         String
+  sku           SKU      @relation(fields: [skuId], references: [id])
+  godownId      String
+  godown        Godown   @relation(fields: [godownId], references: [id])
+  batchId       String?
+  batch         Batch?   @relation(fields: [batchId], references: [id])
+  
+  movementType  String   // 'OPENING', 'INWARD', 'OUTWARD', 'ADJUSTMENT', 'TRANSFER_IN', 'TRANSFER_OUT', 'REVERSAL', 'RETURN_IN', 'RETURN_OUT'
+  quantity      Float    // MUST BE POSITIVE. Direction is determined by movementType.
+  
+  referenceType String   // e.g. 'GRN', 'GST_INVOICE', 'ADJUSTMENT', 'TRANSFER'
+  referenceId   String   // The ID of the document
+  reasonCode    String?
+  
+  createdById   String?
+  createdBy     User?     @relation(fields: [createdById], references: [id])
+  
+  actor         String?  // Legacy field
+  
+  createdAt     DateTime @default(now())
+
+  // Tally Sync Tracking
+  syncStatus    String  @default("PENDING") // 'PENDING', 'SYNCED', 'FAILED'
+  syncError     String?
+  tallyRefId    String?
+}
+
+// ==========================
+// 6. ADJUSTMENTS & RULES
+// ==========================
+
+model AdjustmentRequest {
+  id            String   @id @default(uuid())
+  adjustmentNumber String @unique
+  godownId      String
+  godown        Godown   @relation(fields: [godownId], references: [id])
+  status        String   @default("DRAFT") // DRAFT, SUBMITTED, APPROVED, REJECTED, POSTED
+  reasonCode    String   // DAMAGE, THEFT_SHRINKAGE, EXPIRY, COUNT_CORRECTION, OPENING_BALANCE, OTHER
+  
+  // Legacy fields
+  skuId         String?
+  quantity      Float?
+  reason        String?
+  
+  submittedById String?
+  submittedBy   User?     @relation("SubmittedAdjustments", fields: [submittedById], references: [id])
+  submittedAt   DateTime?
+  
+  approvedById  String?
+  approvedBy    User?     @relation("ApprovedAdjustments", fields: [approvedById], references: [id])
+  approvedAt    DateTime?
+  
+  ledgerEntryId String?
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model ReorderRule {
+  id                  String   @id @default(uuid())
+  skuId               String
+  sku                 SKU      @relation(fields: [skuId], references: [id], onDelete: Cascade)
+  godownId            String
+  reorderLevel        Float
+  notificationEnabled Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  
+  @@unique([skuId, godownId])
+}
+
+model StockAlert {
+  id             String   @id @default(uuid())
+  skuId          String
+  sku            SKU      @relation(fields: [skuId], references: [id], onDelete: Cascade)
+  godownId       String
+  alertType      String   @default("LOW_STOCK")
+  currentQty     Float
+  reorderLevel   Float
+  status         String   @default("ACTIVE") // ACTIVE, RESOLVED
+  lastNotifiedAt DateTime?
+  resolvedAt     DateTime?
+  createdAt      DateTime @default(now())
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String
+  entityType String
+  entityId   String
+  oldData    Json?
+  newData    Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+}
