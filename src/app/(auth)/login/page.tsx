@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { BrandLogo } from "@/components/layout/brand-logo";
+import { ThemeSwitcher } from "@/components/layout/theme-switcher";
 import { LoginForm } from "@/features/auth/login-form";
+import { parseTheme, THEME_COOKIE } from "@/lib/theme";
 import { getCurrentUser } from "@/server/auth/current-user";
 
 export const metadata: Metadata = { title: "Sign in" };
@@ -14,9 +17,13 @@ function safeNext(value: string | string[] | undefined): string {
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   if (await getCurrentUser()) redirect("/");
   const { next } = await searchParams;
+  const theme = parseTheme((await cookies()).get(THEME_COOKIE)?.value);
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4">
+    <main data-theme={theme} className="relative flex min-h-screen items-center justify-center bg-slate-50 px-4 text-slate-900">
+      <div className="absolute top-4 right-4">
+        <ThemeSwitcher initial={theme} />
+      </div>
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center text-center">
           <BrandLogo variant="full" className="h-32" priority />

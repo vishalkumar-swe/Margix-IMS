@@ -34,3 +34,165 @@
     background: rgb(15 23 42 / 0.4);
   }
 }
+
+/*
+ * Dark theme — same Margix India branding (the logo yellow is unchanged and
+ * always carries black text). Instead of per-component dark: classes, the
+ * colour tokens the app uses are remapped inside a theme scope: surfaces
+ * become near-black ink, text scales become light greys, status fills become
+ * deep tints and status text light tints. Scopes: [data-theme] on the app
+ * and sign-in shells (printouts have none and stay light). "system" follows
+ * the operating system. The two blocks below must stay identical.
+ */
+@layer base {
+  [data-theme="dark"] {
+    color-scheme: dark;
+    --color-white: #15171a;
+    --color-slate-50: #0c0d0f;
+    --color-slate-100: #1c1f23;
+    --color-slate-200: #2a2e33;
+    --color-slate-300: #3a3f46;
+    --color-slate-400: #6f7782;
+    --color-slate-500: #9aa3ae;
+    --color-slate-600: #b4bcc6;
+    --color-slate-700: #cdd3da;
+    --color-slate-800: #e2e6ea;
+    --color-slate-900: #f1f3f5;
+    --color-slate-950: #f8f9fa;
+    --color-red-50: #2a1416;
+    --color-red-100: #3a1a1d;
+    --color-red-200: #5c2427;
+    --color-red-300: #8c3237;
+    --color-red-400: #c7443f;
+    --color-red-500: #e5534b;
+    --color-red-600: #ef6461;
+    --color-red-700: #f58b88;
+    --color-red-800: #f8aaa7;
+    --color-red-900: #fbc9c7;
+    --color-red-950: #fde4e3;
+    --color-amber-50: #261d0b;
+    --color-amber-100: #33260c;
+    --color-amber-200: #57400f;
+    --color-amber-300: #8a6414;
+    --color-amber-400: #c98f17;
+    --color-amber-500: #e8a91c;
+    --color-amber-600: #f0b43c;
+    --color-amber-700: #f6c55a;
+    --color-amber-800: #f9d57f;
+    --color-amber-900: #fbe3a8;
+    --color-amber-950: #fdf1d4;
+    --color-emerald-50: #0f231b;
+    --color-emerald-100: #133024;
+    --color-emerald-200: #1d4d39;
+    --color-emerald-300: #2a7254;
+    --color-emerald-400: #35a576;
+    --color-emerald-500: #3cbf89;
+    --color-emerald-600: #3fcf95;
+    --color-emerald-700: #5edba6;
+    --color-emerald-800: #86e6be;
+    --color-emerald-900: #b1f0d5;
+    --color-emerald-950: #d8f8ea;
+    --color-brand-50: #241c05;
+    --color-brand-100: #332708;
+    --color-brand-200: #5a430c;
+    --color-brand-300: #8a6608;
+    --color-brand-400: #ffc620;
+    --color-brand-500: #fcbc00;
+    --color-brand-600: #ffcf40;
+    --color-brand-700: #ffd24d;
+    --color-brand-800: #ffe08a;
+    --color-brand-900: #ffecb8;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    [data-theme="system"] {
+      color-scheme: dark;
+    --color-white: #15171a;
+    --color-slate-50: #0c0d0f;
+    --color-slate-100: #1c1f23;
+    --color-slate-200: #2a2e33;
+    --color-slate-300: #3a3f46;
+    --color-slate-400: #6f7782;
+    --color-slate-500: #9aa3ae;
+    --color-slate-600: #b4bcc6;
+    --color-slate-700: #cdd3da;
+    --color-slate-800: #e2e6ea;
+    --color-slate-900: #f1f3f5;
+    --color-slate-950: #f8f9fa;
+    --color-red-50: #2a1416;
+    --color-red-100: #3a1a1d;
+    --color-red-200: #5c2427;
+    --color-red-300: #8c3237;
+    --color-red-400: #c7443f;
+    --color-red-500: #e5534b;
+    --color-red-600: #ef6461;
+    --color-red-700: #f58b88;
+    --color-red-800: #f8aaa7;
+    --color-red-900: #fbc9c7;
+    --color-red-950: #fde4e3;
+    --color-amber-50: #261d0b;
+    --color-amber-100: #33260c;
+    --color-amber-200: #57400f;
+    --color-amber-300: #8a6414;
+    --color-amber-400: #c98f17;
+    --color-amber-500: #e8a91c;
+    --color-amber-600: #f0b43c;
+    --color-amber-700: #f6c55a;
+    --color-amber-800: #f9d57f;
+    --color-amber-900: #fbe3a8;
+    --color-amber-950: #fdf1d4;
+    --color-emerald-50: #0f231b;
+    --color-emerald-100: #133024;
+    --color-emerald-200: #1d4d39;
+    --color-emerald-300: #2a7254;
+    --color-emerald-400: #35a576;
+    --color-emerald-500: #3cbf89;
+    --color-emerald-600: #3fcf95;
+    --color-emerald-700: #5edba6;
+    --color-emerald-800: #86e6be;
+    --color-emerald-900: #b1f0d5;
+    --color-emerald-950: #d8f8ea;
+    --color-brand-50: #241c05;
+    --color-brand-100: #332708;
+    --color-brand-200: #5a430c;
+    --color-brand-300: #8a6608;
+    --color-brand-400: #ffc620;
+    --color-brand-500: #fcbc00;
+    --color-brand-600: #ffcf40;
+    --color-brand-700: #ffd24d;
+    --color-brand-800: #ffe08a;
+    --color-brand-900: #ffecb8;
+    }
+  }
+
+  /* Logo variants (components/layout/brand-logo.tsx): dark lettering on light, white on dark. */
+  .brand-logo-dark {
+    display: none;
+  }
+  [data-theme="dark"] .brand-logo-light {
+    display: none;
+  }
+  [data-theme="dark"] .brand-logo-dark {
+    display: block;
+  }
+  @media (prefers-color-scheme: dark) {
+    [data-theme="system"] .brand-logo-light {
+      display: none;
+    }
+    [data-theme="system"] .brand-logo-dark {
+      display: block;
+    }
+  }
+
+  /* The page behind the shell (overscroll) matches the theme. */
+  html:has([data-theme="dark"]),
+  html:has([data-theme="dark"]) body {
+    background: #0c0d0f;
+  }
+  @media (prefers-color-scheme: dark) {
+    html:has([data-theme="system"]),
+    html:has([data-theme="system"]) body {
+      background: #0c0d0f;
+    }
+  }
+}
