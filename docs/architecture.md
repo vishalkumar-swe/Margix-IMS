@@ -68,7 +68,8 @@ src/
     validation/<domain>.ts   Zod schemas shared by forms, pages (search params) and the API
     permissions.ts           RBAC matrix (spec §4.2)
     api-client.ts            Typed fetch wrapper for /api/v1
-    format.ts, dates.ts      Display formatting (exact decimals, IST dates)
+    format.ts, dates.ts      Display formatting (exact decimals, money, IST dates)
+    analytics.ts             Analytics periods (presets, Indian FY), time buckets, % change
     options.ts               Serialisable picker shapes passed to client forms
     csv.ts                   RFC 4180 CSV parser used by the imports
     search-params.ts         Parses page searchParams with the validation schemas
@@ -107,6 +108,7 @@ src/
 | `reversals`   | Reversal use case: counter-entries + document side effects + Tally + audit |
 | `alerts`      | Reorder rules and low-stock alerts (evaluated by the inventory engine) |
 | `reports`     | Stock summary / daily inventory, movements, slow & dead stock, CSV layouts |
+| `analytics`   | BI read models (inventory, sales, purchasing, operations) and their CSV layouts; see [Analytics](#analytics) |
 | `tally`       | Sync queue, worker, voucher builder, XML wire format, Tally clients |
 | `dashboard`   | Cross-module read model for the dashboard and exceptions |
 
@@ -199,6 +201,45 @@ Open screens refresh themselves when anyone commits a change:
 
 Confirmations that must survive a refresh belong to the page, not to a form
 that may unmount (e.g. `?posted=GRN-…` on the purchase order page).
+
+## Analytics
+
+`/analytics` (permission `report.view`) has four tabs — Overview, Inventory,
+Sales, Purchasing. The tab, period and filters live in the URL, so every view
+can be shared; each tab loads only its own figures.
+
+- **Read models** in `server/modules/analytics/analytics.queries.ts`: one SQL
+  aggregate per figure (`$queryRaw`), never a per-document loop. Money comes
+  back rounded to 2 decimals and quantities as exact strings.
+- **Periods and buckets** in `lib/analytics.ts` (pure, unit-tested): presets
+  today / 7 d / 30 d / this month / this quarter / this financial year
+  (April–March) / custom, all "to date" and in IST calendar days. Trends are
+  daily up to 31 days, weekly (Monday-based) up to 183 days, monthly beyond;
+  timestamps are bucketed with `AT TIME ZONE 'Asia/Kolkata'`. KPI changes
+  compare with the previous period of equal length.
+- **Charts** (`recharts`) are client components in `features/analytics/`,
+  imported only by the analytics route, so the library is code-split away from
+  every other page. Each chart has a "view as table" toggle; KPI sparklines are
+  plain server-rendered SVG.
+- **CSV**: `GET /api/v1/analytics/export?section=…` with the page filters
+  (UTF-8 BOM for Excel).
+
+Value definitions (the SQL fragments at the top of `analytics.queries.ts` are
+the only place money is computed — change them there, e.g. for line discounts):
+
+| Figure | Definition |
+|--------|------------|
+| Sales value | Invoice line entered quantity × rate (rate is per entered unit), excluding cancelled invoices, by invoice date. Before GST. |
+| GST collected | Sales value × line GST rate ÷ 100. |
+| Purchase value | PO line ordered (entered) quantity × rate on submitted POs (not draft, not cancelled), by order date. |
+| Received value | GRN accepted base quantity ÷ entry factor × PO rate, by receipt date; reversed receipt lines excluded. |
+| Pending PO value | (ordered − received) base quantity ÷ entry factor × rate on OPEN / PARTIALLY_RECEIVED POs, any date. |
+| Inventory value | On-hand quantity × latest purchase cost per base unit (rate ÷ entry factor of the most recent submitted PO line with a rate). SKUs without one are counted as "no cost" and not valued. The comparison value is stock at the start of the period, rebuilt from the ledger at today's costs. |
+| Stock movement | Inward = OPENING, INWARD, RETURN_IN; outward = OUTWARD, RETURN_OUT; adjustments = ADJUSTMENT, REVERSAL; valued at latest cost. Transfers are excluded (no change to company stock). |
+| Fast-moving | Top SKUs by dispatched (OUTWARD) quantity in the period, reversed dispatch lines excluded. |
+| Slow / dead | On-hand SKU × godown idle (no ledger movement) for SLOW_STOCK_DAYS ≤ days < DEAD_STOCK_DAYS / ≥ DEAD_STOCK_DAYS. Exclusive, unlike the reports, where "slow" includes dead. |
+| Stock ageing | On-hand SKU × godown by days since last movement: 0–30, 31–60, 61–90, 91–180, over 180. |
+| Low stock / out of stock | SKUs with an ACTIVE low-stock alert / ACTIVE SKUs with no stock in any godown. |
 
 ## Naming conventions
 
