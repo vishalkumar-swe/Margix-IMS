@@ -25,6 +25,14 @@
     color-scheme: light;
   }
 
+  /* Safety net: a wide table or line editor inside its own `overflow-x-auto`
+     container must never force the whole page to scroll sideways — only the
+     component itself should scroll. */
+  html,
+  body {
+    overflow-x: hidden;
+  }
+
   /* Numbers line up in tables and totals. */
   .tabular-nums {
     font-variant-numeric: tabular-nums;

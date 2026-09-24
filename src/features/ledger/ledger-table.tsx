@@ -16,10 +16,13 @@ export function LedgerTable({
   entries,
   canReverse = false,
   showSku = true,
+  compact = false,
 }: {
   entries: LedgerEntryView[];
   canReverse?: boolean;
   showSku?: boolean;
+  /** Drops the least-used columns (Reference, By) — for narrow summary cards, e.g. the dashboard. */
+  compact?: boolean;
 }) {
   return (
     <Table>
@@ -32,8 +35,8 @@ export function LedgerTable({
           <TH>Godown / batch</TH>
           <TH numeric>Quantity</TH>
           <TH numeric>Balance</TH>
-          <TH>Reference</TH>
-          <TH>By</TH>
+          {!compact && <TH>Reference</TH>}
+          {!compact && <TH>By</TH>}
           {canReverse && <TH className="sr-only">Actions</TH>}
         </tr>
       </THead>
@@ -74,11 +77,13 @@ export function LedgerTable({
               <TD numeric>
                 <Quantity value={entry.balanceAfter} unit={entry.sku.baseUom.code} />
               </TD>
-              <TD>
-                <ReferenceLink type={entry.referenceType} id={entry.referenceId} no={entry.referenceNo} />
-                {entry.remarks && <span className="block max-w-48 truncate text-xs text-slate-500">{entry.remarks}</span>}
-              </TD>
-              <TD className="text-xs whitespace-nowrap">{entry.createdBy.name}</TD>
+              {!compact && (
+                <TD>
+                  <ReferenceLink type={entry.referenceType} id={entry.referenceId} no={entry.referenceNo} />
+                  {entry.remarks && <span className="block max-w-48 truncate text-xs text-slate-500">{entry.remarks}</span>}
+                </TD>
+              )}
+              {!compact && <TD className="text-xs whitespace-nowrap">{entry.createdBy.name}</TD>}
               {canReverse && (
                 <TD className="text-right">
                   {reversible && (

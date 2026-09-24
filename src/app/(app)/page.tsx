@@ -100,7 +100,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
             }
           />
           {summary.recentMovements.length > 0 ? (
-            <LedgerTable entries={summary.recentMovements} />
+            <LedgerTable entries={summary.recentMovements} compact />
           ) : (
             <EmptyState icon={Boxes} title="No stock movements yet" />
           )}
