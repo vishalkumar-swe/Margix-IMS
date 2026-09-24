@@ -3,6 +3,7 @@ import {
   ArrowUpRight,
   BellRing,
   Boxes,
+  ChartLine,
   ClipboardList,
   Package,
   RefreshCw,
@@ -14,24 +15,36 @@ import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { Quantity } from "@/components/shared/quantity";
 import { Alert } from "@/components/ui/alert";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatCard } from "@/components/ui/stat-card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { LedgerTable } from "@/features/ledger/ledger-table";
 import { formatDate } from "@/lib/dates";
+import { can } from "@/lib/permissions";
 import { requirePagePermission } from "@/server/auth/current-user";
 import { getDashboardSummary } from "@/server/modules/dashboard/dashboard.queries";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
 export default async function DashboardPage({ searchParams }: PageProps<"/">) {
-  await requirePagePermission("dashboard.view");
+  const user = await requirePagePermission("dashboard.view");
   const [summary, { denied }] = await Promise.all([getDashboardSummary(), searchParams]);
 
   return (
     <>
-      <PageHeader title="Dashboard" description="Live position derived from the inventory ledger." />
+      <PageHeader
+        title="Dashboard"
+        description="Live position derived from the inventory ledger."
+        actions={
+          can(user.role, "report.view") ? (
+            <Link href="/analytics" className={buttonVariants({ variant: "secondary" })}>
+              <ChartLine aria-hidden /> Analytics
+            </Link>
+          ) : undefined
+        }
+      />
 
       {denied && (
         <Alert tone="error" className="mb-6">

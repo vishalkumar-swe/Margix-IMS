@@ -44,3 +44,37 @@ export function humanize(code: string): string {
   const lower = code.toLowerCase().replace(/_/g, " ");
   return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
+
+/**
+ * Rupee amount from a decimal string with Indian grouping and exactly two
+ * decimals, e.g. "1234567.5" → "₹12,34,567.50". No float conversion.
+ */
+export function formatMoney(value: string | number | { toString(): string }): string {
+  const text = String(value);
+  const negative = text.startsWith("-") && !isZeroQuantity(text);
+  const [intPart, fracPart = ""] = text.replace("-", "").split(".");
+  return `${negative ? "−" : ""}₹${formatQuantity(intPart || "0")}.${fracPart.padEnd(2, "0").slice(0, 2)}`;
+}
+
+/**
+ * Short Indian-style number for chart axes and compact labels: thousands (K),
+ * lakhs (L) and crores (Cr), e.g. 1250000 → "12.5L". Display only.
+ */
+export function formatCompactNumber(value: number): string {
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "−" : "";
+  const scaled = (divisor: number, suffix: string) => {
+    const n = abs / divisor;
+    return `${sign}${n.toFixed(n >= 100 ? 0 : 1).replace(/\.0$/, "")}${suffix}`;
+  };
+  if (abs >= 1e7) return scaled(1e7, "Cr");
+  if (abs >= 1e5) return scaled(1e5, "L");
+  if (abs >= 1e3) return scaled(1e3, "K");
+  return `${sign}${Number(abs.toFixed(2))}`;
+}
+
+/** Signed percentage with at most one decimal, e.g. 12.5 → "+12.5%", -3 → "−3%". */
+export function formatPercentChange(value: number): string {
+  const text = `${Math.abs(value).toFixed(1).replace(/\.0$/, "")}%`;
+  return value > 0 ? `+${text}` : value < 0 ? `−${text}` : text;
+}

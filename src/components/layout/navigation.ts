@@ -12,6 +12,7 @@ import {
   Hash,
   History,
   LayoutDashboard,
+  ChartLine,
   Package,
   PackageCheck,
   Percent,
@@ -66,6 +67,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     title: "Insight",
     items: [
+      { label: "Analytics", href: "/analytics", icon: ChartLine, permission: "report.view" },
       { label: "Stock alerts", href: "/alerts", icon: BellRing, permission: "alert.view" },
       { label: "Reports", href: "/reports", icon: ChartColumn, permission: "report.view" },
     ],

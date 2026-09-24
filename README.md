@@ -31,6 +31,7 @@ Stock = Opening + Inward + Transfer in + Return in
 | Printing | Printable GRN notes and delivery challans with company letterhead and signature blocks |
 | Alerts | Reorder rules per SKU × godown; low-stock alerts raised and resolved in the same transaction as the stock change, never duplicated |
 | Reports | Stock summary and daily inventory (opening + inward − outward ± adjustments = closing), movement report, slow and dead stock — on screen and as CSV |
+| Analytics | Business-intelligence dashboard at `/analytics`: inventory (value at latest cost, low/out-of-stock, fast/slow/dead, ageing, movement trends), sales (by product, customer, category; GST collected; daily/weekly/monthly trends), purchasing (by supplier, pending POs, purchase vs sales) and operational KPIs — period presets incl. Indian FY, comparison with the previous period, filters, CSV per section |
 | Tally | Every posted document is queued; failures show a plain-language reason, back off and can be retried; a Tally outage never blocks stock operations |
 | Live updates | Every open screen refreshes itself within a moment of anyone posting a change — no reload, typed input kept |
 | Operations | JSON request logs with request ids, health and readiness endpoints, backups with restore verification, production container images |
