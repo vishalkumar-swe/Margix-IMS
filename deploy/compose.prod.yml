@@ -9,10 +9,10 @@
 #     stacks' containers and they cannot reach it.
 #  3. Resource caps, so it can never starve the other applications.
 #
-#   cd deploy
-#   cp .env.production.example .env.production && chmod 600 .env.production
-#   podman compose -f compose.prod.yml --env-file .env.production up -d --build
-#   podman compose -f compose.prod.yml --env-file .env.production run --rm seed   # first install only
+# The app, migrations and Tally worker run from a fixed runtime image with the
+# app mounted from ./release, which deploy/deploy.sh builds on the host (warm
+# build cache) and swaps in — a deploy takes about a minute, not a rebuild of
+# images. See RUNBOOK.md.
 #
 # See RUNBOOK.md.
 
@@ -69,20 +69,24 @@ services:
 
   # Applies pending migrations and the app-login grants, then exits.
   migrate:
-    build: { context: .., dockerfile: Dockerfile, target: tools }
-    image: localhost/margix-ims-tools:latest
+    image: localhost/margix-ims-runtime:latest
     <<: *hardening
     cap_drop: [ALL]
     mem_limit: 1g
-    environment: *app-env
+    environment:
+      <<: *app-env
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD}
+    volumes:
+      - ./release:/app:ro,z
+    command: ["sh", "ops/railway/pre-deploy.sh"]
     depends_on:
       postgres: { condition: service_healthy }
     restart: "no"
     networks: [margix_net]
 
   app:
-    build: { context: .., dockerfile: Dockerfile, target: app }
-    image: localhost/margix-ims:latest
+    build: { context: .., dockerfile: Dockerfile, target: runtime }
+    image: localhost/margix-ims-runtime:latest
     restart: unless-stopped
     <<: *hardening
     cap_drop: [ALL]
@@ -90,6 +94,11 @@ services:
     mem_reservation: ${APP_MEM_RESERVATION:-256m}
     pids_limit: ${APP_PIDS_LIMIT:-256}
     environment: *app-env
+    volumes:
+      - ./release:/app:ro,z
+    # Next.js writes its image-optimisation cache here; the app itself is read-only.
+    tmpfs:
+      - /app/.next-release/cache:mode=1777
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/ready').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
       interval: 30s
@@ -103,14 +112,17 @@ services:
   # One Tally sync pass every TALLY_SYNC_INTERVAL seconds (exit code 2 = some
   # vouchers failed; they are retried with backoff, so keep going).
   tally-sync:
-    image: localhost/margix-ims-tools:latest
+    image: localhost/margix-ims-runtime:latest
     restart: unless-stopped
     <<: *hardening
     cap_drop: [ALL]
     mem_limit: 512m
     pids_limit: 128
     environment: *app-env
-    command: ["sh", "-c", "while true; do npx tsx scripts/tally-sync.ts || true; sleep ${TALLY_SYNC_INTERVAL:-120}; done"]
+    volumes:
+      - ./release:/app:ro,z
+    # The trap lets the loop stop at once on restart instead of waiting to be killed.
+    command: ["sh", "-c", "trap 'exit 0' TERM; while true; do node scripts/tally-sync.mjs || true; sleep ${TALLY_SYNC_INTERVAL:-120} & wait $$!; done"]
     depends_on:
       migrate: { condition: service_completed_successfully }
     networks: [margix_net]
@@ -118,6 +130,7 @@ services:
   # First install only: `run --rm seed` creates roles, units and the admin
   # (plus sample masters and stock when SEED_SAMPLE_DATA=true). Never demo users.
   seed:
+    build: { context: .., dockerfile: Dockerfile, target: tools }
     image: localhost/margix-ims-tools:latest
     <<: *hardening
     cap_drop: [ALL]

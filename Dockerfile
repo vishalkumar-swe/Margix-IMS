@@ -8,7 +8,7 @@
 # the TARGET variable (deploy/RAILWAY.md).
 
 ARG NODE_IMAGE=docker.io/library/node:22-bookworm-slim
-# Which stage the final image is: "app" (web server) or "tools".
+# Which stage the final image is: "app" (web server), "runtime" or "tools".
 ARG TARGET=app
 
 # ---- Dependencies (incl. dev: the build needs TypeScript, Tailwind, Prisma CLI) ----
@@ -38,30 +38,34 @@ ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 NPM_CONFIG_UPDATE_NOTIFIER=fal
 USER node
 CMD ["sh", "-c", "npx prisma migrate deploy && npx tsx scripts/db-grants.ts"]
 
-# ---- Runtime: the standalone Next.js server only ----
-FROM ${NODE_IMAGE} AS app
+# ---- Runtime base: Node, OpenSSL and the Prisma CLI, no application ----
+# The home server mounts a host-built app into it (deploy/deploy.sh: fast
+# deploys without rebuilding images); the "app" stage bakes the app in.
+FROM ${NODE_IMAGE} AS runtime
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
-ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
-COPY --from=build --chown=node:node /app/.next/standalone ./
-COPY --from=build --chown=node:node /app/.next/static ./.next/static
-COPY --from=build --chown=node:node /app/public ./public
-# Migrations run from this image before each deploy on platforms with a
-# pre-deploy hook (ops/railway/pre-deploy.sh): the Prisma CLI lives apart in
-# /opt so it cannot clash with the server's own Prisma client.
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0 PRISMA_HIDE_UPDATE_MESSAGE=1
+# Migrations run from this image (ops/railway/pre-deploy.sh); the Prisma CLI
+# lives apart in /opt so it cannot clash with the server's own Prisma client.
 COPY --from=deps /app/node_modules/prisma /opt/prisma-cli/node_modules/prisma
 COPY --from=deps /app/node_modules/@prisma /opt/prisma-cli/node_modules/@prisma
-COPY prisma/schema.prisma ./prisma/schema.prisma
-COPY prisma/migrations ./prisma/migrations
-COPY ops/postgres/app-role-grants.sql ./ops/postgres/app-role-grants.sql
-COPY ops/railway/pre-deploy.sh ./ops/railway/pre-deploy.sh
 USER node
 EXPOSE 3000
 # Podman's default OCI image format drops HEALTHCHECK; compose.prod.yml repeats it.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
 CMD ["node", "server.js"]
+
+# ---- App: the runtime with the standalone Next.js server baked in (Railway) ----
+FROM runtime AS app
+COPY --from=build --chown=node:node /app/.next/standalone ./
+COPY --from=build --chown=node:node /app/.next/static ./.next/static
+COPY --from=build --chown=node:node /app/public ./public
+COPY prisma/schema.prisma ./prisma/schema.prisma
+COPY prisma/migrations ./prisma/migrations
+COPY ops/postgres/app-role-grants.sql ./ops/postgres/app-role-grants.sql
+COPY ops/railway/pre-deploy.sh ./ops/railway/pre-deploy.sh
 
 # ---- Final image: the stage named by TARGET ----
 FROM ${TARGET}

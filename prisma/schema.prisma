@@ -7,7 +7,10 @@
 // Prisma cannot model live in the migration SQL (see migrations/*_init).
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  /// native = this machine; debian-openssl-3.0.x = the production containers,
+  /// so an app built on the host (deploy/deploy.sh) also runs in them.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {

@@ -11,6 +11,9 @@ const nextConfig: NextConfig = {
   // Self-contained server bundle for the production container (the Dockerfile
   // sets NEXT_OUTPUT); `next start` keeps working for non-container installs.
   output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
+  // Fast deploys build into their own directory (and cache) so they never
+  // clobber a local dev/test build (see deploy/deploy.sh).
+  distDir: process.env.NEXT_DIST_DIR || ".next",
 };
 
 export default nextConfig;

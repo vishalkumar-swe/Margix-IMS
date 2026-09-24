@@ -16,6 +16,7 @@ internet over HTTPS.
 | Host | `homeserver`, user `shivam` |
 | Checkout | `~/apps/Margix-IMS` |
 | Compose | `deploy/compose.prod.yml`, project name `margix`, network `margix_net` |
+| Deploy | `deploy/deploy.sh` (fast: host build → mounted release → restart) |
 | URL | `https://margix.tailc73ec8.ts.net` (public) |
 | Data | volume `margix_db_data` — the production database |
 | Identity | volume `margix_ts_state` — the tailnet device. Do not delete: the node rejoins with a `-1` suffix and the URL changes. |
@@ -31,8 +32,8 @@ production stack never touches it.
 cd ~/apps/Margix-IMS/deploy
 cp .env.production.example .env.production && chmod 600 .env.production
 # set the passwords (openssl rand -hex 24), SEED_ADMIN_*, optionally TS_AUTHKEY
-podman compose -f compose.prod.yml --env-file .env.production up -d --build
-podman compose -f compose.prod.yml --env-file .env.production run --rm seed
+cd .. && deploy/deploy.sh --rebuild-images        # images once, then the app
+podman compose -f deploy/compose.prod.yml --env-file deploy/.env.production run --rm seed
 ```
 
 Without `TS_AUTHKEY`, enrol the sidecar once: `podman logs -f margix-ts-1`
@@ -43,21 +44,26 @@ Then install the unit that restarts it after a reboot:
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp margix.service ~/.config/systemd/user/
+cp deploy/margix.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now margix.service
 ```
 
-## Deploy a new version
+## Deploy a new version (fast)
 
 ```bash
-cd ~/apps/Margix-IMS && git pull
-cd deploy
-podman compose -f compose.prod.yml --env-file .env.production up -d --build
+cd ~/apps/Margix-IMS && git pull     # or deploy what is checked out
+deploy/deploy.sh
 ```
 
-The `migrate` service applies pending migrations and the app-login grants
-before the app and the Tally worker start.
+About 30–90 seconds. The app is built on the host with a warm build cache
+(`.next-release/`), assembled into `deploy/.release.new`, migrations run from
+it, then it is swapped into `deploy/release/` (mounted read-only into the
+`app`, `migrate` and `tally-sync` containers) and those restart. If the build
+or a migration fails, nothing is swapped and the running version keeps
+serving. The container images (`margix-ims-runtime`: Node + OpenSSL + Prisma
+CLI; `margix-ims-tools`: seed) only need rebuilding after a Node/base-image or
+dependency change: `deploy/deploy.sh --rebuild-images`.
 
 ## Check it
 

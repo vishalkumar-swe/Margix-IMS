@@ -46,3 +46,12 @@ next-env.d.ts
 # Playwright
 /test-results
 /playwright-report
+
+# Fast deploys (deploy/deploy.sh)
+/.next-release/
+/deploy/release/
+/deploy/.release.new/
+
+# Agent worktrees
+/.claude/worktrees/
+/deploy/.last-build.log
