@@ -166,6 +166,7 @@ model User {
   adjustmentsReviewed  Adjustment[]      @relation("AdjReviewedBy")
   ledgerEntries        InventoryLedger[]
   auditLogs            AuditLog[]
+  codeSeriesUpdates    CodeSeries[]      @relation("CodeSeriesUpdatedBy")
 
   @@map("app_user")
 }
@@ -194,10 +195,31 @@ model Category {
   id        String   @id @default(uuid()) @db.Uuid
   name      String   @unique
   isActive  Boolean  @default(true) @map("is_active")
+  /// Default HSN for products in this category (suggested on new products).
+  hsnCode   String?  @map("hsn_code")
+  hsn       HsnCode? @relation(fields: [hsnCode], references: [code], onDelete: Restrict, onUpdate: Cascade)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   skus      Sku[]
 
   @@map("category")
+}
+
+/// Central HSN (goods) / SAC (services) master with the applicable GST rate.
+/// Products and categories reference it; documents copy the rate at posting.
+model HsnCode {
+  /// 4, 6 or 8 digits.
+  code        String     @id
+  description String
+  gstRate     Decimal    @map("gst_rate") @db.Decimal(5, 2)
+  /// Extra search words (trade names, synonyms) used by suggestions.
+  keywords    String?
+  isActive    Boolean    @default(true) @map("is_active")
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  skus        Sku[]
+  categories  Category[]
+
+  @@map("hsn_code")
 }
 
 model Uom {
@@ -226,6 +248,8 @@ model Sku {
   baseUomId          String    @map("base_uom_id") @db.Uuid
   baseUom            Uom       @relation(fields: [baseUomId], references: [id])
   hsnCode            String?   @map("hsn_code")
+  hsn                HsnCode?  @relation(fields: [hsnCode], references: [code], onDelete: Restrict, onUpdate: Cascade)
+  /// Applied GST rate: the HSN's rate unless deliberately overridden.
   gstRate            Decimal?  @map("gst_rate") @db.Decimal(5, 2)
   /// When false, all stock lives in the system batch named DEFAULT.
   isBatchTracked     Boolean   @default(true) @map("is_batch_tracked")
@@ -545,16 +569,20 @@ model OpeningBalance {
 }
 
 model OpeningBalanceItem {
-  id               String          @id @default(uuid()) @db.Uuid
-  openingBalanceId String          @map("opening_balance_id") @db.Uuid
-  openingBalance   OpeningBalance  @relation(fields: [openingBalanceId], references: [id])
-  skuId            String          @map("sku_id") @db.Uuid
-  sku              Sku             @relation(fields: [skuId], references: [id])
-  batchId          String          @map("batch_id") @db.Uuid
-  batch            Batch           @relation(fields: [batchId, skuId], references: [id, skuId])
-  quantity         Decimal         @db.Decimal(18, 3)
-  ledgerEntryId    String          @unique @map("ledger_entry_id") @db.Uuid
-  ledgerEntry      InventoryLedger @relation("OpeningItemEntry", fields: [ledgerEntryId], references: [id])
+  id               String              @id @default(uuid()) @db.Uuid
+  openingBalanceId String              @map("opening_balance_id") @db.Uuid
+  openingBalance   OpeningBalance      @relation(fields: [openingBalanceId], references: [id])
+  skuId            String              @map("sku_id") @db.Uuid
+  sku              Sku                 @relation(fields: [skuId], references: [id])
+  batchId          String              @map("batch_id") @db.Uuid
+  batch            Batch               @relation(fields: [batchId, skuId], references: [id, skuId])
+  quantity         Decimal             @db.Decimal(18, 3)
+  ledgerEntryId    String              @unique @map("ledger_entry_id") @db.Uuid
+  ledgerEntry      InventoryLedger     @relation("OpeningItemEntry", fields: [ledgerEntryId], references: [id])
+  /// Set when this line corrects an earlier opening line (which was reversed).
+  replacesItemId   String?             @unique @map("replaces_item_id") @db.Uuid
+  replaces         OpeningBalanceItem? @relation("OpeningItemCorrection", fields: [replacesItemId], references: [id], onDelete: Restrict)
+  replacedBy       OpeningBalanceItem? @relation("OpeningItemCorrection")
 
   @@index([openingBalanceId])
   @@map("opening_balance_item")
@@ -676,8 +704,23 @@ model StockBalance {
   @@map("stock_balance")
 }
 
+/// Admin-customised code series (numbering master). Series without a row use
+/// the defaults in src/lib/numbering.ts. Counters live in document_sequence.
+model CodeSeries {
+  /// Series key, e.g. "SKU", "INV" (see CODE_SERIES).
+  key         String   @id
+  prefix      String
+  pattern     String
+  padding     Int
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedById String   @map("updated_by_id") @db.Uuid
+  updatedBy   User     @relation("CodeSeriesUpdatedBy", fields: [updatedById], references: [id])
+
+  @@map("code_series")
+}
+
 model DocumentSequence {
-  /// e.g. "PO:2627" (prefix + Indian financial year)
+  /// Series key + period, e.g. "PO:2026", "INV:2627" or "SKU:ALL".
   key       String @id
   lastValue Int    @map("last_value")
 

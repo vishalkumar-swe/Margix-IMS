@@ -136,6 +136,30 @@ async function main() {
     create: { code: "CUS-001", name: "Retail Chain India Ltd", gstin: "29AABCR5678K1Z2" },
   });
 
+  // Sample HSN master entries for the sample products. Load the official
+  // CBIC HSN/SAC schedule (Masters → HSN & GST → Import) for real use.
+  const sampleHsn = [
+    { code: "3901", description: "Polymers of ethylene, in primary forms", gstRate: "18", keywords: "polyethylene resin granules polymer" },
+    {
+      code: "3923",
+      description: "Articles for the conveyance or packing of goods, of plastics; stoppers, lids, caps and other closures",
+      gstRate: "18",
+      keywords: "bottle container jar cap closure plastic packaging",
+    },
+    {
+      code: "4819",
+      description: "Cartons, boxes, cases, bags and other packing containers, of paper or paperboard",
+      gstRate: "18",
+      keywords: "carton box corrugated shipping case",
+    },
+  ];
+  for (const hsn of sampleHsn) {
+    await prisma.hsnCode.upsert({ where: { code: hsn.code }, update: {}, create: hsn });
+  }
+  await prisma.category.update({ where: { id: rawMaterials.id }, data: { hsnCode: "3901" } });
+  await prisma.category.update({ where: { id: finishedGoods.id }, data: { hsnCode: "3923" } });
+  await prisma.category.update({ where: { id: packaging.id }, data: { hsnCode: "4819" } });
+
   const resin = await prisma.sku.upsert({
     where: { code: "RM-001" },
     update: {},

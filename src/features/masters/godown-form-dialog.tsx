@@ -29,7 +29,16 @@ export const EMPTY_GODOWN: GodownFormValues = {
   isActive: true,
 };
 
-export function GodownFormDialog({ godownId, initial }: { godownId?: string; initial: GodownFormValues }) {
+export function GodownFormDialog({
+  godownId,
+  initial,
+  nextCode,
+}: {
+  godownId?: string;
+  initial: GodownFormValues;
+  /** Code the next new godown gets when left blank (from the numbering master). */
+  nextCode?: string;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(initial);
@@ -72,8 +81,19 @@ export function GodownFormDialog({ godownId, initial }: { godownId?: string; ini
       <Dialog open={open} onClose={() => setOpen(false)} title={editing ? `Edit ${initial.code}` : "New godown"}>
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
           {save.error && !Object.keys(errors).length && <Alert tone="error">{save.error.message}</Alert>}
-          <Field label="Code" htmlFor={id("code")} error={errors.code} required={!editing}>
-            <Input id={id("code")} value={form.code} disabled={editing} onChange={(e) => set("code", e.target.value)} />
+          <Field
+            label="Code"
+            htmlFor={id("code")}
+            error={errors.code}
+            hint={editing ? undefined : nextCode ? `Leave blank to use ${nextCode}.` : "Leave blank for the next code."}
+          >
+            <Input
+              id={id("code")}
+              value={form.code}
+              disabled={editing}
+              placeholder={editing ? undefined : nextCode}
+              onChange={(e) => set("code", e.target.value)}
+            />
           </Field>
           <Field label="Name" htmlFor={id("name")} error={errors.name} required>
             <Input id={id("name")} value={form.name} onChange={(e) => set("name", e.target.value)} />

@@ -4,11 +4,11 @@ import type { ComponentProps } from "react";
 import { cn } from "@/lib/cn";
 
 export const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        primary: "bg-brand-600 text-white shadow-sm hover:bg-brand-700",
+        primary: "bg-brand-500 font-semibold text-slate-950 shadow-sm hover:bg-brand-400",
         secondary: "border border-slate-300 bg-white text-slate-700 shadow-sm hover:bg-slate-50",
         ghost: "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
         danger: "bg-red-600 text-white shadow-sm hover:bg-red-700",

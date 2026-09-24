@@ -38,13 +38,26 @@ const emptyLine = (): Line => ({
 });
 
 /** Adjustment request. Stock changes only when another authorised user approves it. */
-export function AdjustmentForm({ godowns, skus }: { godowns: NamedOption[]; skus: SkuOption[] }) {
+export function AdjustmentForm({
+  godowns,
+  skus,
+  prefill,
+}: {
+  godowns: NamedOption[];
+  skus: SkuOption[];
+  /** Opened from a stock row ("Adjust" / "Write off"). */
+  prefill?: { godownId: string; skuId: string; batchId: string; direction: Direction; quantity: string };
+}) {
   const router = useRouter();
   const [idempotencyKey] = useState(() => crypto.randomUUID());
-  const [godownId, setGodownId] = useState(godowns[0]?.id ?? "");
+  const [godownId, setGodownId] = useState(prefill?.godownId ?? godowns[0]?.id ?? "");
   const [reasonCode, setReasonCode] = useState<AdjustmentReasonCode>("DAMAGE");
   const [reasonNote, setReasonNote] = useState("");
-  const [lines, setLines] = useState<Line[]>([emptyLine()]);
+  const [lines, setLines] = useState<Line[]>(() => [
+    prefill
+      ? { ...emptyLine(), skuId: prefill.skuId, batchId: prefill.batchId, direction: prefill.direction, quantity: prefill.quantity }
+      : emptyLine(),
+  ]);
 
   const submit = useApiMutation((body: unknown) => apiRequest<{ id: string }>("/adjustments", { body }));
   const errors = submit.fieldErrors;

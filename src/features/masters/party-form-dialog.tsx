@@ -28,10 +28,13 @@ export function PartyFormDialog({
   kind,
   partyId,
   initial,
+  nextCode,
 }: {
   kind: "supplier" | "customer";
   partyId?: string;
   initial: PartyFormValues;
+  /** Code the next new party gets when left blank (from the numbering master). */
+  nextCode?: string;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -78,8 +81,19 @@ export function PartyFormDialog({
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
           {save.error && !Object.keys(errors).length && <Alert tone="error">{save.error.message}</Alert>}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Code" htmlFor={id("code")} error={errors.code} required={!editing}>
-              <Input id={id("code")} value={form.code} disabled={editing} onChange={(e) => set("code", e.target.value)} />
+            <Field
+              label="Code"
+              htmlFor={id("code")}
+              error={errors.code}
+              hint={editing ? undefined : nextCode ? `Leave blank to use ${nextCode}.` : "Leave blank for the next code."}
+            >
+              <Input
+                id={id("code")}
+                value={form.code}
+                disabled={editing}
+                placeholder={editing ? undefined : nextCode}
+                onChange={(e) => set("code", e.target.value)}
+              />
             </Field>
             <Field label="Name" htmlFor={id("name")} error={errors.name} required>
               <Input id={id("name")} value={form.name} onChange={(e) => set("name", e.target.value)} />

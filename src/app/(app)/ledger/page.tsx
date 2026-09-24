@@ -42,7 +42,7 @@ export default async function LedgerPage({ searchParams }: PageProps<"/ledger">)
       />
       <Card>
         <FilterBar
-          search={{ name: "referenceNo", placeholder: "Reference no. (e.g. GRN-2627-00001)", value: query.referenceNo }}
+          search={{ name: "referenceNo", placeholder: "Reference no. (e.g. GRN-2026-000001)", value: query.referenceNo }}
           selects={[
             {
               name: "skuId",

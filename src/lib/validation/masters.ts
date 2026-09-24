@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { SKU_STATUSES } from "@/lib/enums";
+import { hsnCodeSchema } from "./hsn";
 import {
   clearableText,
   codeSchema,
@@ -22,15 +23,19 @@ export const batchListQuerySchema = z.object({ skuId: idSchema });
 const clearable = <T extends z.ZodType>(schema: T) =>
   z.preprocess((v) => (v === "" ? null : v), schema.nullable().optional());
 
+/** A master code on create: blank means "allocate the next code of the series". */
+const optionalCode = z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), codeSchema.optional());
+
 // ---- SKU ----
 
 export const skuCreateSchema = z.object({
-  code: codeSchema,
+  code: optionalCode,
   name: requiredText(200, "Name"),
   description: optionalText(1000),
   categoryId: idSchema.optional(),
   baseUomId: idSchema,
-  hsnCode: optionalText(20),
+  /** Must exist in the HSN master; the GST rate defaults to the HSN's rate. */
+  hsnCode: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), hsnCodeSchema.optional()),
   gstRate: gstRateSchema.optional(),
   isBatchTracked: z.boolean().default(true),
   tallyStockItemName: optionalText(200),
@@ -41,7 +46,7 @@ export const skuUpdateSchema = z.object({
   description: clearableText(1000),
   categoryId: clearable(idSchema),
   baseUomId: idSchema.optional(),
-  hsnCode: clearableText(20),
+  hsnCode: clearable(hsnCodeSchema),
   gstRate: clearable(gstRateSchema),
   isBatchTracked: z.boolean().optional(),
   tallyStockItemName: clearableText(200),
@@ -51,7 +56,7 @@ export const skuUpdateSchema = z.object({
 // ---- Godown ----
 
 export const godownCreateSchema = z.object({
-  code: codeSchema,
+  code: optionalCode,
   name: requiredText(200, "Name"),
   address: optionalText(500),
   tallySyncEnabled: z.boolean().default(true),
@@ -77,7 +82,7 @@ const gstinSchema = z
 const emailSchema = z.string().trim().pipe(z.email("Enter a valid email."));
 
 export const partyCreateSchema = z.object({
-  code: codeSchema,
+  code: optionalCode,
   name: requiredText(200, "Name"),
   gstin: z.preprocess((v) => (v === "" ? undefined : v), gstinSchema.optional()),
   email: z.preprocess((v) => (v === "" ? undefined : v), emailSchema.optional()),
@@ -96,9 +101,14 @@ export const partyUpdateSchema = z.object({
 
 // ---- Categories & units ----
 
-export const categoryCreateSchema = z.object({ name: requiredText(100, "Name") });
+export const categoryCreateSchema = z.object({
+  name: requiredText(100, "Name"),
+  /** Default HSN suggested for new products in this category. */
+  hsnCode: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), hsnCodeSchema.optional()),
+});
 export const categoryUpdateSchema = z.object({
   name: requiredText(100, "Name").optional(),
+  hsnCode: clearable(hsnCodeSchema),
   isActive: z.boolean().optional(),
 });
 

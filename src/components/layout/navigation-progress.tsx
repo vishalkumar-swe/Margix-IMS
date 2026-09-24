@@ -61,8 +61,8 @@ export function NavigationProgress() {
       <div
         className={
           visible
-            ? "h-full w-4/5 bg-brand-600 transition-[width] duration-[2000ms] ease-out motion-reduce:transition-none"
-            : "h-full w-0 bg-brand-600"
+            ? "h-full w-4/5 bg-brand-500 transition-[width] duration-[2000ms] ease-out motion-reduce:transition-none"
+            : "h-full w-0 bg-brand-500"
         }
       />
     </div>

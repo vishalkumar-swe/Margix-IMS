@@ -11,6 +11,8 @@ export const skuWithUomSelect = {
   isBatchTracked: true,
   status: true,
   baseUomId: true,
+  hsnCode: true,
+  gstRate: true,
   baseUom: { select: { code: true, decimalPlaces: true } },
   units: { select: { uomId: true, factor: true, uom: { select: { code: true } } }, orderBy: { factor: "asc" } },
 } satisfies Prisma.SkuSelect;
@@ -113,6 +115,7 @@ export function listCategories(options: { activeOnly?: boolean } = {}) {
   return prisma.category.findMany({
     where: options.activeOnly ? { isActive: true } : undefined,
     orderBy: { name: "asc" },
+    include: { hsn: { select: { code: true, gstRate: true } } },
   });
 }
 

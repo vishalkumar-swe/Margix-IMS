@@ -52,7 +52,7 @@ describe("SKU import", () => {
       { line: 3, message: "SKU RM-EXISTS already exists" },
       { line: 4, message: 'unknown unit "LTR"' },
       { line: 5, message: "SKU RM-1 appears more than once in the file" },
-      { line: 6, message: "batch_tracked must be yes or no; code: Code is required." },
+      { line: 6, message: "batch_tracked must be yes or no" },
     ]);
     expect(await prisma.sku.count()).toBe(1);
   });

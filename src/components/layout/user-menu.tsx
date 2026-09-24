@@ -35,7 +35,7 @@ export function UserMenu({ name, roleLabel }: { name: string; roleLabel: string 
           <span className="block text-sm font-medium text-slate-900">{name}</span>
           <span className="block text-xs text-slate-500">{roleLabel}</span>
         </span>
-        <span className="flex size-8 items-center justify-center rounded-full bg-brand-100 text-xs font-semibold text-brand-700">
+        <span className="flex size-8 items-center justify-center rounded-full bg-brand-500 text-xs font-semibold text-slate-950">
           {initials}
         </span>
       </Link>

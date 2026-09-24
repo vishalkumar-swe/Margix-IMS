@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { derivePostedDocStatus, financialYearCode } from "@/server/modules/documents/documents.service";
+import { financialYearCode } from "@/lib/numbering";
+import { derivePostedDocStatus } from "@/server/modules/documents/documents.service";
 
 describe("financialYearCode", () => {
   it.each([

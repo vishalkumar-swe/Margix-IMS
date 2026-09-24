@@ -14,6 +14,9 @@ export interface SkuOption {
   isBatchTracked: boolean;
   /** Alternate units: 1 unit = factor base units. */
   units: { uomId: string; code: string; factor: string }[];
+  hsnCode: string | null;
+  /** Applied GST rate (from the HSN master unless overridden on the SKU). */
+  gstRate: string | null;
 }
 
 export interface NamedOption {
@@ -30,6 +33,8 @@ export function toSkuOption(sku: {
   baseUomId: string;
   baseUom: { code: string; decimalPlaces: number };
   units?: { uomId: string; factor: { toString(): string }; uom: { code: string } }[];
+  hsnCode?: string | null;
+  gstRate?: { toString(): string } | null;
 }): SkuOption {
   return {
     id: sku.id,
@@ -40,6 +45,8 @@ export function toSkuOption(sku: {
     decimalPlaces: sku.baseUom.decimalPlaces,
     isBatchTracked: sku.isBatchTracked,
     units: (sku.units ?? []).map((u) => ({ uomId: u.uomId, code: u.uom.code, factor: u.factor.toString() })),
+    hsnCode: sku.hsnCode ?? null,
+    gstRate: sku.gstRate?.toString() ?? null,
   };
 }
 

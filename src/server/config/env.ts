@@ -9,7 +9,7 @@ const envSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
     /** Printed on GRN and dispatch notes. */
-    COMPANY_NAME: z.string().trim().min(1).default("Margix IMS"),
+    COMPANY_NAME: z.string().trim().min(1).default("Margix India"),
     COMPANY_ADDRESS: z.string().trim().min(1).optional(),
     COMPANY_GSTIN: z.string().trim().min(1).optional(),
     DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),

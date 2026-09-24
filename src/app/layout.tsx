@@ -6,7 +6,7 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: { default: "Margix IMS", template: "%s · Margix IMS" },
+  title: { default: "Margix India", template: "%s · Margix India" },
   description: "Ledger-based inventory management",
 };
 

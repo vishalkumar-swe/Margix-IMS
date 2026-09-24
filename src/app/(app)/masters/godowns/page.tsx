@@ -10,6 +10,7 @@ import { EMPTY_GODOWN, GodownFormDialog } from "@/features/masters/godown-form-d
 import { can } from "@/lib/permissions";
 import { requirePagePermission } from "@/server/auth/current-user";
 import { listGodowns } from "@/server/modules/masters/masters.queries";
+import { previewNextCode } from "@/server/modules/numbering/numbering.service";
 
 export const metadata: Metadata = { title: "Godowns" };
 
@@ -23,7 +24,7 @@ export default async function GodownsPage() {
       <PageHeader
         title="Godowns"
         description="Storage locations. Stock is always held per godown."
-        actions={canManage && <GodownFormDialog initial={EMPTY_GODOWN} />}
+        actions={canManage && <GodownFormDialog initial={EMPTY_GODOWN} nextCode={await previewNextCode("GODOWN")} />}
       />
       <Card>
         {godowns.length > 0 ? (

@@ -1,6 +1,6 @@
-import { Boxes } from "lucide-react";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { BrandLogo } from "@/components/layout/brand-logo";
 import { LoginForm } from "@/features/auth/login-form";
 import { getCurrentUser } from "@/server/auth/current-user";
 
@@ -19,11 +19,9 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
     <main className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center text-center">
-          <span className="rounded-lg bg-brand-600 p-2.5">
-            <Boxes className="size-6 text-white" aria-hidden />
-          </span>
-          <h1 className="mt-4 text-xl font-semibold text-slate-900">Sign in to Margix IMS</h1>
-          <p className="mt-1 text-sm text-slate-500">Ledger-based inventory management</p>
+          <BrandLogo variant="full" className="h-32" priority />
+          <h1 className="mt-6 text-xl font-semibold text-slate-900">Sign in</h1>
+          <p className="mt-1 text-sm text-slate-500">Inventory, purchasing and dispatch</p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
           <LoginForm next={safeNext(next)} />

@@ -1,37 +1,18 @@
 import type { PostedDocStatus } from "@prisma/client";
-import { istDateOf } from "@/lib/dates";
 import { isUniqueViolation } from "@/server/db/pg-error";
 import type { Tx } from "@/server/db/transaction";
+import { allocateCode } from "@/server/modules/numbering/numbering.service";
 
 export type DocumentPrefix = "PO" | "GRN" | "DSP" | "ADJ" | "OPN" | "INV" | "TRF" | "SRN" | "PRN";
 
 /**
- * Indian financial year code (April–March, evaluated in IST), e.g. 2026-09-24 → "2627".
+ * Allocates the next number of a document series, e.g. "GRN-2026-000042", in
+ * the format set in the numbering master. The counter row stays locked until
+ * the surrounding transaction ends, so numbers are unique and ordered even
+ * under concurrency.
  */
-export function financialYearCode(date: Date): string {
-  const [year, month] = istDateOf(date).split("-").map(Number);
-  const startYear = month >= 4 ? year : year - 1;
-  const endYear = startYear + 1;
-  return `${String(startYear % 100).padStart(2, "0")}${String(endYear % 100).padStart(2, "0")}`;
-}
-
-/**
- * Allocates the next number for a document series, e.g. "GRN-2627-00042".
- * The sequence row stays locked until the surrounding transaction ends, so
- * numbers are unique, ordered and gap-free even under concurrency.
- */
-export async function nextDocumentNumber(
-  tx: Tx,
-  prefix: DocumentPrefix,
-  date: Date = new Date(),
-): Promise<string> {
-  const fy = financialYearCode(date);
-  const rows = await tx.$queryRaw<{ last_value: number }[]>`
-    INSERT INTO "document_sequence" ("key", "last_value")
-    VALUES (${`${prefix}:${fy}`}, 1)
-    ON CONFLICT ("key") DO UPDATE SET "last_value" = "document_sequence"."last_value" + 1
-    RETURNING "last_value"`;
-  return `${prefix}-${fy}-${String(rows[0].last_value).padStart(5, "0")}`;
+export function nextDocumentNumber(tx: Tx, prefix: DocumentPrefix, date: Date = new Date()): Promise<string> {
+  return allocateCode(tx, prefix, date);
 }
 
 /**

@@ -69,6 +69,10 @@ export async function createSku(
   });
 }
 
+export async function createHsn(code = "3901", gstRate = "18", description = "Polymers of ethylene, in primary forms") {
+  return prisma.hsnCode.upsert({ where: { code }, update: {}, create: { code, gstRate, description } });
+}
+
 export async function createBatch(skuId: string, batchNumber = `B-${nextId()}`) {
   return prisma.batch.create({ data: { skuId, batchNumber } });
 }

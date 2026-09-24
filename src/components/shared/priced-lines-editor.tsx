@@ -81,7 +81,16 @@ export function PricedLinesEditor({
                   <Select
                     aria-label={`SKU for line ${index + 1}`}
                     value={line.skuId}
-                    onChange={(e) => update(line.key, { skuId: e.target.value, uomId: "" })}
+                    onChange={(e) => {
+                      const next = skuById.get(e.target.value);
+                      // The product's GST rate is filled in, unless the line already has a rate that was typed.
+                      const gstFollowsSku = !line.gstRate || line.gstRate === (sku?.gstRate ?? "");
+                      update(line.key, {
+                        skuId: e.target.value,
+                        uomId: "",
+                        gstRate: gstFollowsSku ? (next?.gstRate ?? "") : line.gstRate,
+                      });
+                    }}
                     aria-invalid={Boolean(err("skuId"))}
                   >
                     <option value="">Select SKU</option>
@@ -145,6 +154,7 @@ export function PricedLinesEditor({
                     className="w-20"
                   />
                   {err("gstRate") && <p className="mt-1 text-xs text-red-600">{err("gstRate")}</p>}
+                  {!err("gstRate") && sku?.hsnCode && <p className="mt-1 text-xs text-slate-500">HSN {sku.hsnCode}</p>}
                 </TD>
                 <TD className="text-right">
                   <Button

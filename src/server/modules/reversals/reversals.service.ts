@@ -30,45 +30,48 @@ import { onTransferEntriesReversed, transferLegEntryIds } from "@/server/modules
  * the order used when documents are posted, so reversals cannot deadlock with them.
  */
 export function reverseEntry(actor: Actor, entryId: string, reason: string): Promise<InventoryLedger> {
-  return withTx(async (tx) => {
-    const target = await tx.inventoryLedger.findUnique({ where: { id: entryId } });
-    if (!target) throw new NotFoundError("Ledger entry", entryId);
-    await lockOwningDocuments(tx, target.referenceType, target.referenceId);
+  return withTx((tx) => reverseEntryInTx(tx, actor, entryId, reason));
+}
 
-    const entryIds =
-      target.referenceType === "TRANSFER" && target.movementType !== "REVERSAL"
-        ? await transferLegEntryIds(tx, target)
-        : [entryId];
-    const results = await reverseLedgerEntries(tx, actor, entryIds, reason);
+/** reverseEntry inside the caller's transaction (e.g. as part of a correction). */
+export async function reverseEntryInTx(tx: Tx, actor: Actor, entryId: string, reason: string): Promise<InventoryLedger> {
+  const target = await tx.inventoryLedger.findUnique({ where: { id: entryId } });
+  if (!target) throw new NotFoundError("Ledger entry", entryId);
+  await lockOwningDocuments(tx, target.referenceType, target.referenceId);
 
-    for (const { original } of results) await applyDocumentEffects(tx, original);
-    if (target.referenceType === "TRANSFER") await onTransferEntriesReversed(tx, target.referenceId);
+  const entryIds =
+    target.referenceType === "TRANSFER" && target.movementType !== "REVERSAL"
+      ? await transferLegEntryIds(tx, target)
+      : [entryId];
+  const results = await reverseLedgerEntries(tx, actor, entryIds, reason);
 
-    for (const { reversal } of results) {
-      await enqueueTallySync(tx, {
-        entityType: "REVERSAL",
-        entityId: reversal.id,
-        entityNo: formatEntryNo(reversal.entryNo),
-        godownId: reversal.godownId,
-      });
-    }
-    await recordAudit(tx, actor, {
-      action: "LEDGER_ENTRY_REVERSED",
-      entityType: "InventoryLedger",
-      entityId: target.id,
-      newData: {
-        reference: target.referenceNo,
-        reason,
-        entries: results.map(({ original, reversal }) => ({
-          reversed: formatEntryNo(original.entryNo),
-          reversal: formatEntryNo(reversal.entryNo),
-          quantity: reversal.quantity,
-        })),
-      },
+  for (const { original } of results) await applyDocumentEffects(tx, original);
+  if (target.referenceType === "TRANSFER") await onTransferEntriesReversed(tx, target.referenceId);
+
+  for (const { reversal } of results) {
+    await enqueueTallySync(tx, {
+      entityType: "REVERSAL",
+      entityId: reversal.id,
+      entityNo: formatEntryNo(reversal.entryNo),
+      godownId: reversal.godownId,
     });
-
-    return results.find((r) => r.original.id === entryId)!.reversal;
+  }
+  await recordAudit(tx, actor, {
+    action: "LEDGER_ENTRY_REVERSED",
+    entityType: "InventoryLedger",
+    entityId: target.id,
+    newData: {
+      reference: target.referenceNo,
+      reason,
+      entries: results.map(({ original, reversal }) => ({
+        reversed: formatEntryNo(original.entryNo),
+        reversal: formatEntryNo(reversal.entryNo),
+        quantity: reversal.quantity,
+      })),
+    },
   });
+
+  return results.find((r) => r.original.id === entryId)!.reversal;
 }
 
 async function lockOwningDocuments(tx: Tx, type: ReferenceType, documentId: string): Promise<void> {

@@ -4,7 +4,7 @@ import { prisma } from "@/server/db/client";
 import type { AppError } from "@/server/errors";
 import { updateGodown, updateSku } from "@/server/modules/masters/masters.service";
 import { postOpeningBalance } from "@/server/modules/opening/opening.service";
-import { actorFor, createGodown, createSku, createUom, createUser } from "../../helpers/factories";
+import { actorFor, createGodown, createHsn, createSku, createUom, createUser } from "../../helpers/factories";
 
 const errorCode = (p: Promise<unknown>) => p.then(() => "OK", (e: AppError) => e.code);
 
@@ -30,6 +30,7 @@ describe("master data rules", () => {
   it("clears optional fields when an empty value is submitted", async () => {
     const admin = actorFor(await createUser("ADMIN"));
     const sku = await createSku();
+    await createHsn("3901");
     await prisma.sku.update({ where: { id: sku.id }, data: { hsnCode: "3901", tallyStockItemName: "Resin" } });
 
     await updateSku(admin, sku.id, skuUpdateSchema.parse({ hsnCode: "", tallyStockItemName: "" }));

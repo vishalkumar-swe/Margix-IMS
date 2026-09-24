@@ -11,6 +11,7 @@ import { FilterBar } from "@/components/shared/filter-bar";
 import { formatDate } from "@/lib/dates";
 import { parseSearchParams } from "@/lib/search-params";
 import { stockListQuerySchema } from "@/lib/validation/stock";
+import { can } from "@/lib/permissions";
 import { requirePagePermission } from "@/server/auth/current-user";
 import { listStockBalances } from "@/server/modules/inventory/stock.queries";
 import { listGodowns } from "@/server/modules/masters/masters.queries";
@@ -18,17 +19,21 @@ import { listGodowns } from "@/server/modules/masters/masters.queries";
 export const metadata: Metadata = { title: "Stock" };
 
 export default async function StockPage({ searchParams }: PageProps<"/stock">) {
-  await requirePagePermission("stock.view");
+  const user = await requirePagePermission("stock.view");
+  const canAdjust = can(user.role, "adjustment.request");
   const raw = await searchParams;
   const query = parseSearchParams(stockListQuerySchema, raw);
   const [{ items, total }, godowns] = await Promise.all([listStockBalances(query), listGodowns()]);
 
   return (
     <>
-      <PageHeader title="Stock" description="Current stock by SKU, godown and batch." />
+      <PageHeader
+        title="Stock"
+        description="Current stock by SKU, godown and batch. Stock changes only through documents: Adjust and Write off raise an adjustment request that another user approves."
+      />
       <Card>
         <FilterBar
-          search={{ name: "q", placeholder: "Search SKU code or name", value: query.q }}
+          search={{ name: "q", placeholder: "SKU code, name or batch", value: query.q }}
           selects={[
             {
               name: "godownId",
@@ -49,6 +54,7 @@ export default async function StockPage({ searchParams }: PageProps<"/stock">) {
                   <TH>Batch</TH>
                   <TH>Expiry</TH>
                   <TH numeric>Quantity</TH>
+                  <TH className="sr-only">Actions</TH>
                 </tr>
               </THead>
               <TBody>
@@ -65,6 +71,31 @@ export default async function StockPage({ searchParams }: PageProps<"/stock">) {
                     <TD className="text-xs">{formatDate(row.batch.expiryDate)}</TD>
                     <TD numeric>
                       <Quantity value={row.quantity} unit={row.sku.baseUom.code} />
+                    </TD>
+                    <TD className="text-right text-xs whitespace-nowrap">
+                      {(() => {
+                        const key = `skuId=${row.sku.id}&godownId=${row.godown.id}&batchId=${row.batch.id}`;
+                        return (
+                          <span className="inline-flex gap-3">
+                            <Link href={`/ledger?${key}`} className="text-brand-700 hover:underline">
+                              Movements
+                            </Link>
+                            {canAdjust && (
+                              <>
+                                <Link href={`/adjustments/new?${key}`} className="text-brand-700 hover:underline">
+                                  Adjust
+                                </Link>
+                                <Link
+                                  href={`/adjustments/new?${key}&direction=decrease&quantity=${row.quantity.toString()}`}
+                                  className="text-red-700 hover:underline"
+                                >
+                                  Write off
+                                </Link>
+                              </>
+                            )}
+                          </span>
+                        );
+                      })()}
                     </TD>
                   </TR>
                 ))}

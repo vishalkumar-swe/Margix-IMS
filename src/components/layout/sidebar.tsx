@@ -1,11 +1,12 @@
 "use client";
 
-import { Boxes, Menu, X } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { cn } from "@/lib/cn";
 import type { Permission } from "@/lib/permissions";
+import { BrandLogo } from "./brand-logo";
 import { NAV_SECTIONS } from "./navigation";
 
 function isActive(pathname: string, href: string): boolean {
@@ -44,11 +45,8 @@ export function Sidebar({ permissions }: { permissions: Permission[] }) {
         )}
       >
         <div className="flex h-14 items-center justify-between border-b border-slate-200 px-5">
-          <Link href="/" className="flex items-center gap-2 font-semibold text-slate-900">
-            <span className="rounded-md bg-brand-600 p-1.5">
-              <Boxes className="size-4 text-white" aria-hidden />
-            </span>
-            Margix IMS
+          <Link href="/" className="flex items-center" aria-label="Margix India — dashboard">
+            <BrandLogo variant="wordmark" className="h-6" priority />
           </Link>
           <button type="button" onClick={() => setOpen(false)} className="lg:hidden" aria-label="Close navigation">
             <X className="size-5 text-slate-500" />

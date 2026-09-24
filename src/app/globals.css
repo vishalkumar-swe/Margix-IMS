@@ -5,16 +5,19 @@
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
 
-  --color-brand-50: #eef4ff;
-  --color-brand-100: #dbe6fe;
-  --color-brand-200: #bfd3fe;
-  --color-brand-300: #93b4fd;
-  --color-brand-400: #6090fa;
-  --color-brand-500: #3b6cf5;
-  --color-brand-600: #2553e0;
-  --color-brand-700: #1d42bf;
-  --color-brand-800: #1e389b;
-  --color-brand-900: #1e347a;
+  /* Margix India amber (logo yellow = 500). 50–300 are fills; 500 is the
+     brand surface (always with black text, never white); 700–900 are dark
+     ambers safe for text on white (700 ≈ 5.6:1). */
+  --color-brand-50: #fffaeb;
+  --color-brand-100: #fff2c6;
+  --color-brand-200: #ffe489;
+  --color-brand-300: #ffd34a;
+  --color-brand-400: #ffc620;
+  --color-brand-500: #fcbc00;
+  --color-brand-600: #d99a00;
+  --color-brand-700: #8a6100;
+  --color-brand-800: #6f4d00;
+  --color-brand-900: #4d3500;
 }
 
 @layer base {

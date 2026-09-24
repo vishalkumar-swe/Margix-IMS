@@ -12,7 +12,7 @@ export function SkuImportDialog() {
     <CsvImportDialog<{ created: number }>
       endpoint="/imports/skus"
       title="Import SKUs"
-      description="Columns: code, name, unit (required); category, description, hsn_code, gst_rate, batch_tracked, tally_stock_item_name. Units and categories must already exist."
+      description="Columns: name, unit (required); code (leave blank for the next SKU code), category, description, hsn_code, gst_rate, batch_tracked, tally_stock_item_name. Units and categories must already exist."
       templateHref="/templates/sku-import-template.csv"
       summarise={(r) => `${r.created} SKUs imported.`}
     />
@@ -30,6 +30,18 @@ export function OpeningStockImportDialog({ today }: { today: string }) {
       summarise={(r) =>
         `Posted ${r.documents.map((d) => `${d.openingNumber} (${d.godown}, ${d.lines} lines)`).join(", ")}.`
       }
+    />
+  );
+}
+
+export function HsnImportDialog() {
+  return (
+    <CsvImportDialog<{ created: number; updated: number }>
+      endpoint="/imports/hsn"
+      title="Import HSN / GST codes"
+      description="Columns: code, description, gst_rate (required); keywords. Existing codes are updated, new ones added. Use the official CBIC HSN/SAC schedule; rates in the template are only an example."
+      templateHref="/templates/hsn-import-template.csv"
+      summarise={(r) => `${r.created} codes added, ${r.updated} updated.`}
     />
   );
 }

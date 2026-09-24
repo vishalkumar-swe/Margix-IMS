@@ -17,6 +17,7 @@ import { parseSearchParams } from "@/lib/search-params";
 import { SKU_STATUSES, skuListQuerySchema } from "@/lib/validation/masters";
 import { requirePagePermission } from "@/server/auth/current-user";
 import { listCategories, listSkus, listUoms } from "@/server/modules/masters/masters.queries";
+import { previewNextCode } from "@/server/modules/numbering/numbering.service";
 
 export const metadata: Metadata = { title: "Products (SKUs)" };
 
@@ -25,11 +26,14 @@ export default async function SkusPage({ searchParams }: PageProps<"/masters/sku
   const raw = await searchParams;
   const query = parseSearchParams(skuListQuerySchema, raw);
   const canManage = can(user.role, "master.manage");
-  const [{ items, total }, categories, uoms] = await Promise.all([
+  const [{ items, total }, categories, uoms, nextCode] = await Promise.all([
     listSkus(query),
     canManage ? listCategories({ activeOnly: true }) : Promise.resolve([]),
     canManage ? listUoms() : Promise.resolve([]),
+    canManage ? previewNextCode("SKU") : Promise.resolve(undefined),
   ]);
+
+  const categoryOptions = categories.map((c) => ({ id: c.id, name: c.name }));
 
   return (
     <>
@@ -40,7 +44,7 @@ export default async function SkusPage({ searchParams }: PageProps<"/masters/sku
           canManage && (
             <>
               <SkuImportDialog />
-              <SkuFormDialog initial={EMPTY_SKU} categories={categories} uoms={uoms} />
+              <SkuFormDialog initial={EMPTY_SKU} categories={categoryOptions} uoms={uoms} nextCode={nextCode} />
             </>
           )
         }
@@ -113,7 +117,7 @@ export default async function SkusPage({ searchParams }: PageProps<"/masters/sku
                         />
                         <SkuFormDialog
                           skuId={sku.id}
-                          categories={categories}
+                          categories={categoryOptions}
                           uoms={uoms}
                           initial={{
                             code: sku.code,

@@ -8,6 +8,7 @@ import { PartyTable } from "@/features/masters/party-table";
 import { can } from "@/lib/permissions";
 import { requirePagePermission } from "@/server/auth/current-user";
 import { listSuppliers } from "@/server/modules/masters/masters.queries";
+import { previewNextCode } from "@/server/modules/numbering/numbering.service";
 
 export const metadata: Metadata = { title: "Suppliers" };
 
@@ -21,7 +22,7 @@ export default async function SuppliersPage() {
       <PageHeader
         title="Suppliers"
         description="Vendors that purchase orders are raised against."
-        actions={canManage && <PartyFormDialog kind="supplier" initial={EMPTY_PARTY} />}
+        actions={canManage && <PartyFormDialog kind="supplier" initial={EMPTY_PARTY} nextCode={await previewNextCode("SUPPLIER")} />}
       />
       <Card>
         {suppliers.length > 0 ? (

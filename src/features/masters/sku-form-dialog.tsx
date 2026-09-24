@@ -12,6 +12,7 @@ import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
 import { humanize } from "@/lib/format";
 import { SKU_STATUSES } from "@/lib/enums";
+import { HsnPicker } from "./hsn-picker";
 
 export interface SkuFormValues {
   code: string;
@@ -45,8 +46,11 @@ export function SkuFormDialog({
   initial,
   categories,
   uoms,
+  nextCode,
 }: {
   skuId?: string;
+  /** Code the next new SKU gets when left blank (from the numbering master). */
+  nextCode?: string;
   initial: SkuFormValues;
   categories: { id: string; name: string }[];
   uoms: { id: string; code: string; name: string }[];
@@ -55,6 +59,8 @@ export function SkuFormDialog({
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(initial);
   const editing = Boolean(skuId);
+  /** GST rate of the HSN code last picked, to tell following it from overriding it. */
+  const [hsnRate, setHsnRate] = useState<string | null>(null);
 
   const save = useApiMutation((values: SkuFormValues) => {
     const { code, status, ...common } = values;
@@ -65,6 +71,7 @@ export function SkuFormDialog({
             ...common,
             code,
             categoryId: common.categoryId || undefined,
+            hsnCode: common.hsnCode || undefined,
             gstRate: common.gstRate || undefined,
           },
         });
@@ -73,6 +80,7 @@ export function SkuFormDialog({
 
   function openDialog() {
     setForm(initial);
+    setHsnRate(null);
     save.reset();
     setOpen(true);
   }
@@ -103,8 +111,19 @@ export function SkuFormDialog({
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
           {save.error && !Object.keys(errors).length && <Alert tone="error">{save.error.message}</Alert>}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <Field label="Code" htmlFor={id("code")} error={errors.code} required={!editing}>
-              <Input id={id("code")} value={form.code} disabled={editing} onChange={(e) => set("code", e.target.value)} />
+            <Field
+              label="Code"
+              htmlFor={id("code")}
+              error={errors.code}
+              hint={editing ? undefined : nextCode ? `Leave blank to use ${nextCode}.` : "Leave blank for the next code."}
+            >
+              <Input
+                id={id("code")}
+                value={form.code}
+                disabled={editing}
+                placeholder={editing ? undefined : nextCode}
+                onChange={(e) => set("code", e.target.value)}
+              />
             </Field>
             <Field label="Name" htmlFor={id("name")} error={errors.name} required>
               <Input id={id("name")} value={form.name} onChange={(e) => set("name", e.target.value)} />
@@ -129,10 +148,36 @@ export function SkuFormDialog({
                 ))}
               </Select>
             </Field>
-            <Field label="HSN code" htmlFor={id("hsn")} error={errors.hsnCode}>
-              <Input id={id("hsn")} value={form.hsnCode} onChange={(e) => set("hsnCode", e.target.value)} />
+            <Field label="HSN code" htmlFor={id("hsn")} error={errors.hsnCode} hint="Suggested from the name, description and category.">
+              <HsnPicker
+                id={id("hsn")}
+                value={form.hsnCode}
+                invalid={Boolean(errors.hsnCode)}
+                product={{ name: form.name, description: form.description, categoryId: form.categoryId }}
+                onChange={(choice) => {
+                  if ("gstRate" in choice) {
+                    // Picking a code applies its rate; the rate can still be overridden below.
+                    setForm({ ...form, hsnCode: choice.code, gstRate: choice.gstRate });
+                    setHsnRate(choice.gstRate);
+                  } else {
+                    setForm({ ...form, hsnCode: choice.code });
+                    setHsnRate(null);
+                  }
+                }}
+              />
             </Field>
-            <Field label="GST %" htmlFor={id("gst")} error={errors.gstRate}>
+            <Field
+              label="GST %"
+              htmlFor={id("gst")}
+              error={errors.gstRate}
+              hint={
+                hsnRate === null
+                  ? "Filled in from the HSN code."
+                  : Number(form.gstRate) === Number(hsnRate)
+                    ? `From HSN ${form.hsnCode}.`
+                    : `Overrides the HSN rate of ${hsnRate}%.`
+              }
+            >
               <Input id={id("gst")} inputMode="decimal" value={form.gstRate} onChange={(e) => set("gstRate", e.target.value)} />
             </Field>
             <Field label="Tally stock item name" htmlFor={id("tally")} error={errors.tallyStockItemName} hint="Required for Tally sync.">

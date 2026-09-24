@@ -68,7 +68,7 @@ describe("purchase order lifecycle", () => {
       items: [{ skuId: sku.id, orderedQty: "10" }],
     });
     expect(po.status).toBe("DRAFT");
-    expect(po.poNumber).toMatch(/^PO-\d{4}-00001$/);
+    expect(po.poNumber).toMatch(/^PO-\d{4}-000001$/);
 
     await updateDraftPurchaseOrder(manager, po.id, {
       supplierId,
@@ -197,8 +197,8 @@ describe("goods receipt", () => {
     const first = await receive(po.id, await poItemId(po.id), "1");
     const second = await receive(po.id, await poItemId(po.id), "1");
 
-    expect(first.grnNumber).toMatch(/-00001$/);
-    expect(second.grnNumber).toMatch(/-00002$/);
+    expect(first.grnNumber).toMatch(/-000001$/);
+    expect(second.grnNumber).toMatch(/-000002$/);
     expect(await prisma.auditLog.count({ where: { action: "GRN_POSTED" } })).toBe(2);
   });
 });

@@ -1,11 +1,14 @@
 import { parseCsvRecords, type CsvRecord } from "@/lib/csv";
 import { dateSchema, quantitySchema } from "@/lib/validation/common";
 import {
+  HSN_IMPORT_COLUMNS,
+  MAX_HSN_IMPORT_ROWS,
   MAX_IMPORT_ROWS,
   OPENING_IMPORT_COLUMNS,
   SKU_IMPORT_COLUMNS,
   type ImportRowError,
 } from "@/lib/validation/imports";
+import { hsnCreateSchema, type HsnCreateInput } from "@/lib/validation/hsn";
 import { skuCreateSchema, type SkuCreateInput } from "@/lib/validation/masters";
 import type { OpeningCreateInput } from "@/lib/validation/opening";
 import type { Actor } from "@/server/actor";
@@ -15,6 +18,7 @@ import { withTx } from "@/server/db/transaction";
 import { ValidationError } from "@/server/errors";
 import { recordAudit } from "@/server/modules/audit/audit.service";
 import { postOpeningBalanceInTx } from "@/server/modules/opening/opening.service";
+import { allocateCode } from "@/server/modules/numbering/numbering.service";
 
 /**
  * Bulk CSV imports. Every row is validated first and all problems are
@@ -28,14 +32,19 @@ const IMPORT_TIMEOUT_MS = 120_000;
 
 export async function importSkus(actor: Actor, csv: string): Promise<{ created: number }> {
   const records = readRecords(csv, SKU_IMPORT_COLUMNS);
-  const [uoms, categories, existing] = await Promise.all([
+  const [uoms, categories, existing, hsnCodes] = await Promise.all([
     prisma.uom.findMany({ select: { id: true, code: true } }),
     prisma.category.findMany({ where: { isActive: true }, select: { id: true, name: true } }),
     prisma.sku.findMany({
-      where: { code: { in: records.map((r) => r.values.code.toUpperCase()) } },
+      where: { code: { in: records.flatMap((r) => (r.values.code ? [r.values.code.toUpperCase()] : [])) } },
       select: { code: true },
     }),
+    prisma.hsnCode.findMany({
+      where: { code: { in: records.flatMap((r) => (r.values.hsn_code ? [r.values.hsn_code.trim()] : [])) } },
+      select: { code: true, gstRate: true, isActive: true },
+    }),
   ]);
+  const hsnByCode = new Map(hsnCodes.map((h) => [h.code, h]));
   const uomByCode = new Map(uoms.map((u) => [u.code.toUpperCase(), u.id]));
   const categoryByName = new Map(categories.map((c) => [c.name.toLowerCase(), c.id]));
   const existingCodes = new Set(existing.map((s) => s.code));
@@ -60,7 +69,8 @@ export async function importSkus(actor: Actor, csv: string): Promise<{ created: 
       categoryId,
       baseUomId: baseUomId ?? "",
       hsnCode: values.hsn_code,
-      gstRate: values.gst_rate || undefined,
+      // A blank rate takes the HSN master's rate.
+      gstRate: values.gst_rate || hsnByCode.get(values.hsn_code?.trim() ?? "")?.gstRate.toString() || undefined,
       isBatchTracked: isBatchTracked ?? true,
       tallyStockItemName: values.tally_stock_item_name,
     });
@@ -70,9 +80,13 @@ export async function importSkus(actor: Actor, csv: string): Promise<{ created: 
         problems.push(`${columnFor(String(issue.path[0]))}: ${issue.message}`);
       }
     } else {
-      if (existingCodes.has(parsed.data.code)) problems.push(`SKU ${parsed.data.code} already exists`);
-      if (seen.has(parsed.data.code)) problems.push(`SKU ${parsed.data.code} appears more than once in the file`);
-      seen.add(parsed.data.code);
+      const { code, hsnCode } = parsed.data;
+      const hsn = hsnCode ? hsnByCode.get(hsnCode) : undefined;
+      if (hsnCode && !hsn) problems.push(`HSN ${hsnCode} is not in the HSN master`);
+      else if (hsn && !hsn.isActive) problems.push(`HSN ${hsnCode} is inactive`);
+      if (code && existingCodes.has(code)) problems.push(`SKU ${code} already exists`);
+      if (code && seen.has(code)) problems.push(`SKU ${code} appears more than once in the file`);
+      if (code) seen.add(code);
       if (problems.length === 0) rows.push(parsed.data);
     }
     if (problems.length > 0) errors.push({ line, message: problems.join("; ") });
@@ -81,11 +95,19 @@ export async function importSkus(actor: Actor, csv: string): Promise<{ created: 
   throwIfErrors(errors);
   await withTx(
     async (tx) => {
-      await tx.sku.createMany({ data: rows });
+      // Rows with their own code first, so allocated codes can never collide with them.
+      const withCode = rows.filter((r): r is SkuCreateInput & { code: string } => Boolean(r.code));
+      await tx.sku.createMany({ data: withCode });
+      const allocated: string[] = [];
+      for (const row of rows.filter((r) => !r.code)) {
+        const code = await allocateCode(tx, "SKU");
+        await tx.sku.create({ data: { ...row, code } });
+        allocated.push(code);
+      }
       await recordAudit(tx, actor, {
         action: "MASTER_IMPORTED",
         entityType: "Sku",
-        newData: { count: rows.length, codes: rows.map((r) => r.code) },
+        newData: { count: rows.length, codes: [...withCode.map((r) => r.code), ...allocated] },
       });
     },
     { timeoutMs: IMPORT_TIMEOUT_MS },
@@ -175,7 +197,67 @@ export async function importOpeningStock(
 
 // ---- helpers ----
 
-function readRecords(csv: string, columns: { required: readonly string[]; optional: readonly string[] }): CsvRecord[] {
+// ---- HSN / SAC master ----
+
+/**
+ * Loads or refreshes the HSN/SAC master (e.g. from the official CBIC list):
+ * new codes are added, existing ones get the file's description, rate and
+ * keywords. Products keep their own applied rate; documents already posted
+ * are never affected.
+ */
+export async function importHsnCodes(actor: Actor, csv: string): Promise<{ created: number; updated: number }> {
+  const records = readRecords(csv, HSN_IMPORT_COLUMNS, MAX_HSN_IMPORT_ROWS);
+  const errors: ImportRowError[] = [];
+  const rows = new Map<string, HsnCreateInput>();
+
+  for (const { line, values } of records) {
+    const parsed = hsnCreateSchema.safeParse({
+      code: values.code,
+      description: values.description,
+      gstRate: values.gst_rate,
+      keywords: values.keywords,
+    });
+    if (!parsed.success) {
+      errors.push({ line, message: parsed.error.issues.map((i) => `${columnFor(String(i.path[0]))}: ${i.message}`).join("; ") });
+    } else if (rows.has(parsed.data.code)) {
+      errors.push({ line, message: `HSN ${parsed.data.code} appears more than once in the file` });
+    } else {
+      rows.set(parsed.data.code, parsed.data);
+    }
+  }
+  throwIfErrors(errors);
+
+  const existing = new Set(
+    (await prisma.hsnCode.findMany({ where: { code: { in: [...rows.keys()] } }, select: { code: true } })).map((h) => h.code),
+  );
+  const toCreate = [...rows.values()].filter((r) => !existing.has(r.code));
+  const toUpdate = [...rows.values()].filter((r) => existing.has(r.code));
+
+  await withTx(
+    async (tx) => {
+      await tx.hsnCode.createMany({ data: toCreate });
+      for (const row of toUpdate) {
+        await tx.hsnCode.update({
+          where: { code: row.code },
+          data: { description: row.description, gstRate: row.gstRate, keywords: row.keywords ?? null, isActive: true },
+        });
+      }
+      await recordAudit(tx, actor, {
+        action: "MASTER_IMPORTED",
+        entityType: "HsnCode",
+        newData: { created: toCreate.length, updated: toUpdate.length },
+      });
+    },
+    { timeoutMs: IMPORT_TIMEOUT_MS },
+  );
+  return { created: toCreate.length, updated: toUpdate.length };
+}
+
+function readRecords(
+  csv: string,
+  columns: { required: readonly string[]; optional: readonly string[] },
+  maxRows: number = MAX_IMPORT_ROWS,
+): CsvRecord[] {
   const { headers, records } = parseCsvRecords(csv);
   const missing = columns.required.filter((c) => !headers.includes(c));
   if (missing.length > 0) {
@@ -190,8 +272,8 @@ function readRecords(csv: string, columns: { required: readonly string[]; option
     ]);
   }
   if (records.length === 0) throw new ValidationError("The file has no data rows.");
-  if (records.length > MAX_IMPORT_ROWS) {
-    throw new ValidationError(`At most ${MAX_IMPORT_ROWS} rows can be imported at once; split the file.`);
+  if (records.length > maxRows) {
+    throw new ValidationError(`At most ${maxRows} rows can be imported at once; split the file.`);
   }
   return records;
 }

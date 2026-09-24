@@ -35,7 +35,7 @@ describe("invoice partial dispatch (spec §6.2)", () => {
   it("tracks dispatched and remaining quantity until complete", async () => {
     const invoice = await invoiceFor("60");
     expect(invoice.status).toBe("OPEN");
-    expect(invoice.invoiceNumber).toMatch(/^INV-\d{4}-00001$/);
+    expect(invoice.invoiceNumber).toMatch(/^INV-\d{4}-000001$/);
 
     const first = await dispatchAgainst(invoice.id, "25");
     expect(await invoiceState(invoice.id)).toEqual({ status: "PARTIALLY_DISPATCHED", dispatched: "25" });

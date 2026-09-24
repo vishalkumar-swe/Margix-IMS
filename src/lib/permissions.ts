@@ -31,6 +31,7 @@ export type Permission =
   | "master.view"
   | "master.manage"
   | "user.manage"
+  | "settings.manage"
   | "tally.view"
   | "tally.sync"
   | "audit.view";
@@ -70,6 +71,8 @@ const PERMISSION_ROLES: Record<Permission, readonly RoleCode[]> = {
   "master.view": ALL_ROLES,
   "master.manage": ["ADMIN"],
   "user.manage": ["ADMIN"],
+  /** System configuration: numbering, notifications, checklists. */
+  "settings.manage": ["ADMIN"],
   "tally.view": ["ADMIN", "STORE_MANAGER", "ACCOUNTS", "MANAGEMENT"],
   "tally.sync": ["ADMIN", "ACCOUNTS"],
   "audit.view": ["ADMIN", "STORE_MANAGER", "ACCOUNTS"],

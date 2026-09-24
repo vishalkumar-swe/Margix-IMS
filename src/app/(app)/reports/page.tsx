@@ -63,7 +63,7 @@ export default async function ReportsPage() {
             href={report.href}
             className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm transition-colors hover:border-brand-300"
           >
-            <report.icon className="size-5 text-brand-600" aria-hidden />
+            <report.icon className="size-5 text-brand-700" aria-hidden />
             <p className="mt-3 font-medium text-slate-900">{report.title}</p>
             <p className="mt-1 text-sm text-slate-500">{report.description}</p>
           </Link>

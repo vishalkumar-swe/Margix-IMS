@@ -9,10 +9,12 @@ import {
   CornerDownLeft,
   CornerUpRight,
   FileText,
+  Hash,
   History,
   LayoutDashboard,
   Package,
   PackageCheck,
+  Percent,
   RefreshCw,
   ScrollText,
   SlidersHorizontal,
@@ -45,6 +47,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Dashboard", href: "/", icon: LayoutDashboard, permission: "dashboard.view" },
       { label: "Stock", href: "/stock", icon: Boxes, permission: "stock.view" },
       { label: "Stock ledger", href: "/ledger", icon: ScrollText, permission: "ledger.view" },
+      { label: "Opening stock", href: "/opening-stock", icon: ClipboardCheck, permission: "opening.post" },
     ],
   },
   {
@@ -58,7 +61,6 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Customer returns", href: "/sales-returns", icon: CornerDownLeft, permission: "return.view" },
       { label: "Supplier returns", href: "/purchase-returns", icon: CornerUpRight, permission: "return.view" },
       { label: "Adjustments", href: "/adjustments", icon: SlidersHorizontal, permission: "adjustment.view" },
-      { label: "Opening stock", href: "/opening-stock", icon: ClipboardCheck, permission: "opening.post" },
     ],
   },
   {
@@ -76,6 +78,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Suppliers", href: "/masters/suppliers", icon: Building2, permission: "master.view" },
       { label: "Customers", href: "/masters/customers", icon: Store, permission: "master.view" },
       { label: "Categories & units", href: "/masters/categories", icon: Tag, permission: "master.view" },
+      { label: "HSN & GST", href: "/masters/hsn", icon: Percent, permission: "master.view" },
     ],
   },
   {
@@ -83,6 +86,7 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "Tally sync", href: "/tally", icon: RefreshCw, permission: "tally.view" },
       { label: "Users", href: "/admin/users", icon: Users, permission: "user.manage" },
+      { label: "Numbering", href: "/admin/numbering", icon: Hash, permission: "settings.manage" },
       { label: "Audit trail", href: "/audit", icon: History, permission: "audit.view" },
     ],
   },

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { CompanyDetails } from "@/server/config/company";
 import { PrintButton } from "./print-button";
+import { BrandLogo } from "@/components/layout/brand-logo";
 
 /** A4 layout shared by printed notes: company header, title, parties, lines, signatures. */
 export function PrintedDocument({
@@ -28,10 +29,13 @@ export function PrintedDocument({
       </div>
 
       <header className="flex items-start justify-between border-b-2 border-slate-900 pb-4">
-        <div>
-          <p className="text-lg font-bold">{company.name}</p>
-          {company.address && <p className="text-xs text-slate-600">{company.address}</p>}
-          {company.gstin && <p className="text-xs text-slate-600">GSTIN {company.gstin}</p>}
+        <div className="flex items-start gap-4">
+          <BrandLogo variant="full" className="h-16" priority />
+          <div>
+            <p className="text-lg font-bold">{company.name}</p>
+            {company.address && <p className="text-xs text-slate-600">{company.address}</p>}
+            {company.gstin && <p className="text-xs text-slate-600">GSTIN {company.gstin}</p>}
+          </div>
         </div>
         <div className="text-right">
           <p className="text-base font-semibold tracking-wide uppercase">{title}</p>

@@ -74,13 +74,12 @@ export async function listStockBalances(filters: StockListFilters) {
     godownId: filters.godownId,
     skuId: filters.skuId,
     quantity: filters.includeZero ? undefined : { gt: 0 },
-    sku: filters.q
-      ? {
-          OR: [
-            { code: { contains: filters.q, mode: "insensitive" } },
-            { name: { contains: filters.q, mode: "insensitive" } },
-          ],
-        }
+    OR: filters.q
+      ? [
+          { sku: { code: { contains: filters.q, mode: "insensitive" } } },
+          { sku: { name: { contains: filters.q, mode: "insensitive" } } },
+          { batch: { batchNumber: { contains: filters.q, mode: "insensitive" } } },
+        ]
       : undefined,
   };
 

@@ -7,14 +7,27 @@ import { listGodowns, listSkuOptions } from "@/server/modules/masters/masters.qu
 
 export const metadata: Metadata = { title: "Request adjustment" };
 
-export default async function NewAdjustmentPage() {
+export default async function NewAdjustmentPage({ searchParams }: PageProps<"/adjustments/new">) {
   await requirePagePermission("adjustment.request");
   const [godowns, skus] = await Promise.all([listGodowns({ activeOnly: true }), listSkuOptions()]);
+  const raw = await searchParams;
+  const param = (name: string) => (typeof raw[name] === "string" ? (raw[name] as string) : "");
+  // "Adjust" / "Write off" from a stock row open the request pre-filled.
+  const prefill =
+    param("skuId") && param("godownId")
+      ? {
+          skuId: param("skuId"),
+          godownId: param("godownId"),
+          batchId: param("batchId"),
+          direction: param("direction") === "increase" ? ("increase" as const) : ("decrease" as const),
+          quantity: /^\d+(\.\d+)?$/.test(param("quantity")) ? param("quantity") : "",
+        }
+      : undefined;
 
   return (
     <>
       <PageHeader back={{ href: "/adjustments", label: "Adjustments" }} title="Request adjustment" />
-      <AdjustmentForm godowns={godowns.map(toNamedOption)} skus={skus.map(toSkuOption)} />
+      <AdjustmentForm godowns={godowns.map(toNamedOption)} skus={skus.map(toSkuOption)} prefill={prefill} />
     </>
   );
 }
