@@ -1,7 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 /**
@@ -24,6 +24,7 @@ export function Dialog({
   className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -46,9 +47,9 @@ export function Dialog({
     <dialog
       ref={ref}
       onClose={onClose}
-      aria-labelledby="dialog-title"
+      aria-labelledby={titleId}
       className={cn(
-        "surface-solid m-auto flex max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-lg flex-col rounded-xl border p-0 text-slate-900 shadow-2xl",
+        "surface-solid m-auto hidden max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-lg flex-col rounded-xl open:flex border p-0 text-slate-900 shadow-2xl",
         className,
       )}
     >
@@ -56,7 +57,7 @@ export function Dialog({
         <>
           <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
             <div className="min-w-0">
-              <h2 id="dialog-title" className="text-base font-semibold">
+              <h2 id={titleId} className="text-base font-semibold">
                 {title}
               </h2>
               {description && <p className="mt-1 text-sm text-slate-500">{description}</p>}
