@@ -57,12 +57,8 @@ npm run test:e2e       # when you touched a user flow (after npm run build)
 
 ## Deploying
 
-After merging to `main`, deploy from the production checkout on the server:
-
-```bash
-deploy/deploy.sh
-```
-
-It builds, runs migrations, and swaps the release in without downtime (about a
-minute). If the build or the migrations fail, nothing is swapped. See
-[deploy/RUNBOOK.md](deploy/RUNBOOK.md).
+Merging to `main` deploys automatically. The home server checks every 5
+minutes. It deploys the new `main` once the required CI jobs on that commit
+are green, and never rolls production back. For a hotfix, run
+`deploy/deploy.sh` on the server. See
+[deploy/RUNBOOK.md](deploy/RUNBOOK.md#continuous-deployment).

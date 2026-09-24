@@ -25,6 +25,15 @@ log() { printf '\033[1m[deploy %s]\033[0m %s\n' "$(date +%H:%M:%S)" "$*"; }
 started=$SECONDS
 cd "$ROOT"
 
+# One deploy at a time on this host (manual runs and ops/cd/auto-deploy.sh).
+LOCK="${XDG_RUNTIME_DIR:-/tmp}/margix-deploy.lock"
+exec 9>"$LOCK"
+flock -n 9 || { log "Another deploy is running — try again when it finishes"; exit 75; }
+
+# The commit this release is built from; "-dirty" when there are uncommitted changes.
+REVISION="$(git rev-parse HEAD)$(git diff --quiet HEAD -- 2>/dev/null || echo -dirty)"
+log "Deploying $REVISION from $ROOT"
+
 if [[ "${1:-}" == "--rebuild-images" ]]; then
   log "Rebuilding runtime and tools images"
   "${COMPOSE[@]}" build app seed
@@ -52,6 +61,7 @@ cp -a ops/postgres/app-role-grants.sql "$NEW/ops/postgres/"
 cp -a ops/railway/pre-deploy.sh "$NEW/ops/railway/"
 # The background workers, bundled so they run with the release's own node_modules.
 node scripts/build-workers.mjs "$NEW/scripts" >/dev/null
+echo "$REVISION" > "$NEW/REVISION"
 chmod -R a+rX "$NEW"
 
 log "Running migrations"
@@ -65,6 +75,8 @@ podman run --rm --network margix_margix_net --env-file <(grep -E '^(POSTGRES_PAS
 
 log "Swapping the release in"
 rm -rf "$DEPLOY/release.old"
+# margix.service (start on boot) follows the checkout that deployed last.
+ln -sfn "$ROOT" "$HOME/apps/.margix-live"
 [[ -d "$DEPLOY/release" ]] && mv "$DEPLOY/release" "$DEPLOY/release.old"
 mv "$NEW" "$DEPLOY/release"
 "${COMPOSE[@]}" up -d --no-build 2>&1 | grep -iE "error|warn" || true

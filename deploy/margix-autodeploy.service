@@ -1,0 +1,14 @@
+# Continuous deployment: deploys origin/main when it is new and CI is green
+# (ops/cd/auto-deploy.sh). Runs from the production checkout only.
+# Install: see deploy/RUNBOOK.md → "Continuous deployment".
+[Unit]
+Description=Margix IMS – deploy main when CI is green
+After=margix.service network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/apps/margix-production
+Nice=10
+TimeoutStartSec=1800
+# Bootstrap: until the checkout has the script, take it from origin/main once it exists there.
+ExecStart=/usr/bin/bash -c 'git fetch -q origin main && { [ -x ops/cd/auto-deploy.sh ] || { git cat-file -e origin/main:ops/cd/auto-deploy.sh 2>/dev/null && git checkout -q --force --detach origin/main; } || exit 0; } && exec ops/cd/auto-deploy.sh'

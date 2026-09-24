@@ -79,6 +79,45 @@ podman logs --tail 50 margix-app-1                       # JSON lines, one per A
 podman logs --tail 20 margix-ts-1
 ```
 
+## Continuous deployment
+
+Merging to `main` is the deploy. `margix-autodeploy.timer` runs
+`ops/cd/auto-deploy.sh` every 5 minutes in the **production checkout**
+`~/apps/margix-production`, a clean clone that tracks `main`. It deploys
+`origin/main` when:
+
+- the commit is new;
+- the required CI jobs on it are green (lint/typecheck/test/build, E2E, container images, dependency audit);
+- it contains the running release, so it never rolls production back.
+
+If a deploy fails, the previous release keeps serving and that commit is not
+retried. The next commit is tried as usual.
+
+```bash
+journalctl --user -u margix-autodeploy -n 30       # what it decided and why
+~/apps/margix-production/ops/cd/auto-deploy.sh --dry-run
+cat ~/.local/state/margix-cd/history                # deployed commits
+podman exec margix-app-1 cat /app/REVISION          # running commit
+```
+
+Setup, already done on the home server:
+
+```bash
+git clone https://github.com/vishalkumar-swe/Margix-IMS.git ~/apps/margix-production
+ln -s ~/.config/margix/.env.production ~/apps/margix-production/deploy/.env.production
+cp ~/apps/Margix-IMS/deploy/margix-autodeploy.{service,timer} ~/apps/Margix-IMS/deploy/margix.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now margix-autodeploy.timer
+```
+
+- The production secrets live in `~/.config/margix/.env.production` (mode
+  600). Every checkout's `deploy/.env.production` is a symlink to it.
+- `~/apps/.margix-live` points at the checkout that deployed last. It is
+  updated by `deploy.sh`, and `margix.service` starts that one on boot.
+- **Hotfix:** run `deploy/deploy.sh` in any checkout. The timer leaves that
+  release alone until `main` contains it.
+- **Pause:** `systemctl --user stop margix-autodeploy.timer`.
+- **Roll back:** revert on `main`. A revert is a new commit, so it deploys like any other.
+
 ## Backups
 
 ```bash
