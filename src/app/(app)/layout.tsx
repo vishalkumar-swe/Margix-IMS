@@ -16,7 +16,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   const theme = parseTheme((await cookies()).get(THEME_COOKIE)?.value);
 
   return (
-    <div data-theme={theme} className="min-h-screen bg-slate-50 text-slate-900">
+    <div data-theme={theme} className="app-backdrop min-h-screen text-slate-900">
       <NavigationIntent />
       <LiveUpdates />
       <Suspense fallback={null}>
@@ -24,7 +24,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
       </Suspense>
       <Sidebar permissions={permissionsFor(user.role)} />
       <div className="lg:pl-64">
-        <header className="sticky top-0 z-20 flex h-14 items-center justify-end border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6">
+        <header className="sticky top-0 z-20 flex h-14 items-center justify-end glass-strong border-b px-4 sm:px-6">
           <div className="mr-4">
             <ThemeSwitcher initial={theme} />
           </div>

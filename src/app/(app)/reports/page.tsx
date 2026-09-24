@@ -61,7 +61,7 @@ export default async function ReportsPage() {
           <Link
             key={report.title}
             href={report.href}
-            className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm transition-colors hover:border-brand-300"
+            className="glass rounded-xl border p-5 shadow-sm transition-colors hover:border-brand-300"
           >
             <report.icon className="size-5 text-brand-700" aria-hidden />
             <p className="mt-3 font-medium text-slate-900">{report.title}</p>

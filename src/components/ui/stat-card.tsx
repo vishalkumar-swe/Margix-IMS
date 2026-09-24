@@ -41,7 +41,7 @@ export function StatCard({
     </>
   );
 
-  const className = "block rounded-lg border border-slate-200 bg-white p-4 shadow-sm";
+  const className = "block glass rounded-xl border p-4 shadow-sm";
   return href ? (
     <Link href={href} className={cn(className, "transition-colors hover:border-brand-300")}>
       {content}

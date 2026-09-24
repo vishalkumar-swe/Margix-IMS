@@ -28,7 +28,7 @@ export function Sidebar({ permissions }: { permissions: Permission[] }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed top-3 left-3 z-30 rounded-md border border-slate-200 bg-white p-2 shadow-sm lg:hidden"
+        className="fixed top-3 left-3 z-30 glass rounded-md border p-2 lg:hidden"
         aria-label="Open navigation"
       >
         <Menu className="size-5 text-slate-700" />
@@ -40,7 +40,7 @@ export function Sidebar({ permissions }: { permissions: Permission[] }) {
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-slate-200 bg-white transition-transform lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-40 glass-strong flex w-64 flex-col border-r transition-transform lg:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >

@@ -20,7 +20,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const theme = parseTheme((await cookies()).get(THEME_COOKIE)?.value);
 
   return (
-    <main data-theme={theme} className="relative flex min-h-screen items-center justify-center bg-slate-50 px-4 text-slate-900">
+    <main data-theme={theme} className="app-backdrop relative flex min-h-screen items-center justify-center px-4 text-slate-900">
       <div className="absolute top-4 right-4">
         <ThemeSwitcher initial={theme} />
       </div>
@@ -30,7 +30,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
           <h1 className="mt-6 text-xl font-semibold text-slate-900">Sign in</h1>
           <p className="mt-1 text-sm text-slate-500">Inventory, purchasing and dispatch</p>
         </div>
-        <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="glass rounded-xl border p-6">
           <LoginForm next={safeNext(next)} />
         </div>
       </div>

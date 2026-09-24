@@ -6,7 +6,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 
 export default function AppError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white">
+    <div className="glass rounded-xl border">
       <EmptyState
         icon={TriangleAlert}
         title="Something went wrong"

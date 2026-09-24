@@ -36,6 +36,62 @@
 }
 
 /*
+ * Glass surfaces over an ambient backdrop. Cards, dialogs, the sidebar and
+ * header use `glass` / `glass-strong` (translucent + backdrop blur); the app
+ * and sign-in shells use `app-backdrop` (soft Margix-yellow glow). Values are
+ * theme tokens, redefined for dark below.
+ */
+:root {
+  --glass-surface: rgb(255 255 255 / 0.66);
+  --glass-strong: rgb(255 255 255 / 0.8);
+  --glass-border: rgb(15 23 42 / 0.08);
+  --glass-shadow: 0 1px 2px rgb(15 23 42 / 0.04), 0 8px 24px -12px rgb(15 23 42 / 0.12);
+  --backdrop-base: #f6f5f1;
+  --backdrop-glow-1: rgb(252 188 0 / 0.2);
+  --backdrop-glow-2: rgb(252 188 0 / 0.1);
+  --backdrop-glow-3: rgb(15 23 42 / 0.06);
+}
+
+@utility glass {
+  background-color: var(--glass-surface);
+  border-color: var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(16px) saturate(170%);
+  -webkit-backdrop-filter: blur(16px) saturate(170%);
+}
+
+@utility glass-strong {
+  background-color: var(--glass-strong);
+  border-color: var(--glass-border);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+@utility app-backdrop {
+  background-color: var(--backdrop-base);
+  background-image:
+    radial-gradient(60rem 36rem at 8% -12%, var(--backdrop-glow-1), transparent 70%),
+    radial-gradient(48rem 32rem at 105% 8%, var(--backdrop-glow-2), transparent 70%),
+    radial-gradient(56rem 40rem at 50% 115%, var(--backdrop-glow-3), transparent 70%);
+  background-attachment: fixed;
+}
+
+/* Theme switch: a circular reveal from the clicked button (theme-switcher.tsx). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+/* Fallback where view transitions are unsupported: a short colour fade. */
+.theme-fade,
+.theme-fade * {
+  transition:
+    background-color 300ms ease,
+    color 300ms ease,
+    border-color 300ms ease !important;
+}
+
+/*
  * Dark theme — same Margix India branding (the logo yellow is unchanged and
  * always carries black text). Instead of per-component dark: classes, the
  * colour tokens the app uses are remapped inside a theme scope: surfaces
@@ -47,6 +103,14 @@
 @layer base {
   [data-theme="dark"] {
     color-scheme: dark;
+    --glass-surface: rgb(28 31 35 / 0.58);
+    --glass-strong: rgb(21 23 26 / 0.8);
+    --glass-border: rgb(255 255 255 / 0.07);
+    --glass-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -16px rgb(0 0 0 / 0.6);
+    --backdrop-base: #0c0d0f;
+    --backdrop-glow-1: rgb(252 188 0 / 0.11);
+    --backdrop-glow-2: rgb(252 188 0 / 0.06);
+    --backdrop-glow-3: rgb(120 130 150 / 0.08);
     --color-white: #15171a;
     --color-slate-50: #0c0d0f;
     --color-slate-100: #1c1f23;
@@ -107,6 +171,14 @@
   @media (prefers-color-scheme: dark) {
     [data-theme="system"] {
       color-scheme: dark;
+      --glass-surface: rgb(28 31 35 / 0.58);
+      --glass-strong: rgb(21 23 26 / 0.8);
+      --glass-border: rgb(255 255 255 / 0.07);
+      --glass-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -16px rgb(0 0 0 / 0.6);
+      --backdrop-base: #0c0d0f;
+      --backdrop-glow-1: rgb(252 188 0 / 0.11);
+      --backdrop-glow-2: rgb(252 188 0 / 0.06);
+      --backdrop-glow-3: rgb(120 130 150 / 0.08);
     --color-white: #15171a;
     --color-slate-50: #0c0d0f;
     --color-slate-100: #1c1f23;
