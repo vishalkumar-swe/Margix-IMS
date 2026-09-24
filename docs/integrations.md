@@ -9,7 +9,7 @@ all on **Administration → Integrations** (`/admin/integrations`).
 - [Adding a new integration](#adding-a-new-integration)
 - [Tally Prime](#tally-prime)
 - [E-mail (SMTP)](#e-mail-smtp)
-- [WhatsApp Cloud API](#whatsapp-cloud-api)
+- [WhatsApp (Meta Cloud API)](#whatsapp-meta-cloud-api)
 - [In-app notifications](#in-app-notifications)
 - [Webhooks](#webhooks)
 - [Troubleshooting](#troubleshooting)
@@ -142,7 +142,7 @@ server works. With Gmail, use an [app password](https://support.google.com/accou
 **Check connection** runs the SMTP handshake and login without sending
 anything. Use **Administration → Notifications → Send test** for a real message.
 
-## WhatsApp Cloud API
+## WhatsApp (Meta Cloud API)
 
 Uses Meta's WhatsApp Cloud API. Business-initiated messages must use
 pre-approved **templates**.
