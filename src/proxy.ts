@@ -15,12 +15,11 @@ export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
 
-  if (PUBLIC_PATHS.has(pathname)) {
-    if (pathname === "/login" && hasSession) {
-      return NextResponse.redirect(new URL("/", request.url));
-    }
-    return NextResponse.next();
-  }
+  // Public pages always pass. In particular /login is never redirected here:
+  // a cookie can be present but expired, and bouncing it to "/" (which sends
+  // invalid sessions back to /login) would loop forever. The login page itself
+  // sends signed-in users on after checking the session in the database.
+  if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
 
   if (hasSession) return NextResponse.next();
 
