@@ -12,6 +12,20 @@ Stock = Opening + Inward + Transfer in + Return in
       − Outward − Transfer out − Return out
       ± Adjustment ± Reversal
 ```
+### 🌐 Application
+
+**[Open Margix IMS →](https://margix.tailc73ec8.ts.net/login)**
+
+### 🔐 Demo Login
+
+| Field | Details |
+|---|---|
+| **Login URL** | https://margix.tailc73ec8.ts.net/login |
+| **Email** | `admin@margix.local` |
+| **Password** | `Mgx-792d9c523f04` |
+| **Role** | `Admin` |
+
+> **Demo account:** These credentials are intended for demonstration and evaluation of Margix IMS.
 
 ## Features (V1)
 
