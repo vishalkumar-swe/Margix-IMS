@@ -141,11 +141,14 @@ services:
     command: ["sh", "-c", "trap 'exit 0' TERM; while true; do node scripts/tally-sync.mjs || true; sleep ${TALLY_SYNC_INTERVAL:-120} & wait $$!; done"]
     depends_on:
       migrate: { condition: service_completed_successfully }
+    # A worker serves no HTTP; the image's web health check does not apply.
+    healthcheck:
+      disable: true
     networks: [margix_net]
 
   # Notification worker: every NOTIFY_INTERVAL seconds runs the daily jobs that
   # are due (slow-moving scan, digests) and delivers queued in-app, e-mail and
-  # WhatsApp messages (exit code 2 = some deliveries failed; they are retried
+  # WhatsApp messages and webhook events (exit code 2 = some deliveries failed; they are retried
   # with backoff, so keep going).
   notify:
     image: localhost/margix-ims-runtime:latest
@@ -160,6 +163,9 @@ services:
     command: ["sh", "-c", "trap 'exit 0' TERM; while true; do node scripts/notify.mjs || true; sleep ${NOTIFY_INTERVAL:-60} & wait $$!; done"]
     depends_on:
       migrate: { condition: service_completed_successfully }
+    # A worker serves no HTTP; the image's web health check does not apply.
+    healthcheck:
+      disable: true
     networks: [margix_net]
 
   # First install only: `run --rm seed` creates roles, units and the admin
