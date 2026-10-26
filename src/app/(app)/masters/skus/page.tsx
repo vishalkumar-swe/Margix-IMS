@@ -57,7 +57,7 @@ export default async function SkusPage({ searchParams }: PageProps<"/masters/sku
           </>
         }
       />
-      <Card>
+      <Card data-tour="sku-table">
         <FilterBar
           search={{ name: "q", placeholder: "Code, name or scan a barcode", value: query.q }}
           selects={[

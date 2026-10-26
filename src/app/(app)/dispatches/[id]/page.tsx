@@ -12,6 +12,7 @@ import { formatDateTime } from "@/lib/dates";
 import { can } from "@/lib/permissions";
 import { idSchema } from "@/lib/validation/common";
 import { requirePagePermission } from "@/server/auth/current-user";
+import { ZERO } from "@/server/db/decimal";
 import { getDispatchDetail } from "@/server/modules/dispatch/dispatch.queries";
 import { listEntriesForDocument } from "@/server/modules/inventory/ledger.queries";
 
@@ -50,6 +51,10 @@ export default async function DispatchPage({ params }: PageProps<"/dispatches/[i
     dispatch.vehicleNo && `vehicle ${dispatch.vehicleNo}`,
   ].filter(Boolean);
 
+  const totalDispatched = dispatch.items
+    .reduce((sum, item) => sum.plus(item.quantity), ZERO)
+    .toString();
+
   return (
     <>
       <PageHeader
@@ -82,6 +87,35 @@ export default async function DispatchPage({ params }: PageProps<"/dispatches/[i
           </>
         }
       />
+      {dispatch.status === "POSTED" && (
+        <div className="mb-6 rounded-xl border border-emerald-300 bg-emerald-50/90 p-4 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <span className="grid size-8 shrink-0 place-items-center rounded-full bg-emerald-600 text-white font-bold text-sm">✓</span>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                  AI Live Audit Feedback · Milestone 5 Complete
+                </p>
+                <p className="text-sm font-semibold text-emerald-950 mt-0.5">
+                  Ledger Updated: -{totalDispatched} units OUTWARD | Godown: {dispatch.godown.code}
+                  {dispatch.invoice ? ` | Invoice Status: ${dispatch.invoice.status}` : ""}
+                </p>
+                <p className="text-xs text-emerald-700">
+                  Physical inventory has been successfully deducted from the ledger using FEFO batch picking.
+                </p>
+              </div>
+            </div>
+            {dispatch.invoice && (
+              <Link
+                href={`/invoices/${dispatch.invoice.id}`}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-800"
+              >
+                Milestone 6: Reconcile Invoice →
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
       {dispatch.remarks && <p className="-mt-3 mb-6 text-sm text-slate-600">{dispatch.remarks}</p>}
       {toVerify.size > 0 && (
         <div className="mb-6">

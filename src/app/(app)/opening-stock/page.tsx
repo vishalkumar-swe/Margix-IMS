@@ -156,6 +156,7 @@ export default async function OpeningStockPage({ searchParams }: PageProps<"/ope
                               title="Remove opening stock line"
                               description={`${line.sku.code} · ${line.batch.batchNumber}: the line is reversed and its quantity leaves stock. It stays visible here as "Removed". Refused if the stock has already been used.`}
                               confirmLabel="Remove line"
+                              successMessage="Opening stock line removed"
                             />
                           </>
                         )}

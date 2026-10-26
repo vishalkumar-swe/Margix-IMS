@@ -63,6 +63,17 @@ const envSchema = z
     /** Webhooks: set to true only to allow endpoints on private/LAN addresses or plain http (e.g. an on-premise service). */
     WEBHOOK_ALLOW_PRIVATE_URLS: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
     WEBHOOK_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+    /**
+     * Copilot LLM. "none" keeps the Copilot fully offline: curated knowledge
+     * retrieval answers every question without an external call. "openai"
+     * uses any OpenAI-compatible /chat/completions endpoint (OpenAI, Groq,
+     * Together, a local vLLM, etc.).
+     */
+    AI_PROVIDER: z.enum(["none", "openai"]).default("none"),
+    AI_BASE_URL: z.url().default("https://api.openai.com/v1"),
+    AI_API_KEY: z.string().trim().min(1).optional(),
+    AI_MODEL: z.string().trim().min(1).default("gpt-4o-mini"),
+    AI_TIMEOUT_MS: z.coerce.number().int().positive().max(120_000).default(30_000),
   })
   .superRefine((env, ctx) => {
     if (env.TALLY_MODE === "xml" && !env.TALLY_COMPANY) {

@@ -31,7 +31,7 @@ export default async function StockPage({ searchParams }: PageProps<"/stock">) {
         title="Stock"
         description="Current stock by SKU, godown and batch. Stock changes only through documents: Adjust and Write off raise an adjustment request that another user approves."
       />
-      <Card>
+      <Card data-tour="stock-table">
         <FilterBar
           search={{ name: "q", placeholder: "SKU, batch or scan a barcode", value: query.q }}
           selects={[

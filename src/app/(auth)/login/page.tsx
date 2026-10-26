@@ -11,11 +11,11 @@ export const metadata: Metadata = { title: "Sign in" };
 
 /** Only same-site relative paths are honoured, never absolute URLs (open-redirect safe). */
 function safeNext(value: string | string[] | undefined): string {
-  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//") ? value : "/";
+  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//") ? value : "/dashboard";
 }
 
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
-  if (await getCurrentUser()) redirect("/");
+  if (await getCurrentUser()) redirect("/dashboard");
   const { next } = await searchParams;
   const theme = parseTheme((await cookies()).get(THEME_COOKIE)?.value);
 

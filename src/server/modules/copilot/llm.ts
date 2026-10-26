@@ -1,0 +1,366 @@
+import { getEnv } from "@/server/config/env";
+
+/** True when the Copilot should stream from a configured OpenAI-compatible endpoint. */
+export function llmConfigured(): boolean {
+  const env = getEnv();
+  return env.AI_PROVIDER === "openai" && Boolean(env.AI_API_KEY);
+}
+
+export interface LlmToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+export interface LlmTool {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+export interface LlmMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  /** Present on an assistant message that requested tools. */
+  tool_calls?: LlmToolCall[];
+  /** Present on a `tool` message, linking it to the call it answers. */
+  tool_call_id?: string;
+}
+
+export type LlmToolExecutor = (name: string, argumentsJson: string) => Promise<string>;
+
+export interface CompletionConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  timeoutMs: number;
+  sessionId?: string;
+}
+
+interface StreamOptions {
+  config: CompletionConfig;
+  messages: LlmMessage[];
+  signal?: AbortSignal;
+  tools?: LlmTool[];
+  executeTool?: LlmToolExecutor;
+}
+
+const MAX_TOOL_ROUNDS = 3;
+const MAX_TOKENS = 600;
+const encoder = new TextEncoder();
+
+function clampHistory(messages: LlmMessage[]): LlmMessage[] {
+  // Keep the system prompt plus the most recent turns; long histories both
+  // cost more and dilute the retrieved excerpts.
+  const system = messages.filter((message) => message.role === "system");
+  const turns = messages.filter((message) => message.role !== "system").slice(-12);
+  // Never start with an orphaned tool result.
+  while (turns[0]?.role === "tool") turns.shift();
+  return [...system, ...turns];
+}
+
+interface OpenAiChunk {
+  choices?: {
+    delta?: {
+      content?: string | null;
+      tool_calls?: {
+        index?: number;
+        id?: string;
+        type?: string;
+        function?: { name?: string; arguments?: string };
+      }[];
+    };
+    finish_reason?: string | null;
+  }[];
+  error?: { message?: string };
+}
+
+class ProviderError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ProviderError";
+  }
+}
+
+interface OpenRound {
+  reader: ReadableStreamDefaultReader<Uint8Array>;
+  decoder: TextDecoder;
+  cleanup: () => void;
+  abort: () => void;
+}
+
+interface RoundResult {
+  toolCalls: LlmToolCall[];
+  content: string;
+}
+
+function requestBody(messages: LlmMessage[], tools: LlmTool[] | undefined, model: string) {
+  return {
+    model,
+    stream: true,
+    temperature: 0.2,
+    max_tokens: MAX_TOKENS,
+    messages,
+    ...(tools && tools.length > 0 ? { tools, tool_choice: "auto" } : {}),
+  };
+}
+
+/** Opens one streaming completion. Network/HTTP failures throw before any bytes are sent. */
+async function openRound(
+  messages: LlmMessage[],
+  tools: LlmTool[] | undefined,
+  config: CompletionConfig,
+  externalSignal: AbortSignal | undefined,
+): Promise<OpenRound> {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  externalSignal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+  const cleanup = () => {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", onAbort);
+  };
+
+  let response: Response;
+  try {
+    response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.apiKey}`,
+        "user-agent": "margix-ims-copilot/1.0",
+        ...(config.sessionId ? { "x-opencode-session": config.sessionId } : {}),
+      },
+      body: JSON.stringify(requestBody(messages, tools, config.model)),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+
+  if (!response.ok || !response.body) {
+    const detail = await response.text().catch(() => "");
+    cleanup();
+    throw new ProviderError(
+      `AI provider returned ${response.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`,
+      response.status,
+    );
+  }
+
+  return {
+    reader: response.body.getReader(),
+    decoder: new TextDecoder(),
+    cleanup,
+    abort: () => controller.abort(),
+  };
+}
+
+interface ParsedLine {
+  done?: boolean;
+  error?: string;
+  content?: string;
+  toolCalls?: NonNullable<NonNullable<OpenAiChunk["choices"]>[number]["delta"]>["tool_calls"];
+}
+
+function parseStreamLine(line: string): ParsedLine | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("data:")) return null;
+  const payload = trimmed.slice(5).trim();
+  if (!payload) return null;
+  if (payload === "[DONE]") return { done: true };
+  try {
+    const chunk = JSON.parse(payload) as OpenAiChunk;
+    if (chunk.error?.message) return { error: chunk.error.message };
+    const delta = chunk.choices?.[0]?.delta;
+    const content = typeof delta?.content === "string" ? delta.content : undefined;
+    return { content, toolCalls: delta?.tool_calls };
+  } catch {
+    // A malformed provider chunk should not kill an otherwise good answer.
+    return null;
+  }
+}
+
+function accumulateToolCalls(calls: Map<number, LlmToolCall>, deltas: ParsedLine["toolCalls"]): void {
+  for (const delta of deltas ?? []) {
+    const index = delta.index ?? 0;
+    const existing = calls.get(index) ?? {
+      id: "",
+      type: "function" as const,
+      function: { name: "", arguments: "" },
+    };
+    if (delta.id) existing.id = delta.id;
+    if (delta.function?.name) existing.function.name = delta.function.name;
+    if (delta.function?.arguments) existing.function.arguments += delta.function.arguments;
+    calls.set(index, existing);
+  }
+}
+
+/** Consumes one provider stream, forwarding text deltas and collecting tool calls. */
+async function consumeRound(round: OpenRound, onDelta: (delta: string) => void): Promise<RoundResult> {
+  const calls = new Map<number, LlmToolCall>();
+  let content = "";
+  let buffer = "";
+  let finished = false;
+
+  const handleLine = (line: string) => {
+    const parsed = parseStreamLine(line);
+    if (!parsed) return;
+    if (parsed.error) throw new Error(parsed.error);
+    if (parsed.done) {
+      finished = true;
+      return;
+    }
+    if (parsed.content) {
+      content += parsed.content;
+      onDelta(parsed.content);
+    }
+    accumulateToolCalls(calls, parsed.toolCalls);
+  };
+
+  try {
+    while (!finished) {
+      const { done, value } = await round.reader.read();
+      if (done) break;
+      buffer += round.decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) handleLine(line);
+    }
+    if (!finished && buffer.trim()) handleLine(buffer);
+  } finally {
+    round.cleanup();
+  }
+
+  const toolCalls = [...calls.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([index, call]) => (call.id ? call : { ...call, id: `call_${index}` }))
+    .filter((call) => call.function.name.length > 0);
+
+  return { toolCalls, content };
+}
+
+function isToolsUnsupported(error: unknown): boolean {
+  return error instanceof ProviderError && (error.status === 400 || error.status === 422);
+}
+
+/**
+ * Streams a full Copilot answer with optional server-side tool use. The model
+ * may request read-only tools for up to three rounds; their output is appended
+ * as `tool` messages and the model then answers. Text is emitted as
+ * `data: {"delta":"..."}` events. Network/HTTP failures before the first byte
+ * are thrown so the route can fall back to the curated answer.
+ */
+export async function streamCompletion(options: StreamOptions): Promise<ReadableStream<Uint8Array>> {
+  const initialMessages = clampHistory(options.messages);
+  let tools = options.tools && options.tools.length > 0 ? options.tools : undefined;
+
+  const open = async (messages: LlmMessage[], currentTools: LlmTool[] | undefined) => {
+    try {
+      return await openRound(messages, currentTools, options.config, options.signal);
+    } catch (error) {
+      // Some OpenAI-compatible models reject the `tools` field. Retry the same
+      // turn without tools rather than losing the answer entirely.
+      if (currentTools && isToolsUnsupported(error)) {
+        tools = undefined;
+        return openRound(messages, undefined, options.config, options.signal);
+      }
+      throw error;
+    }
+  };
+
+  let activeRound = await open(initialMessages, tools);
+
+  return new ReadableStream<Uint8Array>({
+    async start(streamController) {
+      const send = (payload: unknown) => {
+        try {
+          streamController.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+        } catch {
+          // The reader went away; stop writing.
+        }
+      };
+
+      try {
+        let messages = initialMessages;
+        let currentTools = tools;
+        let round = activeRound;
+        let toolRounds = 0;
+
+        while (true) {
+          const result = await consumeRound(round, (delta) => send({ delta }));
+
+          if (result.toolCalls.length === 0 || !currentTools || !options.executeTool) break;
+
+          const toolMessages: LlmMessage[] = [];
+          for (const call of result.toolCalls) {
+            const output = await options.executeTool(call.function.name, call.function.arguments);
+            toolMessages.push({ role: "tool", tool_call_id: call.id, content: output });
+          }
+
+          messages = [
+            ...messages,
+            { role: "assistant", content: result.content || null, tool_calls: result.toolCalls },
+            ...toolMessages,
+          ];
+          toolRounds += 1;
+          currentTools = toolRounds < MAX_TOOL_ROUNDS ? tools : undefined;
+          round = await open(messages, currentTools);
+          activeRound = round;
+        }
+
+        streamController.close();
+      } catch (error) {
+        if (!options.signal?.aborted) {
+          send({ error: error instanceof Error ? error.message : "The AI provider failed." });
+        }
+        streamController.close();
+      }
+    },
+    cancel() {
+      activeRound.cleanup();
+      activeRound.abort();
+    },
+  });
+}
+
+/** Streams from the environment-configured provider. */
+export async function streamChatCompletion(options: {
+  messages: LlmMessage[];
+  signal?: AbortSignal;
+  tools?: LlmTool[];
+  executeTool?: LlmToolExecutor;
+  sessionId?: string;
+}): Promise<ReadableStream<Uint8Array>> {
+  const env = getEnv();
+  const { sessionId, ...rest } = options;
+  return streamCompletion({
+    config: {
+      baseUrl: env.AI_BASE_URL,
+      apiKey: env.AI_API_KEY ?? "",
+      model: env.AI_MODEL,
+      timeoutMs: env.AI_TIMEOUT_MS,
+      sessionId,
+    },
+    ...rest,
+  });
+}
+
+/** Parses `data:` events from our own SSE response. */
+export function parseSseLine(line: string): { delta?: string; error?: string; done?: boolean } | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("data:")) return null;
+  const payload = trimmed.slice(5).trim();
+  if (payload === "[DONE]") return { done: true };
+  try {
+    return JSON.parse(payload) as { delta?: string; error?: string; done?: boolean };
+  } catch {
+    return null;
+  }
+}

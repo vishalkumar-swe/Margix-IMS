@@ -11,7 +11,7 @@ export default function NotFound() {
         title="Not found"
         description="The record you are looking for does not exist or was removed."
         action={
-          <Link href="/" className={buttonVariants({ variant: "secondary" })}>
+          <Link href="/dashboard" className={buttonVariants({ variant: "secondary" })}>
             Back to dashboard
           </Link>
         }

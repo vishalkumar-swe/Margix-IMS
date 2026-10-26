@@ -78,10 +78,11 @@ export function InvoiceForm({
       <Card>
         <CardHeader title="Invoice details" />
         <CardBody className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Field label="Customer" htmlFor="customerId" error={errors.customerId} required>
+          <Field label="Customer" htmlFor="customer-select-field" error={errors.customerId} required>
             <Select
-              id="customerId"
+              id="customer-select-field"
               value={header.customerId}
+              data-tour="invoice-customer"
               onChange={(e) => setHeader({ ...header, customerId: e.target.value })}
               aria-invalid={Boolean(errors.customerId)}
             >
@@ -121,13 +122,15 @@ export function InvoiceForm({
         taxNote={customer && !statesKnown ? UNKNOWN_STATE_NOTE : undefined}
         otherCharges={otherCharges}
         onOtherChargesChange={setOtherCharges}
+        tourAnchor="invoice-lines"
+        taxAnchor="invoice-tax"
       />
 
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={() => router.back()}>
           Cancel
         </Button>
-        <Button type="submit" loading={save.pending}>
+        <Button id="invoice-submit-btn" type="submit" loading={save.pending} data-tour="invoice-submit">
           Create invoice
         </Button>
       </div>

@@ -6,7 +6,6 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Quantity } from "@/components/shared/quantity";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { TaxBreakdown } from "@/components/shared/tax-breakdown";
-import { Alert } from "@/components/ui/alert";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
@@ -71,9 +70,49 @@ export default async function PurchaseOrderPage({ params, searchParams }: PagePr
       />
 
       {postedGrn && (
-        <Alert tone="success" className="mb-6">
-          {postedGrn} posted. Stock has been updated.
-        </Alert>
+        <div className="mb-6 rounded-xl border border-emerald-300 bg-emerald-50/90 p-4 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <span className="grid size-8 shrink-0 place-items-center rounded-full bg-emerald-600 text-white font-bold text-sm">✓</span>
+              <div>
+                <p className="text-sm font-semibold text-emerald-950">
+                  Stock Inward Successful: {postedGrn} posted to Ledger
+                </p>
+                <p className="text-xs text-emerald-800">
+                  Physical stock has been credited to your godown with batch and expiry tracking.
+                </p>
+              </div>
+            </div>
+            <Link
+              href="/stock"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-800"
+            >
+              Next: Verify Stock & Reorder Levels →
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {receivable && pendingLines.length > 0 && can(user.role, "grn.create") && !postedGrn && (
+        <div className="mb-6 rounded-xl border border-brand-300 bg-brand-50/90 p-4 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-brand-800">AI Guided Action · Milestone 2</p>
+              <p className="text-sm font-semibold text-slate-900 mt-0.5">
+                PO #{po.poNumber} is OPEN. Let&apos;s receive the goods at your warehouse!
+              </p>
+              <p className="text-xs text-slate-600">
+                Inspect accepted versus damaged quantities and record batch numbers and expiration dates.
+              </p>
+            </div>
+            <Link
+              href={`/grns/new?poId=${po.id}`}
+              className="inline-flex shrink-0 items-center justify-center rounded-lg bg-brand-500 px-4 py-2 text-xs font-bold text-black shadow-sm hover:bg-brand-400"
+            >
+              Receive Goods via GRN →
+            </Link>
+          </div>
+        </div>
       )}
       {po.status === "CANCELLED" && (
         <Card className="mb-6 border-slate-300 bg-slate-50">

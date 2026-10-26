@@ -32,7 +32,7 @@ export default async function MovementReportPage({ searchParams }: PageProps<"/r
         description={`${formatDate(range.from)} – ${formatDate(range.to)} · ${entries.length} entries`}
         actions={<CsvDownloadLink href={csvHref} />}
       />
-      <Card>
+      <Card data-tour="movement-report">
         <FilterBar
           dates={[
             { name: "from", label: "From", value: range.from },

@@ -18,6 +18,7 @@ export function AdjustmentReview({ adjustmentId }: { adjustmentId: string }) {
 
   const review = useApiMutation((action: "approve" | "reject") =>
     apiRequest(`/adjustments/${adjustmentId}/${action}`, { body: { note: note || undefined } }),
+    { successMessage: "Adjustment reviewed" },
   );
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {

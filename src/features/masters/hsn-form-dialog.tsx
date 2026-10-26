@@ -30,6 +30,7 @@ export function HsnFormDialog({ initial, editing = false }: { initial: HsnFormVa
     editing
       ? apiRequest(`/hsn/${code}`, { method: "PATCH", body: { ...rest, isActive } })
       : apiRequest("/hsn", { body: { code, ...rest } }),
+    { successMessage: editing ? "HSN code updated" : "HSN code created" },
   );
   const errors = save.fieldErrors;
   const set = <K extends keyof HsnFormValues>(key: K, value: HsnFormValues[K]) => setForm({ ...form, [key]: value });

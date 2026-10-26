@@ -34,7 +34,7 @@ export function ChecklistTaskDialog({ taskId, initial }: { taskId?: string; init
     return taskId
       ? apiRequest(`/checklist-settings/tasks/${taskId}`, { method: "PATCH", body: payload })
       : apiRequest("/checklist-settings/tasks", { body: payload });
-  });
+  }, { successMessage: taskId ? "Task updated" : "Task added" });
   const errors = save.fieldErrors;
   const id = (field: string) => `${taskId ?? "new"}-task-${field}`;
 

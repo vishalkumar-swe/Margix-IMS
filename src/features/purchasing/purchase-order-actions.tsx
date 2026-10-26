@@ -45,6 +45,7 @@ export function PurchaseOrderActions({
             label="Cancel order"
             title={`Cancel ${poNumber}`}
             confirmLabel="Cancel order"
+            successMessage="Order cancelled"
           />
         )}
         {canShortClose && (
@@ -54,6 +55,7 @@ export function PurchaseOrderActions({
             title={`Short-close ${poNumber}`}
             description="The pending quantity will not be delivered. No further goods can be received against this order."
             confirmLabel="Short-close order"
+            successMessage="Order short-closed"
           />
         )}
         {canSubmit && (

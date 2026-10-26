@@ -48,7 +48,9 @@ export function RunTallySyncButton() {
 /** Re-queues a failed job immediately. */
 export function RetryTallyJobButton({ jobId }: { jobId: string }) {
   const router = useRouter();
-  const retry = useApiMutation(() => apiRequest(`/tally/jobs/${jobId}/retry`, { method: "POST" }));
+  const retry = useApiMutation(() => apiRequest(`/tally/jobs/${jobId}/retry`, { method: "POST" }), {
+    successMessage: "Tally job requeued",
+  });
 
   return (
     <Button

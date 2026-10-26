@@ -62,7 +62,7 @@ export function PartyFormDialog({
     return editing
       ? apiRequest(`${endpoint}/${partyId}`, { method: "PATCH", body: { ...body, isActive } })
       : apiRequest(endpoint, { body: { ...body, code } });
-  });
+  }, { successMessage: `${noun === "supplier" ? "Supplier" : "Customer"} ${editing ? "updated" : "created"}` });
   const errors = save.fieldErrors;
   const set = <K extends keyof PartyFormValues>(key: K, value: PartyFormValues[K]) => setForm({ ...form, [key]: value });
   const id = (field: string) => `${partyId ?? "new"}-${kind}-${field}`;

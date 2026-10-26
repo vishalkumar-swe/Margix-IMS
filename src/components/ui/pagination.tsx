@@ -1,7 +1,26 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { buttonVariants } from "./button";
+
+const linkClass = buttonVariants({ variant: "secondary", size: "sm" });
+
+/** A disabled step renders as a plain span so it cannot be tabbed to or activated. */
+function PageStep({ disabled, href, children }: { disabled: boolean; href: string; children: ReactNode }) {
+  if (disabled) {
+    return (
+      <span aria-disabled="true" className={cn(linkClass, "pointer-events-none opacity-50")}>
+        {children}
+      </span>
+    );
+  }
+  return (
+    <Link href={href} className={linkClass}>
+      {children}
+    </Link>
+  );
+}
 
 /**
  * Page navigation that preserves the current filters. `searchParams` is the
@@ -36,28 +55,20 @@ export function Pagination({
   const last = Math.min(page * pageSize, total);
 
   return (
-    <nav className="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-sm" aria-label="Pagination">
+    <nav className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-4 py-3 text-sm" aria-label="Pagination">
       <p className="text-slate-500">
         {first}–{last} of {total}
+        <span className="ml-2 hidden text-slate-400 sm:inline">
+          Page {page} of {pages}
+        </span>
       </p>
       <div className="flex gap-2">
-        <Link
-          href={hrefFor(page - 1)}
-          aria-disabled={page <= 1}
-          className={cn(buttonVariants({ variant: "secondary", size: "sm" }), page <= 1 && "pointer-events-none opacity-50")}
-        >
+        <PageStep disabled={page <= 1} href={hrefFor(page - 1)}>
           <ChevronLeft aria-hidden /> Previous
-        </Link>
-        <Link
-          href={hrefFor(page + 1)}
-          aria-disabled={page >= pages}
-          className={cn(
-            buttonVariants({ variant: "secondary", size: "sm" }),
-            page >= pages && "pointer-events-none opacity-50",
-          )}
-        >
+        </PageStep>
+        <PageStep disabled={page >= pages} href={hrefFor(page + 1)}>
           Next <ChevronRight aria-hidden />
-        </Link>
+        </PageStep>
       </div>
     </nav>
   );

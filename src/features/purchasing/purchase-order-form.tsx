@@ -101,10 +101,11 @@ export function PurchaseOrderForm({
       <Card>
         <CardHeader title="Order details" />
         <CardBody className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <Field label="Supplier" htmlFor="supplierId" error={errors.supplierId} required>
+          <Field label="Supplier" htmlFor="po-supplier" error={errors.supplierId} required>
             <Select
-              id="supplierId"
+              id="po-supplier"
               value={header.supplierId}
+              data-tour="po-supplier"
               onChange={(e) => setHeader({ ...header, supplierId: e.target.value })}
               aria-invalid={Boolean(errors.supplierId)}
             >
@@ -153,6 +154,8 @@ export function PurchaseOrderForm({
         taxNote={supplier && !statesKnown ? UNKNOWN_STATE_NOTE : undefined}
         otherCharges={otherCharges}
         onOtherChargesChange={setOtherCharges}
+        tourAnchor="po-lines"
+        taxAnchor="po-tax"
       />
 
       <div className="flex justify-end gap-2">
@@ -169,7 +172,7 @@ export function PurchaseOrderForm({
           {purchaseOrderId ? "Save draft" : "Save as draft"}
         </Button>
         {!purchaseOrderId && (
-          <Button type="submit" value="open" loading={save.pending && intent === "open"} disabled={save.pending}>
+          <Button id="po-submit" type="submit" value="open" loading={save.pending && intent === "open"} disabled={save.pending} data-tour="po-submit">
             Create & open
           </Button>
         )}

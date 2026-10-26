@@ -30,7 +30,7 @@ export default async function DispatchesPage({ searchParams }: PageProps<"/dispa
     query.skuId ? getSku(query.skuId) : null,
   ]);
   const newButton = can(user.role, "dispatch.create") && (
-    <Link href="/dispatches/new" className={buttonVariants()}>
+    <Link href="/dispatches/new" className={buttonVariants()} data-tour="new-dispatch">
       <Plus aria-hidden /> New dispatch
     </Link>
   );
@@ -38,7 +38,7 @@ export default async function DispatchesPage({ searchParams }: PageProps<"/dispa
   return (
     <>
       <PageHeader title="Dispatches" description="Outward movements of stock, batch by batch." actions={newButton} />
-      <Card>
+      <Card data-tour="dispatch-table">
         <ProductFilterNotice sku={sku} clearHref="/dispatches" />
         <FilterBar
           hidden={{ skuId: query.skuId }}

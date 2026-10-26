@@ -33,6 +33,7 @@ export function WebhookEndpointDialog({ initial }: { initial?: WebhookEndpointVa
     editing
       ? apiRequest(`/integrations/webhooks/${initial!.id}`, { method: "PATCH", body })
       : apiRequest<{ secret: string }>("/integrations/webhooks", { body }),
+    { successMessage: editing ? "Webhook updated" : "Webhook created" },
   );
   const allEvents = values.events.includes(ALL_WEBHOOK_EVENTS);
 

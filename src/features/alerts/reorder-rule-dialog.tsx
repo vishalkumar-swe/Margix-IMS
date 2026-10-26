@@ -39,7 +39,9 @@ export function ReorderRuleDialog({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(initial);
-  const save = useApiMutation((body: ReorderRuleValues) => apiRequest("/reorder-rules", { body }));
+  const save = useApiMutation((body: ReorderRuleValues) => apiRequest("/reorder-rules", { body }), {
+    successMessage: editing ? "Reorder rule updated" : "Reorder rule added",
+  });
   const errors = save.fieldErrors;
   const unit = existing?.unit ?? skus.find((s) => s.id === form.skuId)?.unit;
   const id = (field: string) => `${editing ? `${initial.skuId}-${initial.godownId}` : "new"}-rule-${field}`;

@@ -27,7 +27,7 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/invoice
   const query = parseSearchParams(invoiceListQuerySchema, raw);
   const [{ items, total }, sku] = await Promise.all([listInvoices(query), query.skuId ? getSku(query.skuId) : null]);
   const newButton = can(user.role, "invoice.manage") && (
-    <Link href="/invoices/new" className={buttonVariants()}>
+    <Link href="/invoices/new" className={buttonVariants()} data-tour="new-invoice">
       <Plus aria-hidden /> New invoice
     </Link>
   );
@@ -39,7 +39,7 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/invoice
         description="What was sold to customers, and how much of it has been dispatched."
         actions={newButton}
       />
-      <Card>
+      <Card data-tour="invoice-table">
         <ProductFilterNotice sku={sku} clearHref="/invoices" />
         <FilterBar
           hidden={{ skuId: query.skuId }}

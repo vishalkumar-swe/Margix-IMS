@@ -13,7 +13,9 @@ import { apiRequest } from "@/lib/api-client";
 export function DeleteTaskButton({ taskId, title }: { taskId: string; title: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const remove = useApiMutation(() => apiRequest(`/checklist-settings/tasks/${taskId}`, { method: "DELETE" }));
+  const remove = useApiMutation(() => apiRequest(`/checklist-settings/tasks/${taskId}`, { method: "DELETE" }), {
+    successMessage: "Task deleted",
+  });
 
   return (
     <>

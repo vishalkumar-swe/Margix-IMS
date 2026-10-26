@@ -11,7 +11,9 @@ import { apiRequest } from "@/lib/api-client";
 export function UomForm() {
   const router = useRouter();
   const [form, setForm] = useState({ code: "", name: "", decimalPlaces: 0 });
-  const create = useApiMutation((body: typeof form) => apiRequest("/uoms", { body }));
+  const create = useApiMutation((body: typeof form) => apiRequest("/uoms", { body }), {
+    successMessage: "Unit added",
+  });
   const errors = create.fieldErrors;
 
   async function onSubmit(event: FormEvent) {

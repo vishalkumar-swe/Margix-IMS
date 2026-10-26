@@ -10,6 +10,7 @@ import { Field } from "@/components/ui/field";
 import { Input, Select, Textarea } from "@/components/ui/form-controls";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
+import { emitCopilotEvent } from "@/lib/copilot/runtime";
 import { humanize } from "@/lib/format";
 import { SKU_STATUSES } from "@/lib/enums";
 import { HsnPicker } from "./hsn-picker";
@@ -79,7 +80,7 @@ export function SkuFormDialog({
             barcode: common.barcode || undefined,
           },
         });
-  });
+  }, { successMessage: editing ? "Product updated" : "Product created" });
   const errors = save.fieldErrors;
   const generate = useApiMutation(() =>
     apiRequest<{ barcode: string }>(`/skus/${skuId}/barcode`, { body: { replace: true } }),
@@ -98,6 +99,7 @@ export function SkuFormDialog({
     if (await save.mutate(form)) {
       setOpen(false);
       router.refresh();
+      if (!editing) emitCopilotEvent("sku.created");
     }
   }
 
@@ -111,7 +113,7 @@ export function SkuFormDialog({
           <Pencil aria-hidden /> Edit
         </Button>
       ) : (
-        <Button onClick={openDialog}>
+        <Button onClick={openDialog} data-tour="new-sku">
           <Plus aria-hidden /> New SKU
         </Button>
       )}
@@ -126,15 +128,21 @@ export function SkuFormDialog({
               hint={editing ? undefined : nextCode ? `Leave blank to use ${nextCode}.` : "Leave blank for the next code."}
             >
               <Input
-                id={id("code")}
+                id={editing ? id("code") : "sku-code-input"}
                 value={form.code}
                 disabled={editing}
+                data-tour={editing ? undefined : "sku-code"}
                 placeholder={editing ? undefined : nextCode}
                 onChange={(e) => set("code", e.target.value)}
               />
             </Field>
             <Field label="Name" htmlFor={id("name")} error={errors.name} required>
-              <Input id={id("name")} value={form.name} onChange={(e) => set("name", e.target.value)} />
+              <Input
+                id={editing ? id("name") : "sku-name-input"}
+                data-tour={editing ? undefined : "sku-name"}
+                value={form.name}
+                onChange={(e) => set("name", e.target.value)}
+              />
             </Field>
             <Field label="Category" htmlFor={id("category")} error={errors.categoryId}>
               <Select id={id("category")} value={form.categoryId} onChange={(e) => set("categoryId", e.target.value)}>
@@ -147,7 +155,12 @@ export function SkuFormDialog({
               </Select>
             </Field>
             <Field label="Unit" htmlFor={id("uom")} error={errors.baseUomId} required hint="Cannot change once stock has moved.">
-              <Select id={id("uom")} value={form.baseUomId} onChange={(e) => set("baseUomId", e.target.value)}>
+              <Select
+                id={editing ? id("uom") : "base-unit-select"}
+                value={form.baseUomId}
+                data-tour={editing ? undefined : "sku-unit"}
+                onChange={(e) => set("baseUomId", e.target.value)}
+              >
                 <option value="">Select unit</option>
                 {uoms.map((u) => (
                   <option key={u.id} value={u.id}>
@@ -158,7 +171,8 @@ export function SkuFormDialog({
             </Field>
             <Field label="HSN code" htmlFor={id("hsn")} error={errors.hsnCode} hint="Suggested from the name, description and category.">
               <HsnPicker
-                id={id("hsn")}
+                id={editing ? id("hsn") : "hsn-input"}
+                dataTour={editing ? undefined : "sku-hsn"}
                 value={form.hsnCode}
                 invalid={Boolean(errors.hsnCode)}
                 product={{ name: form.name, description: form.description, categoryId: form.categoryId }}
@@ -186,7 +200,12 @@ export function SkuFormDialog({
                     : `Overrides the HSN rate of ${hsnRate}%.`
               }
             >
-              <Input id={id("gst")} inputMode="decimal" value={form.gstRate} onChange={(e) => set("gstRate", e.target.value)} />
+              <Input
+                id={editing ? id("gst") : "gst-rate-select"}
+                inputMode="decimal"
+                value={form.gstRate}
+                onChange={(e) => set("gstRate", e.target.value)}
+              />
             </Field>
             <Field
               label="Barcode"
@@ -257,7 +276,12 @@ export function SkuFormDialog({
             <Button variant="secondary" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" loading={save.pending}>
+            <Button
+              id={editing ? undefined : "create-sku-submit-btn"}
+              type="submit"
+              loading={save.pending}
+              data-tour={editing ? undefined : "create-sku"}
+            >
               {editing ? "Save changes" : "Create SKU"}
             </Button>
           </div>

@@ -49,7 +49,7 @@ export default async function TallyPage({ searchParams }: PageProps<"/tally">) {
         <StatCard label="Synced" value={counts.SYNCED} icon={CircleCheck} href="/tally?status=SYNCED" />
       </div>
 
-      <Card>
+      <Card data-tour="tally-queue">
         <FilterBar
           search={{ name: "q", placeholder: "Document number", value: query.q }}
           selects={[

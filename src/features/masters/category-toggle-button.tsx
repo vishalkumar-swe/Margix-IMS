@@ -9,6 +9,7 @@ export function CategoryToggleButton({ categoryId, isActive }: { categoryId: str
   const router = useRouter();
   const toggle = useApiMutation(() =>
     apiRequest(`/categories/${categoryId}`, { method: "PATCH", body: { isActive: !isActive } }),
+    { successMessage: isActive ? "Category deactivated" : "Category activated" },
   );
 
   return (

@@ -28,6 +28,7 @@ export function ReverseEntryButton({
   const [reason, setReason] = useState("");
   const reverse = useApiMutation((input: { reason: string }) =>
     apiRequest(`/ledger/${entryId}/reverse`, { body: input }),
+    { successMessage: "Ledger entry reversed" },
   );
 
   async function onSubmit(event: FormEvent) {

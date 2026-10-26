@@ -24,6 +24,6 @@ export async function requireUser(): Promise<SessionUser> {
 /** For pages: redirects to the dashboard when the user lacks the permission. */
 export async function requirePagePermission(permission: Permission): Promise<SessionUser> {
   const user = await requireUser();
-  if (!can(user.role, permission)) redirect("/?denied=1");
+  if (!can(user.role, permission)) redirect("/dashboard?denied=1");
   return user;
 }

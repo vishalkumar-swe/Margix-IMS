@@ -23,6 +23,7 @@ export function ReasonActionButton({
   variant = "secondary",
   confirmVariant = "danger",
   icon,
+  successMessage = "Done",
 }: {
   endpoint: string;
   label: string;
@@ -32,11 +33,13 @@ export function ReasonActionButton({
   variant?: ButtonProps["variant"];
   confirmVariant?: ButtonProps["variant"];
   icon?: ReactNode;
+  /** Toast shown once the action succeeds — otherwise the dialog just closes. */
+  successMessage?: string;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
-  const action = useApiMutation((body: { reason: string }) => apiRequest(endpoint, { body }));
+  const action = useApiMutation((body: { reason: string }) => apiRequest(endpoint, { body }), { successMessage });
   const fieldId = `reason-${endpoint.replace(/\W/g, "-")}`;
 
   async function onSubmit(event: FormEvent) {

@@ -106,8 +106,8 @@ export function DispatchForm({
       <Card>
         <CardHeader title="Dispatch details" />
         <CardBody className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Field label="From godown" htmlFor="godownId" error={errors.godownId} required>
-            <Select id="godownId" value={header.godownId} onChange={(e) => changeGodown(e.target.value)}>
+          <Field label="From godown" htmlFor="godown-source-select" error={errors.godownId} required>
+            <Select id="godown-source-select" value={header.godownId} data-tour="dispatch-godown" onChange={(e) => changeGodown(e.target.value)}>
               {godowns.map((g) => (
                 <option key={g.id} value={g.id}>
                   {g.name} ({g.code})
@@ -164,6 +164,7 @@ export function DispatchForm({
         skus={selectableSkus}
         godownId={header.godownId}
         errors={errors}
+        tourAnchor="dispatch-lines"
         lineHint={(line) =>
           invoice && line.skuId && invoice.remainingBySku[line.skuId] ? (
             <p className="mt-1 text-xs text-slate-500">
@@ -177,7 +178,7 @@ export function DispatchForm({
         <Button variant="secondary" onClick={() => router.back()}>
           Cancel
         </Button>
-        <Button type="submit" loading={post.pending}>
+        <Button id="post-dispatch-submit-btn" type="submit" loading={post.pending} data-tour="dispatch-submit">
           Post dispatch
         </Button>
       </div>

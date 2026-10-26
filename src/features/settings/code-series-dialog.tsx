@@ -30,6 +30,7 @@ export function CodeSeriesDialog({
   const [form, setForm] = useState({ prefix: initial.prefix, pattern: initial.pattern, padding: String(initial.padding) });
   const save = useApiMutation((body: typeof form) =>
     apiRequest(`/numbering/${seriesKey}`, { method: "PATCH", body: { ...body, padding: Number(body.padding) } }),
+    { successMessage: "Numbering updated" },
   );
 
   const settings: CodeSeriesSettings = {

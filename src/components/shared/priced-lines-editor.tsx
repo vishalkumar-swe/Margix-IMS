@@ -67,6 +67,8 @@ export function PricedLinesEditor({
   taxNote,
   otherCharges,
   onOtherChargesChange,
+  tourAnchor,
+  taxAnchor,
 }: {
   lines: PricedLine[];
   /** Accepts a value or an updater (pass the state setter). */
@@ -79,6 +81,9 @@ export function PricedLinesEditor({
   taxNote?: string;
   otherCharges: OtherCharges;
   onOtherChargesChange: (value: OtherCharges) => void;
+  /** Optional `data-tour` anchors for the guided walkthrough. */
+  tourAnchor?: string;
+  taxAnchor?: string;
 }) {
   const skuById = new Map(skus.map((s) => [s.id, s]));
   const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null);
@@ -127,7 +132,7 @@ export function PricedLinesEditor({
   }
 
   return (
-    <Card>
+    <Card data-tour={tourAnchor} id={tourAnchor === "invoice-lines" ? "invoice-line-items" : tourAnchor === "po-lines" ? "po-lines" : undefined}>
       <CardHeader
         title="Items"
         description="One line per SKU. Scan a product barcode to add it."
@@ -302,7 +307,7 @@ export function PricedLinesEditor({
             />
           </Field>
         </div>
-        <div>
+        <div data-tour={taxAnchor} id={taxAnchor === "invoice-tax" ? "invoice-tax-summary" : undefined}>
           <TaxTotals summary={totals} otherChargesLabel={otherCharges.label.trim() || null} />
           <p className="mt-2 text-xs text-slate-500">
             {taxType === "INTRA" ? "Intra-state supply: CGST + SGST." : "Inter-state supply: IGST."}

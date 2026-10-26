@@ -11,7 +11,9 @@ import { apiRequest } from "@/lib/api-client";
 export function CategoryForm() {
   const router = useRouter();
   const [name, setName] = useState("");
-  const create = useApiMutation((body: { name: string }) => apiRequest("/categories", { body }));
+  const create = useApiMutation((body: { name: string }) => apiRequest("/categories", { body }), {
+    successMessage: "Category added",
+  });
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();

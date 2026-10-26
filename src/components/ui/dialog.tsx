@@ -25,6 +25,7 @@ export function Dialog({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  const descriptionId = useId();
   const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -48,6 +49,7 @@ export function Dialog({
       ref={ref}
       onClose={onClose}
       aria-labelledby={titleId}
+      aria-describedby={description ? descriptionId : undefined}
       className={cn(
         "surface-solid m-auto hidden max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-lg flex-col rounded-xl open:flex border p-0 text-slate-900 shadow-2xl",
         className,
@@ -60,7 +62,7 @@ export function Dialog({
               <h2 id={titleId} className="text-base font-semibold">
                 {title}
               </h2>
-              {description && <p className="mt-1 text-sm text-slate-500">{description}</p>}
+              {description && <p id={descriptionId} className="mt-1 text-sm text-slate-500">{description}</p>}
             </div>
             <button
               type="button"

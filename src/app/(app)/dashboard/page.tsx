@@ -21,6 +21,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { StatCard } from "@/components/ui/stat-card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { OpenChecklistButton } from "@/features/checklist/open-checklist-button";
+import { WalkthroughCard } from "@/features/copilot/walkthrough-card";
 import { LedgerTable } from "@/features/ledger/ledger-table";
 import { formatDate } from "@/lib/dates";
 import { can } from "@/lib/permissions";
@@ -29,7 +30,7 @@ import { getDashboardSummary } from "@/server/modules/dashboard/dashboard.querie
 
 export const metadata: Metadata = { title: "Dashboard" };
 
-export default async function DashboardPage({ searchParams }: PageProps<"/">) {
+export default async function DashboardPage({ searchParams }: PageProps<"/dashboard">) {
   const user = await requirePagePermission("dashboard.view");
   const [summary, { denied }] = await Promise.all([getDashboardSummary(), searchParams]);
 
@@ -87,6 +88,10 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
           icon={RefreshCw}
           href="/tally?status=PENDING"
         />
+      </div>
+
+      <div className="mt-6">
+        <WalkthroughCard />
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3">

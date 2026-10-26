@@ -9,15 +9,23 @@ import { NextResponse, type NextRequest } from "next/server";
  * runs separately from the app and must not import server modules.
  */
 const SESSION_COOKIE_NAME = "margix_session";
-const PUBLIC_PATHS = new Set(["/login", "/api/v1/auth/login", "/api/v1/auth/logout", "/api/health", "/api/ready"]);
+/** "/" is the public marketing landing page; the app itself lives under /dashboard. */
+const PUBLIC_PATHS = new Set([
+  "/",
+  "/login",
+  "/api/v1/auth/login",
+  "/api/v1/auth/logout",
+  "/api/health",
+  "/api/ready",
+]);
 
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
 
   // Public pages always pass. In particular /login is never redirected here:
-  // a cookie can be present but expired, and bouncing it to "/" (which sends
-  // invalid sessions back to /login) would loop forever. The login page itself
+  // a cookie can be present but expired, and bouncing it to a page that sends
+  // invalid sessions back to /login would loop forever. The login page itself
   // sends signed-in users on after checking the session in the database.
   if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
 

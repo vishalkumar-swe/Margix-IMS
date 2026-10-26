@@ -1,11 +1,14 @@
-import type { Prisma } from "@prisma/client";
+import type { PostedDocStatus, Prisma } from "@prisma/client";
 import type { PageQuery } from "@/lib/validation/common";
 import { prisma } from "@/server/db/client";
 import { userRefSelect } from "@/server/modules/users/users.queries";
 
-export async function listDispatches(query: PageQuery & { godownId?: string; skuId?: string }) {
+export async function listDispatches(
+  query: PageQuery & { godownId?: string; skuId?: string; status?: PostedDocStatus },
+) {
   const where: Prisma.OutwardWhereInput = {
     godownId: query.godownId,
+    status: query.status,
     items: query.skuId ? { some: { skuId: query.skuId } } : undefined,
     OR: query.q
       ? [
@@ -45,7 +48,7 @@ export function getDispatchDetail(id: string) {
     include: {
       godown: { select: { id: true, code: true, name: true } },
       customer: { select: { id: true, code: true, name: true, gstin: true, stateCode: true, address: true } },
-      invoice: { select: { id: true, invoiceNumber: true, invoiceDate: true, taxType: true, placeOfSupply: true } },
+      invoice: { select: { id: true, invoiceNumber: true, status: true, invoiceDate: true, taxType: true, placeOfSupply: true } },
       createdBy: { select: userRefSelect },
       items: {
         orderBy: { id: "asc" },

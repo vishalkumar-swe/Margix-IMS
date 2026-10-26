@@ -48,6 +48,7 @@ export function GodownFormDialog({
     editing
       ? apiRequest(`/godowns/${godownId}`, { method: "PATCH", body: { ...rest, isActive } })
       : apiRequest("/godowns", { body: { ...rest, code } }),
+    { successMessage: editing ? "Godown updated" : "Godown created" },
   );
   const errors = save.fieldErrors;
   const set = <K extends keyof GodownFormValues>(key: K, value: GodownFormValues[K]) => setForm({ ...form, [key]: value });

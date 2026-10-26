@@ -16,6 +16,7 @@ export function ResetPasswordDialog({ userId, userName }: { userId: string; user
   const [done, setDone] = useState(false);
   const reset = useApiMutation((body: { password: string }) =>
     apiRequest(`/users/${userId}/reset-password`, { body }),
+    { successMessage: "Password reset" },
   );
 
   async function onSubmit(event: FormEvent) {

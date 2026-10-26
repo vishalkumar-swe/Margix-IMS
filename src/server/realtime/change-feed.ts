@@ -59,7 +59,7 @@ class ChangeFeed {
   }
 
   private async connect(): Promise<void> {
-    const client = new Client({ connectionString: listenerConnectionString() });
+    const client = new Client(listenerConfig());
     client.on("notification", (msg) => this.onNotification(msg.payload));
     client.on("error", (err) => this.onConnectionLost(client, err));
     client.on("end", () => this.onConnectionLost(client));
@@ -146,10 +146,23 @@ class ChangeFeed {
 }
 
 /** The app's DATABASE_URL without Prisma-only query parameters (schema, connection_limit…). */
-function listenerConnectionString(): string {
+type ListenerConfig = { connectionString: string; ssl?: { rejectUnauthorized: boolean } };
+
+/**
+ * Connection settings for the listener. Prisma-only parameters are dropped, but
+ * the TLS mode must survive: a managed Postgres (Azure, RDS…) rejects plaintext
+ * connections, and `pg` does not read `sslmode` off the URL itself.
+ */
+function listenerConfig(): ListenerConfig {
   const url = new URL(getEnv().DATABASE_URL);
+  const sslmode = url.searchParams.get("sslmode");
   url.search = "";
-  return url.toString();
+  const config: ListenerConfig = { connectionString: url.toString() };
+  if (sslmode && sslmode !== "disable") {
+    // require/prefer -> encrypt, don't verify the CA; verify-ca/verify-full -> verify.
+    config.ssl = { rejectUnauthorized: sslmode === "verify-ca" || sslmode === "verify-full" };
+  }
+  return config;
 }
 
 const globalForFeed = globalThis as unknown as { changeFeed?: ChangeFeed };

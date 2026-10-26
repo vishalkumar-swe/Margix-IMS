@@ -18,6 +18,7 @@ export function CategoryHsnDialog({ categoryId, name, hsnCode }: { categoryId: s
   const [code, setCode] = useState(hsnCode ?? "");
   const save = useApiMutation((value: string) =>
     apiRequest(`/categories/${categoryId}`, { method: "PATCH", body: { hsnCode: value } }),
+    { successMessage: "HSN code saved" },
   );
 
   async function onSubmit(event: FormEvent) {

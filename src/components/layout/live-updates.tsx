@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useTransition } from "react";
 
 /** Bursts of changes (a GRN with many lines, a CSV import) cause one refresh. */
 const DEBOUNCE_MS = 400;
@@ -12,10 +12,14 @@ const DEBOUNCE_MS = 400;
  * fresh data. router.refresh() keeps client state — typed form input, open
  * dialogs, scroll position — and also discards stale prefetched pages.
  *
+ * The refresh runs inside a transition so the route's loading skeleton is not
+ * flashed over content that is merely being refreshed in the background.
+ *
  * A hidden tab does not refresh; it catches up once when shown again.
  */
 export function LiveUpdates() {
   const router = useRouter();
+  const [, startTransition] = useTransition();
 
   useEffect(() => {
     let timer: number | undefined;
@@ -23,7 +27,7 @@ export function LiveUpdates() {
     let connectedBefore = false;
 
     const refresh = () => {
-      if (document.visibilityState === "visible") router.refresh();
+      if (document.visibilityState === "visible") startTransition(() => router.refresh());
       else missedWhileHidden = true;
     };
     const scheduleRefresh = () => {
@@ -43,7 +47,7 @@ export function LiveUpdates() {
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible" && missedWhileHidden) {
         missedWhileHidden = false;
-        router.refresh();
+        startTransition(() => router.refresh());
       }
     };
     document.addEventListener("visibilitychange", onVisibilityChange);

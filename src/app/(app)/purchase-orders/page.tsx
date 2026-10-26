@@ -27,7 +27,7 @@ export default async function PurchaseOrdersPage({ searchParams }: PageProps<"/p
   const query = parseSearchParams(poListQuerySchema, raw);
   const [{ items, total }, sku] = await Promise.all([listPurchaseOrders(query), query.skuId ? getSku(query.skuId) : null]);
   const newButton = can(user.role, "po.manage") && (
-    <Link href="/purchase-orders/new" className={buttonVariants()}>
+    <Link href="/purchase-orders/new" className={buttonVariants()} data-tour="new-po">
       <Plus aria-hidden /> New purchase order
     </Link>
   );
@@ -35,7 +35,7 @@ export default async function PurchaseOrdersPage({ searchParams }: PageProps<"/p
   return (
     <>
       <PageHeader title="Purchase orders" description="Orders placed with suppliers and their receipt progress." actions={newButton} />
-      <Card>
+      <Card data-tour="po-table">
         <ProductFilterNotice sku={sku} clearHref="/purchase-orders" />
         <FilterBar
           hidden={{ skuId: query.skuId }}

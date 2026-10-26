@@ -133,7 +133,7 @@ export default async function AlertsPage({ searchParams }: PageProps<"/alerts">)
         )}
       </Card>
 
-      <Card className="mt-6">
+      <Card data-tour="reorder-rules" className="mt-6">
         <CardHeader
           title="Reorder rules"
           description="Set the minimum stock per SKU and godown. Who is notified, and how, is set under Administration → Notifications."

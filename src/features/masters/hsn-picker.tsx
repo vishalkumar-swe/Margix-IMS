@@ -50,12 +50,15 @@ export function HsnPicker({
   onChange,
   product,
   invalid,
+  dataTour,
 }: {
   id: string;
   value: string;
   onChange: (choice: HsnChoice | { code: string }) => void;
   product: { name: string; description: string; categoryId: string };
   invalid?: boolean;
+  /** Optional `data-tour` anchor for the guided walkthrough. */
+  dataTour?: string;
 }) {
   const hasProductInfo = product.name.trim().length >= 3 || Boolean(product.categoryId);
   const suggestPath = hasProductInfo
@@ -80,6 +83,7 @@ export function HsnPicker({
         id={id}
         inputMode="numeric"
         value={value}
+        data-tour={dataTour}
         placeholder="Search code or pick a suggestion"
         aria-invalid={invalid}
         onChange={(e) => onChange({ code: e.target.value })}

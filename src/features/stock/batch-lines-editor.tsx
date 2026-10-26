@@ -50,6 +50,7 @@ export function BatchLinesEditor({
   godownId,
   errors,
   lineHint,
+  tourAnchor,
 }: {
   title?: string;
   description?: string;
@@ -59,6 +60,8 @@ export function BatchLinesEditor({
   godownId: string;
   errors: Record<string, string>;
   lineHint?: (line: BatchLine) => ReactNode;
+  /** Optional `data-tour` anchor for the guided walkthrough. */
+  tourAnchor?: string;
 }) {
   const skuById = new Map(skus.map((s) => [s.id, s]));
   const [fefoMessages, setFefoMessages] = useState<Record<string, string>>({});
@@ -121,7 +124,7 @@ export function BatchLinesEditor({
   }
 
   return (
-    <Card>
+    <Card data-tour={tourAnchor}>
       <CardHeader
         title={title}
         description={description}
@@ -178,9 +181,11 @@ export function BatchLinesEditor({
                   {err("batchId") && <p className="mt-1 text-xs text-red-600">{err("batchId")}</p>}
                   {!line.batchId && line.skuId && godownId && line.quantity.trim() && (
                     <Button
+                      id="fefo-auto-pick-btn"
                       variant="link"
                       size="sm"
                       className="mt-1 h-auto"
+                      data-tour="fefo-auto-pick-btn"
                       loading={fefoPending === line.key}
                       onClick={() => pickFefo(line)}
                     >

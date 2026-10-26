@@ -141,7 +141,7 @@ export function ReceiveGoodsForm({
           )}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Field label="Receiving godown" htmlFor="grn-godown" error={post.fieldErrors.godownId} required>
-              <Select id="grn-godown" value={godownId} onChange={(e) => setGodownId(e.target.value)}>
+              <Select id="grn-godown" value={godownId} data-tour="grn-godown" onChange={(e) => setGodownId(e.target.value)}>
                 {godowns.map((g) => (
                   <option key={g.id} value={g.id}>
                     {g.name} ({g.code})
@@ -179,6 +179,7 @@ export function ReceiveGoodsForm({
               const id = line.purchaseOrderItemId;
               const input = inputFor(id);
               const rejecting = input.receivedQty !== "" && input.acceptedQty !== input.receivedQty;
+              const first = line === lines[0];
               return (
                 <tr key={id} className="align-top">
                   <TD>
@@ -191,8 +192,10 @@ export function ReceiveGoodsForm({
                   <TD>
                     {line.sku.isBatchTracked ? (
                       <Input
+                        id={first ? "grn-batch" : undefined}
                         aria-label={`Batch for ${line.sku.code}`}
                         value={input.batchNumber}
+                        data-tour={first ? "grn-batch" : undefined}
                         onChange={(e) => update(id, { batchNumber: e.target.value })}
                         className="w-32"
                         aria-invalid={Boolean(errorFor(id, "batchNumber"))}
@@ -237,9 +240,11 @@ export function ReceiveGoodsForm({
                   </TD>
                   <TD>
                     <Input
+                      id={first ? "grn-accepted" : undefined}
                       aria-label={`Accepted quantity for ${line.sku.code}`}
                       inputMode="decimal"
                       value={input.acceptedQty}
+                      data-tour={first ? "grn-accepted" : undefined}
                       onChange={(e) => update(id, { acceptedQty: e.target.value })}
                       className="w-24"
                       aria-invalid={Boolean(errorFor(id, "acceptedQty"))}
@@ -267,7 +272,7 @@ export function ReceiveGoodsForm({
         </Table>
 
         <div className="flex justify-end border-t border-slate-200 px-5 py-4">
-          <Button type="submit" loading={post.pending}>
+          <Button id="grn-submit" type="submit" loading={post.pending} data-tour="grn-submit">
             Post GRN
           </Button>
         </div>

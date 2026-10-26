@@ -9,7 +9,9 @@ import { apiRequest } from "@/lib/api-client";
 /** Re-queues a failed delivery; the notify worker sends it on its next pass. */
 export function RetryDeliveryButton({ id }: { id: string }) {
   const router = useRouter();
-  const retry = useApiMutation(() => apiRequest(`/notification-settings/deliveries/${id}/retry`, { method: "POST" }));
+  const retry = useApiMutation(() => apiRequest(`/notification-settings/deliveries/${id}/retry`, { method: "POST" }), {
+    successMessage: "Delivery requeued",
+  });
   return (
     <Button
       variant="ghost"

@@ -9,6 +9,7 @@ import {
   CornerDownLeft,
   CornerUpRight,
   FileText,
+  GraduationCap,
   Hash,
   Megaphone,
   History,
@@ -48,7 +49,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     title: "Inventory",
     items: [
-      { label: "Dashboard", href: "/", icon: LayoutDashboard, permission: "dashboard.view" },
+      { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, permission: "dashboard.view" },
       { label: "Stock", href: "/stock", icon: Boxes, permission: "stock.view" },
       { label: "Stock ledger", href: "/ledger", icon: ScrollText, permission: "ledger.view" },
       { label: "Opening stock", href: "/opening-stock", icon: ClipboardCheck, permission: "opening.post" },
@@ -95,6 +96,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Notifications", href: "/admin/notifications", icon: Megaphone, permission: "settings.manage" },
       { label: "Integrations", href: "/admin/integrations", icon: Plug, permission: "settings.manage" },
       { label: "Daily checklist", href: "/admin/checklist", icon: ListChecks, permission: "settings.manage" },
+      { label: "Onboarding & training", href: "/admin/onboarding", icon: GraduationCap, permission: "user.manage" },
       { label: "Audit trail", href: "/audit", icon: History, permission: "audit.view" },
     ],
   },

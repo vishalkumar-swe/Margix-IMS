@@ -40,7 +40,7 @@ export default async function LedgerPage({ searchParams }: PageProps<"/ledger">)
         title="Stock ledger"
         description="Every stock change as an immutable entry. Mistakes are corrected with reversals, never edits."
       />
-      <Card>
+      <Card data-tour="ledger-table">
         <FilterBar
           search={{ name: "referenceNo", placeholder: "Reference no. (e.g. GRN-2026-000001)", value: query.referenceNo }}
           selects={[

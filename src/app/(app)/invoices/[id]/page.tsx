@@ -35,7 +35,11 @@ export default async function InvoicePage({ params }: PageProps<"/invoices/[id]"
       <PageHeader
         back={{ href: "/invoices", label: "Invoices" }}
         title={invoice.invoiceNumber}
-        meta={<StatusBadge status={invoice.status} />}
+        meta={
+          <span data-tour="invoice-status">
+            <StatusBadge status={invoice.status} />
+          </span>
+        }
         description={`${invoice.customer.name} · ${formatDate(invoice.invoiceDate)} · created by ${invoice.createdBy.name}`}
         actions={
           <>
@@ -48,16 +52,45 @@ export default async function InvoicePage({ params }: PageProps<"/invoices/[id]"
                 label="Cancel invoice"
                 title={`Cancel ${invoice.invoiceNumber}`}
                 confirmLabel="Cancel invoice"
+                successMessage="Invoice cancelled"
               />
             )}
             {dispatchable && can(user.role, "dispatch.create") && (
-              <Link href={`/dispatches/new?invoiceId=${invoice.id}`} className={buttonVariants()}>
+              <Link
+                href={`/dispatches/new?invoiceId=${invoice.id}`}
+                className={buttonVariants()}
+                data-tour="dispatch-invoice-btn"
+              >
                 <Truck aria-hidden /> Dispatch against invoice
               </Link>
             )}
           </>
         }
       />
+
+      {dispatchable && can(user.role, "dispatch.create") && (
+        <div className="mb-6 rounded-xl border border-brand-300 bg-brand-50/90 p-4 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-brand-800">
+                AI Guided Action · Milestone 4 to 5
+              </p>
+              <p className="text-sm font-semibold text-slate-900 mt-0.5">
+                Great job! Invoice {invoice.invoiceNumber} is created with status {invoice.status}.
+              </p>
+              <p className="text-xs text-slate-600">
+                Remember: An invoice records the financial sale, but inventory has NOT been deducted yet. Next step is physical dispatch!
+              </p>
+            </div>
+            <Link
+              href={`/dispatches/new?invoiceId=${invoice.id}`}
+              className="inline-flex shrink-0 items-center justify-center rounded-lg bg-brand-500 px-4 py-2 text-xs font-bold text-black shadow-sm hover:bg-brand-400"
+            >
+              Milestone 5: Dispatch Order (FEFO) →
+            </Link>
+          </div>
+        </div>
+      )}
 
       {invoice.status === "CANCELLED" && (
         <Card className="mb-6 border-slate-300 bg-slate-50">

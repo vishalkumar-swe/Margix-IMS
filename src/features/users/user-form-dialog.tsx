@@ -50,6 +50,7 @@ export function UserFormDialog({
       : apiRequest("/users", {
           body: { name: values.name, email: values.email, mobile: values.mobile, role: values.role, password },
         }),
+    { successMessage: editing ? "User updated" : "User created" },
   );
   const errors = save.fieldErrors;
   const set = <K extends keyof UserFormValues>(key: K, value: UserFormValues[K]) => setForm({ ...form, [key]: value });
