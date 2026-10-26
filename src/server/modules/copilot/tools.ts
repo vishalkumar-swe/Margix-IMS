@@ -3,7 +3,7 @@ import { z } from "zod";
 import { dateOnlyToUtc, todayIst } from "@/lib/dates";
 import { can, type Permission } from "@/lib/permissions";
 import { prisma } from "@/server/db/client";
-import { ZERO } from "@/server/db/decimal";
+import { Decimal, ZERO } from "@/server/db/decimal";
 import { getInvoiceDetail, listInvoices } from "@/server/modules/invoices/invoice.queries";
 import { getDispatchDetail, listDispatches } from "@/server/modules/dispatch/dispatch.queries";
 import { getPurchaseOrderDetail, listPurchaseOrders } from "@/server/modules/purchasing/purchasing.queries";
@@ -80,6 +80,49 @@ const alertsArgs = z
   })
   .strict();
 
+const fefoPickArgs = z
+  .object({
+    product: z.string().trim().min(1, "Give a product code, name or barcode.").max(120),
+    quantity: z.coerce.number().positive("Quantity must be positive"),
+    godown: z.string().trim().max(80).optional(),
+  })
+  .strict();
+
+const expiringBatchesArgs = z
+  .object({
+    days: z.coerce.number().int().min(1).max(365).default(60),
+    godown: z.string().trim().max(80).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const godownsArgs = z
+  .object({
+    limit: limitField,
+  })
+  .strict();
+
+const ledgerArgs = z
+  .object({
+    product: z.string().trim().max(120).optional(),
+    godown: z.string().trim().max(80).optional(),
+    referenceNo: z.string().trim().max(80).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const dispatchReadinessArgs = z
+  .object({
+    invoiceNumber: z.string().trim().min(1, "Give an invoice number, e.g. INV-2026-0001.").max(60),
+  })
+  .strict();
+
+const reorderArgs = z
+  .object({
+    limit: limitField,
+  })
+  .strict();
+
 const helpArgs = z
   .object({
     question: z.string().trim().min(3).max(300),
@@ -138,7 +181,7 @@ function productSearchWhere(query: string) {
   };
 }
 
-async function findProduct(query: string): Promise<ProductRef | null> {
+export async function findProduct(query: string): Promise<ProductRef | null> {
   const select = {
     id: true,
     code: true,
@@ -158,7 +201,7 @@ async function findProduct(query: string): Promise<ProductRef | null> {
   return prisma.sku.findFirst({ where: productSearchWhere(query), orderBy: { code: "asc" }, select });
 }
 
-async function findGodown(query: string) {
+export async function findGodown(query: string) {
   const select = { id: true, code: true, name: true };
   const exact = await prisma.godown.findFirst({
     where: { OR: [{ code: { equals: query, mode: "insensitive" } }, { name: { equals: query, mode: "insensitive" } }] },
@@ -464,6 +507,381 @@ const TOOLS: CopilotTool[] = [
       return {
         articles: entries.map((entry) => ({ title: entry.title, body: entry.body })),
         note: entries.length === 0 ? "No exact article. Explain the ledger-first model and point to the closest screen." : undefined,
+      };
+    },
+  },
+  {
+    name: "get_fefo_pick_list",
+    description:
+      "Calculate optimal FEFO (First-Expiry-First-Out) batch picking for fulfilling a required product quantity. Prioritizes earliest expiring batches, skips expired batches, and reports exact batch numbers, available quantities, and pick quantities.",
+    permission: "stock.view",
+    parameters: {
+      type: "object",
+      properties: {
+        product: { type: "string", description: "Product code, name or barcode." },
+        quantity: { type: "number", description: "Target quantity to allocate/pick." },
+        godown: { type: "string", description: "Optional godown code or name; omit for all godowns." },
+      },
+      required: ["product", "quantity"],
+      additionalProperties: false,
+    },
+    async execute(args) {
+      const { product: productQuery, quantity, godown: godownQuery } = fefoPickArgs.parse(args);
+      const product = await findProduct(productQuery);
+      if (!product) return { error: `No product matched "${productQuery}".` };
+
+      const godown = godownQuery ? await findGodown(godownQuery) : null;
+      if (godownQuery && !godown) return { error: `No godown matched "${godownQuery}".` };
+
+      const now = dateOnlyToUtc(todayIst());
+      const rows = await prisma.stockBalance.findMany({
+        where: {
+          skuId: product.id,
+          godownId: godown?.id,
+          quantity: { gt: 0 },
+          OR: [{ batch: { expiryDate: null } }, { batch: { expiryDate: { gte: now } } }],
+        },
+        orderBy: [{ batch: { expiryDate: { sort: "asc", nulls: "last" } } }, { quantity: "desc" }],
+        take: 30,
+        select: {
+          quantity: true,
+          godown: { select: { code: true, name: true } },
+          batch: { select: { batchNumber: true, expiryDate: true } },
+        },
+      });
+
+      let needed = new Decimal(quantity);
+      const allocations: Array<{
+        batch: string;
+        expiryDate: string | null;
+        godown: string;
+        availableQty: string;
+        pickQty: string;
+        remainingInBatch: string;
+      }> = [];
+
+      for (const row of rows) {
+        if (needed.lte(0)) break;
+        const avail = row.quantity;
+        const pick = Decimal.min(avail, needed);
+        needed = needed.minus(pick);
+        allocations.push({
+          batch: row.batch.batchNumber,
+          expiryDate: dateOnly(row.batch.expiryDate),
+          godown: row.godown.code,
+          availableQty: avail.toString(),
+          pickQty: pick.toString(),
+          remainingInBatch: avail.minus(pick).toString(),
+        });
+      }
+
+      const totalAllocated = new Decimal(quantity).minus(needed);
+      const isFulfilled = needed.lte(0);
+
+      return {
+        product: { code: product.code, name: product.name, unit: product.baseUom.code },
+        requestedQty: quantity.toString(),
+        allocatedQty: totalAllocated.toString(),
+        shortfallQty: needed.toString(),
+        status: isFulfilled ? "FULLY_ALLOCATED" : "INSUFFICIENT_STOCK",
+        pickList: allocations,
+        recommendation: isFulfilled
+          ? `Allocate ${totalAllocated.toString()} ${product.baseUom.code} across ${allocations.length} FEFO batch(es). Earliest expiring batch picked first.`
+          : `Shortfall of ${needed.toString()} ${product.baseUom.code}. Only ${totalAllocated.toString()} available in unexpired batches.`,
+      };
+    },
+  },
+  {
+    name: "check_expiring_batches",
+    description:
+      "Find batches expiring within a specified number of days (e.g. 30, 60, 90) or already expired. Returns product details, godown, batch number, remaining quantity, and days until expiry.",
+    permission: "stock.view",
+    parameters: {
+      type: "object",
+      properties: {
+        days: { type: "integer", minimum: 1, maximum: 365, default: 60, description: "Days ahead to look for expiry." },
+        godown: { type: "string", description: "Optional godown code or name." },
+        limit: { type: "integer", minimum: 1, maximum: MAX_ROWS, default: 5, description: "Max batches to return." },
+      },
+      additionalProperties: false,
+    },
+    async execute(args) {
+      const { days, godown: godownQuery, limit } = expiringBatchesArgs.parse(args);
+      const godown = godownQuery ? await findGodown(godownQuery) : null;
+      if (godownQuery && !godown) return { error: `No godown matched "${godownQuery}".` };
+
+      const now = dateOnlyToUtc(todayIst());
+      const cutoff = new Date(now.getTime() + days * 86400000);
+
+      const rows = await prisma.stockBalance.findMany({
+        where: {
+          godownId: godown?.id,
+          quantity: { gt: 0 },
+          batch: {
+            expiryDate: {
+              not: null,
+              lte: cutoff,
+            },
+          },
+        },
+        orderBy: { batch: { expiryDate: "asc" } },
+        take: limit,
+        select: {
+          quantity: true,
+          sku: { select: { code: true, name: true, baseUom: { select: { code: true } } } },
+          godown: { select: { code: true, name: true } },
+          batch: { select: { batchNumber: true, expiryDate: true } },
+        },
+      });
+
+      return {
+        count: rows.length,
+        timeframeDays: days,
+        batches: rows.map((r) => {
+          const exp = r.batch.expiryDate ? r.batch.expiryDate.getTime() : 0;
+          const daysLeft = Math.ceil((exp - now.getTime()) / 86400000);
+          return {
+            product: productLabel(r.sku),
+            godown: r.godown.code,
+            batch: r.batch.batchNumber,
+            expiryDate: dateOnly(r.batch.expiryDate),
+            quantity: r.quantity.toString(),
+            unit: r.sku.baseUom.code,
+            daysLeft,
+            status: daysLeft <= 0 ? "EXPIRED" : daysLeft <= 30 ? "CRITICAL_NEAR_EXPIRY" : "APPROACHING_EXPIRY",
+          };
+        }),
+      };
+    },
+  },
+  {
+    name: "get_godowns",
+    description:
+      "List all active warehouse godowns with state, address, and count of active stock lines.",
+    permission: "stock.view",
+    parameters: {
+      type: "object",
+      properties: {
+        limit: { type: "integer", minimum: 1, maximum: MAX_ROWS, default: 5, description: "Max godowns to return." },
+      },
+      additionalProperties: false,
+    },
+    async execute(args) {
+      const { limit } = godownsArgs.parse(args);
+      const godowns = await prisma.godown.findMany({
+        where: { isActive: true },
+        orderBy: { code: "asc" },
+        take: limit,
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          address: true,
+          tallySyncEnabled: true,
+          _count: { select: { stockBalances: true } },
+        },
+      });
+
+      return {
+        count: godowns.length,
+        godowns: godowns.map((g) => ({
+          id: g.id,
+          code: g.code,
+          name: g.name,
+          address: g.address,
+          tallySyncEnabled: g.tallySyncEnabled,
+          activeStockLines: g._count.stockBalances,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_recent_ledger_movements",
+    description:
+      "Query recent signed double-entry inventory ledger movements. Shows chronological entry numbers (LE-######), movement types (INWARD, OUTWARD, ADJUSTMENT), signed quantities, balances after, and reference document numbers.",
+    permission: "ledger.view",
+    parameters: {
+      type: "object",
+      properties: {
+        product: { type: "string", description: "Optional product code or name to filter movements." },
+        godown: { type: "string", description: "Optional godown code or name." },
+        referenceNo: { type: "string", description: "Optional reference number (e.g. PO number, GRN number, Outward number)." },
+        limit: { type: "integer", minimum: 1, maximum: MAX_ROWS, default: 5, description: "Max movements to return." },
+      },
+      additionalProperties: false,
+    },
+    async execute(args) {
+      const { product: productQuery, godown: godownQuery, referenceNo, limit } = ledgerArgs.parse(args);
+      const sku = productQuery ? await findProduct(productQuery) : null;
+      if (productQuery && !sku) return { error: `No product matched "${productQuery}".` };
+
+      const godown = godownQuery ? await findGodown(godownQuery) : null;
+      if (godownQuery && !godown) return { error: `No godown matched "${godownQuery}".` };
+
+      const entries = await prisma.inventoryLedger.findMany({
+        where: {
+          skuId: sku?.id,
+          godownId: godown?.id,
+          referenceNo: referenceNo ? { contains: referenceNo, mode: "insensitive" } : undefined,
+        },
+        orderBy: { entryNo: "desc" },
+        take: limit,
+        select: {
+          entryNo: true,
+          movementType: true,
+          quantity: true,
+          balanceAfter: true,
+          referenceType: true,
+          referenceNo: true,
+          remarks: true,
+          createdAt: true,
+          sku: { select: { code: true, name: true, baseUom: { select: { code: true } } } },
+          godown: { select: { code: true } },
+          batch: { select: { batchNumber: true } },
+        },
+      });
+
+      return {
+        count: entries.length,
+        movements: entries.map((e) => ({
+          entryNo: `LE-${e.entryNo.toString().padStart(6, "0")}`,
+          movementType: e.movementType,
+          quantity: e.quantity.toString(),
+          balanceAfter: e.balanceAfter.toString(),
+          product: productLabel(e.sku),
+          godown: e.godown.code,
+          batch: e.batch.batchNumber,
+          reference: `${e.referenceType}: ${e.referenceNo}`,
+          remarks: e.remarks,
+          timestamp: e.createdAt.toISOString(),
+        })),
+      };
+    },
+  },
+  {
+    name: "check_dispatch_readiness",
+    description:
+      "Inspect an invoice to determine if warehouse unexpired stock is sufficient to dispatch all remaining quantities. Evaluates each line item against live FEFO stock.",
+    permission: "dispatch.view",
+    parameters: {
+      type: "object",
+      properties: {
+        invoiceNumber: { type: "string", description: "Invoice number to verify readiness for, e.g. INV-2026-0001." },
+      },
+      required: ["invoiceNumber"],
+      additionalProperties: false,
+    },
+    async execute(args) {
+      const { invoiceNumber } = dispatchReadinessArgs.parse(args);
+      const invoice = await prisma.invoice.findFirst({
+        where: { invoiceNumber: { equals: invoiceNumber, mode: "insensitive" } },
+        select: { id: true },
+      });
+      if (!invoice) return { error: `No invoice found with number "${invoiceNumber}".` };
+
+      const detail = await getInvoiceDetail(invoice.id);
+      if (!detail) return { error: `No invoice found with number "${invoiceNumber}".` };
+
+      const now = dateOnlyToUtc(todayIst());
+      const lineChecks = [];
+      let overallReady = true;
+
+      for (const item of detail.items) {
+        const remaining = item.quantity.minus(item.dispatchedQty);
+        if (remaining.lte(0)) {
+          lineChecks.push({
+            product: productLabel(item.sku),
+            billed: item.quantity.toString(),
+            dispatched: item.dispatchedQty.toString(),
+            remaining: "0",
+            availableStock: "0",
+            status: "ALREADY_DISPATCHED",
+          });
+          continue;
+        }
+
+        const stockRows = await prisma.stockBalance.findMany({
+          where: {
+            skuId: item.skuId,
+            quantity: { gt: 0 },
+            OR: [{ batch: { expiryDate: null } }, { batch: { expiryDate: { gte: now } } }],
+          },
+          select: { quantity: true },
+        });
+
+        const totalStock = stockRows.reduce((sum, r) => sum.plus(r.quantity), ZERO);
+        const canFulfill = totalStock.gte(remaining);
+        if (!canFulfill) overallReady = false;
+
+        lineChecks.push({
+          product: productLabel(item.sku),
+          billed: item.quantity.toString(),
+          dispatched: item.dispatchedQty.toString(),
+          remaining: remaining.toString(),
+          availableUnexpiredStock: totalStock.toString(),
+          unit: item.entryUom?.code ?? item.sku.baseUom.code,
+          canFulfill,
+          status: canFulfill ? "READY" : "SHORTAGE",
+        });
+      }
+
+      return {
+        invoiceNumber: detail.invoiceNumber,
+        customer: detail.customer.name,
+        invoiceStatus: detail.status,
+        overallReadiness: overallReady ? "READY_TO_DISPATCH" : "STOCK_SHORTAGE",
+        lines: lineChecks,
+        recommendedAction: overallReady
+          ? `Proceed to create dispatch outward for invoice ${detail.invoiceNumber}. Unexpired stock is available.`
+          : `Stock shortage detected. Procure or inward remaining quantities before dispatching.`,
+      };
+    },
+  },
+  {
+    name: "get_reorder_recommendations",
+    description:
+      "Find inventory items at or below reorder threshold levels across godowns, providing reorder recommendations and active alert statuses.",
+    permission: "alert.view",
+    parameters: {
+      type: "object",
+      properties: {
+        limit: { type: "integer", minimum: 1, maximum: MAX_ROWS, default: 5, description: "Max recommendations to return." },
+      },
+      additionalProperties: false,
+    },
+    async execute(args) {
+      const { limit } = reorderArgs.parse(args);
+      const alerts = await prisma.stockAlert.findMany({
+        where: { status: "ACTIVE", alertType: "LOW_STOCK" },
+        take: limit,
+        orderBy: { currentQty: "asc" },
+        select: {
+          currentQty: true,
+          thresholdQty: true,
+          sku: {
+            select: {
+              code: true,
+              name: true,
+              baseUom: { select: { code: true } },
+            },
+          },
+          godown: { select: { code: true, name: true } },
+        },
+      });
+
+      return {
+        count: alerts.length,
+        recommendations: alerts.map((a) => {
+          const deficit = a.thresholdQty.minus(a.currentQty);
+          return {
+            product: productLabel(a.sku),
+            godown: a.godown.code,
+            currentStock: a.currentQty.toString(),
+            reorderLevel: a.thresholdQty.toString(),
+            recommendedMinimumOrder: Decimal.max(deficit, new Decimal(10)).toString(),
+            unit: a.sku.baseUom.code,
+          };
+        }),
       };
     },
   },

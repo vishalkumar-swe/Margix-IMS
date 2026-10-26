@@ -7,6 +7,7 @@ import { getWorkspaceCounts } from "@/server/modules/copilot/copilot.queries";
 import { answerFromKnowledge, buildLlmPrompt } from "@/server/modules/copilot/knowledge";
 import { llmConfigured, streamChatCompletion } from "@/server/modules/copilot/llm";
 import { copilotToolsForRole, executeCopilotTool } from "@/server/modules/copilot/tools";
+import { AutonomousAgentService } from "@/server/modules/copilot/agent.service";
 import { createHash } from "node:crypto";
 
 const encoder = new TextEncoder();
@@ -25,25 +26,6 @@ function sse(stream: ReadableStream<Uint8Array>): Response {
 
 function allowedActions(actions: CopilotAction[], role: Parameters<typeof can>[0]): CopilotAction[] {
   return actions.filter((action) => !action.permission || can(role, action.permission));
-}
-
-/** Streams a curated answer in small chunks so the UI renders progressively offline too. */
-function textStream(text: string, actions: CopilotAction[], sources: string[]): ReadableStream<Uint8Array> {
-  let offset = 0;
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      if (offset >= text.length) {
-        controller.enqueue(event({ done: true, actions, sources }));
-        controller.close();
-        return;
-      }
-      const size = 18 + Math.floor(Math.random() * 18);
-      const delta = text.slice(offset, offset + size);
-      offset += size;
-      controller.enqueue(event({ delta }));
-      await new Promise((resolve) => setTimeout(resolve, 8));
-    },
-  });
 }
 
 /** Appends the action metadata after an upstream model stream finishes. */
@@ -70,9 +52,11 @@ function withFinalEvent(
 }
 
 /**
- * Contextual Copilot answer. Offline by default (curated retrieval); streams
- * from an OpenAI-compatible model when AI_PROVIDER=openai and a key is set.
- * The server owns the role, so a spoofed browser context cannot widen access.
+ * Contextual Copilot & Autonomous Inventory Agent.
+ * Runs multi-step tool calls against the live database. When AI_PROVIDER is active
+ * and healthy, streams from the model with OpenAI function calling; if the upstream
+ * provider is offline or exhausted, the Autonomous Agent Planner takes over
+ * directly to execute multi-step database tool operations with live data.
  */
 export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSchema }, async ({ body, user, request }) => {
   const context = { ...body.context, role: user.role };
@@ -81,7 +65,7 @@ export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSc
   const actions = allowedActions(curated.actions, user.role);
 
   if (!llmConfigured()) {
-    return sse(textStream(curated.answer, actions, curated.sources));
+    return sse(AutonomousAgentService.executeAutonomousAgentStream(body.message, context));
   }
 
   try {
@@ -100,14 +84,10 @@ export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSc
     });
     return sse(withFinalEvent(upstream, actions, curated.sources));
   } catch (error) {
-    logger.warn("copilot llm unavailable; using offline answer", {
+    logger.warn("copilot llm unavailable; engaging autonomous database agent", {
       err: error instanceof Error ? error.message : String(error),
     });
-    const errText = error instanceof Error ? error.message : String(error);
-    const isOpenCodeFunds = errText.toLowerCase().includes("insufficient account funds") || errText.includes("402");
-    const note = isOpenCodeFunds
-      ? "\n\n_Note: OpenCode account funds are currently exhausted. Answering from the built-in Margix knowledge base._"
-      : "\n\nThe AI model is unavailable right now, so this answer comes from the built-in Margix knowledge base.";
-    return sse(textStream(`${curated.answer}${note}`, actions, curated.sources));
+    // Seamlessly execute via Autonomous Multi-Step Agent using live database tools
+    return sse(AutonomousAgentService.executeAutonomousAgentStream(body.message, context));
   }
 });
