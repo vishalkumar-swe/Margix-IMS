@@ -802,7 +802,7 @@ export class AutonomousAgentService {
         if (productMatch && productMatch[1]) {
           const clean = tidyTerm(
             productMatch[1].replace(
-              /\b(?:what\s*is|what|is|the|please|tell|me|code|details|product|commodity|ka|ki|ke|batao|check|karo)\b/gi,
+              /\b(?:what\s*is|what|is|the|please|tell|me|code|codes|details|product|commodity|ka|ki|ke|batao|check|karo|for|of|on|about)\b/gi,
               " ",
             ),
           );
