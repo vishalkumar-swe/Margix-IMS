@@ -2460,10 +2460,10 @@ export class AutonomousAgentService {
         const aData = executed.find((e) => e.toolName === "get_analytics_overview")?.output as
           | {
               period: string;
-              sales: { count: number; netAmount: number; grossAmount: number; taxAmount: number };
-              purchases: { count: number; totalAmount: number };
-              operations: { orderFulfillmentRate: number; pendingDispatches: number };
-              inventory: { stockValue: number };
+              sales: { invoices: number; value: string; gst: string; averageInvoice: string };
+              purchases: { orders: number; value: string; suppliers: number };
+              operations: { invoicesAwaitingDispatch: number; pendingDispatchValue: string; dispatches: number; grns: number };
+              inventory: { value: string; quantity: string; skusInStock: number };
             }
           | undefined;
 
@@ -2474,20 +2474,21 @@ export class AutonomousAgentService {
         }
 
         markdown = `## 📈 Business Analytics & Financial Overview (${aData.period})\n\n`;
-        markdown += `### 💰 Revenue & Sales\n`;
-        markdown += `- **Invoices Issued:** ${aData.sales.count} invoices\n`;
-        markdown += `- **Net Sales Revenue:** ₹${Number(aData.sales.netAmount).toLocaleString("en-IN")}\n`;
-        markdown += `- **Gross Billed Amount:** ₹${Number(aData.sales.grossAmount).toLocaleString("en-IN")}\n`;
-        markdown += `- **GST Collected:** ₹${Number(aData.sales.taxAmount).toLocaleString("en-IN")}\n\n`;
+        markdown += `### 💰 Revenue & Sales (Last 30 Days)\n`;
+        markdown += `- **Invoices Issued:** ${aData.sales?.invoices ?? 0} invoices\n`;
+        markdown += `- **Total Invoiced Value:** ₹${Number(aData.sales?.value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}\n`;
+        markdown += `- **GST Collected:** ₹${Number(aData.sales?.gst || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}\n`;
+        markdown += `- **Average Invoice Value:** ₹${Number(aData.sales?.averageInvoice || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}\n\n`;
 
-        markdown += `### 🛒 Procurement & Spend\n`;
-        markdown += `- **Purchase Orders Placed:** ${aData.purchases.count} orders\n`;
-        markdown += `- **Total Spend:** ₹${Number(aData.purchases.totalAmount).toLocaleString("en-IN")}\n\n`;
+        markdown += `### 🛒 Procurement & Commitments\n`;
+        markdown += `- **Purchase Orders Placed:** ${aData.purchases?.orders ?? 0} orders\n`;
+        markdown += `- **Total Procurement Spend:** ₹${Number(aData.purchases?.value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}\n\n`;
 
-        markdown += `### 📦 Warehousing & Fulfillment\n`;
-        markdown += `- **Order Fulfillment Rate:** ${(Number(aData.operations.orderFulfillmentRate) * 100).toFixed(1)}%\n`;
-        markdown += `- **Pending Dispatches:** ${aData.operations.pendingDispatches}\n`;
-        markdown += `- **Total Live Stock Valuation:** ₹${Number(aData.inventory.stockValue).toLocaleString("en-IN")}\n`;
+        markdown += `### 📦 Warehousing & Operational Fulfillment\n`;
+        markdown += `- **Completed Dispatches:** ${aData.operations?.dispatches ?? 0} DC(s)\n`;
+        markdown += `- **Invoices Awaiting Dispatch:** ${aData.operations?.invoicesAwaitingDispatch ?? 0} (Pending Value: ₹${Number(aData.operations?.pendingDispatchValue || 0).toLocaleString("en-IN")})\n`;
+        markdown += `- **SKUs In Stock:** ${aData.inventory?.skusInStock ?? 0}\n`;
+        markdown += `- **Total Live Stock Valuation:** ₹${Number(aData.inventory?.value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}\n`;
 
         actions.push(
           { label: "Sales Analytics", route: "/analytics/sales", permission: "invoice.view" },
