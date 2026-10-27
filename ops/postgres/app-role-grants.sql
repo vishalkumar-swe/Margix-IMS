@@ -32,8 +32,13 @@ BEGIN
   -- Append-only tables. SELECT … FOR UPDATE (used to serialise reversals)
   -- needs UPDATE on at least one column, so only "id" is granted; the
   -- append-only trigger still rejects any actual update.
-  REVOKE UPDATE, DELETE ON "inventory_ledger", "audit_log" FROM margix_app;
+  -- DELETE is granted on inventory_ledger so the sandbox purge can delete
+  -- DEMO-* rows while margix.sandbox_purge = 'on'; the append-only trigger
+  -- strictly blocks every other delete or update.
+  REVOKE UPDATE ON "inventory_ledger" FROM margix_app;
+  REVOKE UPDATE, DELETE ON "audit_log" FROM margix_app;
   GRANT UPDATE ("id") ON "inventory_ledger" TO margix_app;
+  GRANT DELETE ON "inventory_ledger" TO margix_app;
 
   -- Tables created by future migrations get row access automatically.
   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO margix_app;
