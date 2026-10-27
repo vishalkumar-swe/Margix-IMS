@@ -206,7 +206,7 @@ const adjustmentListArgs = z
 const hsnListArgs = z
   .object({
     query: z.string().trim().max(120).optional(),
-    limit: limitField,
+    limit: z.coerce.number().int().min(1).max(50).default(15),
   })
   .strict();
 

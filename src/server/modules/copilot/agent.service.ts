@@ -2404,7 +2404,13 @@ export class AutonomousAgentService {
 
       case "list_hsn_codes": {
         const step = executed.find((e) => e.toolName === "list_hsn_codes");
-        const hData = step?.output as { count: number; query?: string | null; hsnCodes: Array<{ code: string; description: string; gstRate: string }> } | undefined;
+        const hData = step?.output as { count?: number; query?: string | null; error?: string; hsnCodes?: Array<{ code: string; description: string; gstRate: string }> } | undefined;
+        if (hData?.error) {
+          markdown = `## ⚖️ HSN / SAC Codes & GST Rates\n\nCould not retrieve HSN directory: ${hData.error}\n`;
+          actions.push({ label: "Open HSN & GST", route: "/masters/hsn", permission: "master.view" });
+          sources.push("HSN & GST Master");
+          break;
+        }
         const list = hData?.hsnCodes || [];
         const queryTerm = hData?.query || undefined;
 
