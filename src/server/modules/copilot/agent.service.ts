@@ -1220,10 +1220,29 @@ export class AutonomousAgentService {
       };
     }
 
+    // Extract genuine product name by stripping conversational boilerplate and stop words
+    const cleanStockTerm = tidyTerm(
+      message.replace(
+        /\b(?:ok|is\s*there\s*any|product\s*available|product\s*availabe|available\s*product|availabe\s*product|stock\s*of|stock\s*for|stock\s*balance\s*of|stock\s*balance|inventory\s*of|on\s*hand|available|availabe|how\s*many|balance|check|find|what\s*is\s*the|of|for|in|me|show|please|my|the)\b/gi,
+        " ",
+      ),
+    );
+
+    const potentialProduct = cleanStockTerm
+      .replace(
+        /\b(?:what|which|all|the|stocks?|products?|items?|goods?|materials?|are|is|am|present|available|availabe|there|here|in|on|at|we|have|got|do|does|currently|now|right\s+now|tell|me|show|check|find|get|list|display|give|kya|hai|hein|pada|hote|rakha|godown|warehouse|store|inventory)\b/gi,
+        " ",
+      )
+      .replace(/\s+/g, " ")
+      .trim();
+
     // 18. General Warehouse Inventory Availability
     const isGeneralInventoryQuery =
-      /\b(is there any product|any product available|any product availabe|any products?|what products?|all products?|all stock|show inventory|check inventory|list stock|total stock|kya stock hai|koi product hai|kya maal hai|kya item hai|mere paas kya hai|inventory summary|stock list|overall stock|everything in stock|my inventory|our inventory|in inventory|on inventory)\b/i.test(text) ||
-      (/\b(product|products|item|items|stock|anything)\b/i.test(text) && /\b(available|availabe|exist|on hand|in godown|in warehouse|in inventory|on inventory)\b/i.test(text));
+      potentialProduct.length < 2 &&
+      (/\b(is there any product|any product available|any product availabe|any products?|what products?|all products?|all stock|all stocks|show inventory|check inventory|list stock|list stocks|total stock|total stocks|kya stock hai|koi product hai|kya maal hai|kya item hai|mere paas kya hai|inventory summary|stock list|overall stock|overall stocks|everything in stock|my inventory|our inventory|in inventory|on inventory)\b/i.test(text) ||
+        /\b(what\s+(all\s+)?(the\s+)?(stocks?|products?|items?|goods?|materials?))\b/i.test(text) ||
+        (/\b(product|products|item|items|stock|stocks|inventory|anything|goods|materials?)\b/i.test(text) &&
+          /\b(available|availabe|present|exist|exists|existing|on hand|in godown|in warehouse|in inventory|on inventory|in stock)\b/i.test(text)));
 
     if (isGeneralInventoryQuery) {
       return {
@@ -1254,16 +1273,11 @@ export class AutonomousAgentService {
         text.includes("how many") ||
         text.includes("balance"))
     ) {
-      const clean = tidyTerm(
-        message.replace(
-          /\b(?:ok|is\s*there\s*any|product\s*available|product\s*availabe|available\s*product|availabe\s*product|stock\s*of|stock\s*for|stock\s*balance\s*of|stock\s*balance|inventory\s*of|on\s*hand|available|availabe|how\s*many|balance|check|find|what\s*is\s*the|of|for|in|me|show|please|my|the)\b/gi,
-          " ",
-        ),
-      );
-
       if (
-        clean.length < 2 ||
-        /^(product|products|item|items|inventory|stock|all|everything|availabe|available|any|anything)$/i.test(clean)
+        cleanStockTerm.length < 2 ||
+        potentialProduct.length < 2 ||
+        /^(product|products|item|items|inventory|stock|stocks|all|everything|availabe|available|present|any|anything)$/i.test(cleanStockTerm) ||
+        /^(product|products|item|items|inventory|stock|stocks|all|everything|availabe|available|present|any|anything)$/i.test(potentialProduct)
       ) {
         return {
           intent: "inventory_overview",
@@ -1278,20 +1292,22 @@ export class AutonomousAgentService {
         };
       }
 
+      const queryTarget = potentialProduct.length >= 2 ? potentialProduct : cleanStockTerm;
+
       return {
         intent: "stock_check",
         steps: [
           {
             name: "Search Product",
             toolName: "search_products",
-            arguments: { query: clean, limit: 3 },
-            description: `Looking up SKU details for "${clean}"`,
+            arguments: { query: queryTarget, limit: 3 },
+            description: `Looking up SKU details for "${queryTarget}"`,
           },
           {
             name: "Check Stock Balances & FEFO Batches",
             toolName: "check_stock",
-            arguments: { product: clean },
-            description: `Querying live godown stock and batches for "${clean}"`,
+            arguments: { product: queryTarget },
+            description: `Querying live godown stock and batches for "${queryTarget}"`,
           },
         ],
       };

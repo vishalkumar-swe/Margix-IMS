@@ -211,6 +211,12 @@ describe("AutonomousAgentService", () => {
 
     it("recognizes general inventory availability queries without treating the whole question as a product name", () => {
       const inventoryQueries = [
+        "what all the stocks are present",
+        "what all stocks are present",
+        "what stocks are present",
+        "what stock is present",
+        "what all items are present",
+        "show all stocks",
         "ok is there any product availabe on my inventory",
         "is there any product available",
         "kya stock hai",
@@ -229,6 +235,10 @@ describe("AutonomousAgentService", () => {
       const plan = AutonomousAgentService.planIntent("check stock balance of Basmati Rice", context);
       expect(plan.intent).toBe("stock_check");
       expect(plan.steps[1].arguments).toMatchObject({ product: "Basmati Rice" });
+
+      const plan2 = AutonomousAgentService.planIntent("what all basmati stocks are present", context);
+      expect(plan2.intent).toBe("stock_check");
+      expect(plan2.steps[1].arguments).toMatchObject({ product: "basmati" });
     });
 
     it("plans end-to-end enterprise tools across all operational domains", () => {
