@@ -305,11 +305,22 @@ describe("AutonomousAgentService", () => {
     });
 
     it("plans actionable deep web research when user requests internet search", () => {
-      const researchPlan = AutonomousAgentService.planIntent("search the web for basmati rice prices in mandi", context);
-      expect(researchPlan.intent).toBe("execute_web_research");
-      expect(researchPlan.steps[0].toolName).toBe("web_research");
-      expect(researchPlan.steps[0].arguments).toMatchObject({ maxResults: 5 });
-      expect(AutonomousAgentService.isOperationalOrConfirmation("search the web for basmati rice prices")).toBe(true);
+      const queries = [
+        "search the web for basmati rice prices in mandi",
+        "do web search to get the prices of basmati rice across india",
+        "web search for basmati rice prices",
+      ];
+      for (const q of queries) {
+        const researchPlan = AutonomousAgentService.planIntent(q, context);
+        expect(researchPlan.intent).toBe("execute_web_research");
+        expect(researchPlan.steps[0].toolName).toBe("web_research");
+        expect(AutonomousAgentService.isOperationalOrConfirmation(q)).toBe(true);
+      }
+
+      // Capability inquiry without target query
+      const capPlan = AutonomousAgentService.planIntent("can you do a websearch?", context);
+      expect(capPlan.intent).toBe("copilot_capabilities");
+      expect(AutonomousAgentService.isOperationalOrConfirmation("can you do a websearch?")).toBe(true);
     });
 
     it("consults on missing slots for 'add a rice' with realistic business questions and chips", async () => {

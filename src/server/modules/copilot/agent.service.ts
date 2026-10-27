@@ -354,19 +354,18 @@ export class AutonomousAgentService {
       };
     }
 
-    // 0c2. Actionable Web Deep Research (e.g. "search the web for ...", "web research for ...", "find online ...")
-    const isActionableWebResearch =
-      /\b(search\s*(the\s*)?web\s*(for|about)|web\s*search\s*(for|about)|do\s*(a\s*)?web\s*search\s*(for|about)|google\s*(for|about)|look\s*up\s*online\s*(for|about)?|find\s*(online|on\s*the\s*web))\b/i.test(text) ||
-      (/\b(search|research|find|check|look\s*up)\b/i.test(text) && /\b(from\s*(the\s*)?web|on\s*(the\s*)?web|online|internet)\b/i.test(text) && !/\b(can\s*you|will\s*you|how\s*do\s*you|are\s*you\s*able)\b/i.test(text));
+    // 0c2. Actionable Web Deep Research (e.g. "search the web for ...", "do web search to get ...", "web research for ...", "find online ...")
+    const cleanSearchQuery = tidyTerm(
+      message.replace(
+        /\b(?:search\s*(?:the\s*)?web\s*(?:for|about|to\s*get|to\s*find|to)?|web\s*search\s*(?:for|about|to\s*get|to\s*find|to)?|do\s*(?:a\s*)?web\s*search\s*(?:for|about|to\s*get|to\s*find|to)?|do\s*(?:a\s*)?websearch\s*(?:for|about|to\s*get|to\s*find|to)?|websearch\s*(?:for|about|to\s*get|to\s*find|to)?|google\s*(?:for|about|to\s*get|to\s*find|to)?|look\s*up\s*online\s*(?:for|about|to\s*get|to\s*find|to)?|find\s*(?:online|on\s*(?:the\s*)?web)|from\s*(?:the\s*)?web|on\s*(?:the\s*)?web|online|internet|please|can\s*you|to\s*get|to\s*find)\b/gi,
+        " ",
+      ),
+    );
 
-    if (isActionableWebResearch) {
-      const cleanSearchQuery = tidyTerm(
-        message.replace(
-          /\b(?:search\s*(?:the\s*)?web\s*(?:for|about)?|web\s*search\s*(?:for|about)?|do\s*(?:a\s*)?web\s*search\s*(?:for|about)?|google\s*(?:for|about)?|look\s*up\s*online\s*(?:for|about)?|find\s*(?:online|on\s*(?:the\s*)?web)|from\s*(?:the\s*)?web|on\s*(?:the\s*)?web|online|internet|please|can\s*you)\b/gi,
-          " ",
-        ),
-      ) || "Rice commodity GST HSN rates India";
+    const isExplicitWebSearch =
+      /\b(web\s*search|websearch|search\s*(the\s*)?web|google|look\s*up\s*online|search\s*online|find\s*online|deep\s*research|market\s*research)\b/i.test(text);
 
+    if (isExplicitWebSearch && cleanSearchQuery.length >= 2) {
       return {
         intent: "execute_web_research",
         steps: [
@@ -2373,26 +2372,32 @@ export class AutonomousAgentService {
 
       case "copilot_capabilities": {
         markdown = `## 🤖 Margix IMS Copilot & Research Capabilities\n\n`;
-        markdown += `I do **not** browse the public internet or perform open-ended external web searches. Instead, I am directly integrated into your **live Margix IMS enterprise database** and the official **Indian GST directories**.\n\n`;
-        markdown += `### What I can do for you in real-time:\n`;
+        markdown += `**Yes, absolutely!** I am equipped with **Autonomous Enterprise Tools** and **Live Deep Web Research**:\n\n`;
+        markdown += `### 🌐 1. Live Web Deep Research (Free & Connected)\n`;
+        markdown += `I can search the public internet and commodity portals in real-time:\n`;
+        markdown += `- 🌾 **Live Mandi Commodity Prices:** Search real-time market rates for Basmati rice, grains, pulses, and oils across Indian APMC mandis.\n`;
+        markdown += `- ⚖️ **GST & HSN Notifications:** Research the latest CBIC circulars, GST Council rate updates, and trade classifications.\n`;
+        markdown += `- 🏭 **Market Intelligence & Specifications:** Look up product standards, wholesale bag sizes, and supplier benchmarks.\n\n`;
+        markdown += `### 🏢 2. Direct Enterprise Database Operations\n`;
         markdown += `- 📦 **Live Inventory & Batches:** Real-time stock lookup across all godowns with exact batch numbers, expiry dates, and pack units.\n`;
         markdown += `- 🚚 **Automated FEFO Dispatch:** Recommend and allocate earliest-expiring batches for delivery challans to prevent spoilage.\n`;
         markdown += `- 🛒 **Purchase Orders & GRN Receiving:** Track open procurement orders, verify supplier receipts, and check pending quantities.\n`;
         markdown += `- 🧾 **GST Billing & Invoicing:** Check invoice dispatch readiness, intra vs inter-state tax splits, and delivery statuses.\n`;
         markdown += `- ⚖️ **HSN / SAC Master Directory:** Preloaded with Indian GST classifications, official descriptions, and 0%, 5%, 12%, 18%, 28% tax slabs.\n`;
-        markdown += `- 🛡️ **Autonomous Operations:** Safely cancel open invoices or purchase orders with user confirmation, and audit non-negative ledger constraints.\n`;
+        markdown += `- 🛡️ **Autonomous Operations:** Safely register products, cancel open invoices or purchase orders with user confirmation, and audit non-negative ledger constraints.\n`;
         markdown += `- 🇮🇳 **Multilingual Assistance:** Ask me questions naturally in **English**, **Hindi (हिंदी)**, or **Hinglish**!\n\n`;
-        markdown += `### Examples of what to ask me:\n`;
+        markdown += `### Try asking me:\n`;
+        markdown += `- *"Do web search to get the prices of basmati rice across india"*\n`;
+        markdown += `- *"Search the web for rice mandi rates in Haryana"*\n`;
         markdown += `- *"What products are currently in stock?"*\n`;
-        markdown += `- *"What is the HSN code and GST rate for Basmati Rice?"*\n`;
-        markdown += `- *"Can we dispatch invoice INV-2026-0001?"*\n`;
-        markdown += `- *"Show my daily operational checklist"*\n`;
+        markdown += `- *"Add a rice to catalog"*\n`;
 
+        actions.push({ label: "🌾 Search Basmati Prices", route: "/masters/skus", permission: "master.view" });
         actions.push({ label: "View Stock Balances", route: "/stock", permission: "stock.view" });
         actions.push({ label: "Purchase Orders", route: "/purchase-orders", permission: "po.view" });
         actions.push({ label: "Sales Invoices", route: "/invoices", permission: "invoice.view" });
         actions.push({ label: "HSN & GST Directory", route: "/masters/hsn", permission: "master.view" });
-        sources.push("Margix System Architecture & Copilot Engine");
+        sources.push("Margix System Architecture & Copilot Engine", "Live Web Deep Research");
         break;
       }
 
