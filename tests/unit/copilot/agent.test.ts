@@ -183,4 +183,67 @@ describe("AutonomousAgentService", () => {
       expect(result.data.message).toContain("cancelled");
     });
   });
+
+  describe("Conversational Greetings, Hindi/Hinglish & Inventory Overview Queries", () => {
+    it("recognizes greetings naturally without mangling them into product lookups", () => {
+      const greetingQueries = ["hi", "hello", "hey", "namaste", "good morning", "kaise ho"];
+      for (const query of greetingQueries) {
+        const plan = AutonomousAgentService.planIntent(query, context);
+        expect(plan.intent).toBe("greeting");
+        expect(plan.steps[0].toolName).toBe("get_workspace_summary");
+      }
+    });
+
+    it("recognizes requests to chat in Hindi or language difficulty", () => {
+      const hindiQueries = [
+        "you can chat in hindi",
+        "i don't undersand english",
+        "hindi me baat karo",
+        "what are you giving i don't underatnd",
+        "samajh nahi aaya",
+      ];
+      for (const query of hindiQueries) {
+        const plan = AutonomousAgentService.planIntent(query, context);
+        expect(plan.intent).toBe("hindi_conversation");
+        expect(plan.steps[0].toolName).toBe("get_workspace_summary");
+      }
+    });
+
+    it("recognizes general inventory availability queries without treating the whole question as a product name", () => {
+      const inventoryQueries = [
+        "ok is there any product availabe on my inventory",
+        "is there any product available",
+        "kya stock hai",
+        "show inventory",
+        "what products do we have",
+        "all stock",
+      ];
+      for (const query of inventoryQueries) {
+        const plan = AutonomousAgentService.planIntent(query, context);
+        expect(plan.intent).toBe("inventory_overview");
+        expect(plan.steps[0].toolName).toBe("get_inventory_overview");
+      }
+    });
+
+    it("still targets a specific product when a real product name is provided", () => {
+      const plan = AutonomousAgentService.planIntent("check stock balance of Basmati Rice", context);
+      expect(plan.intent).toBe("stock_check");
+      expect(plan.steps[1].arguments).toMatchObject({ product: "Basmati Rice" });
+    });
+
+    it("plans end-to-end enterprise tools across all operational domains", () => {
+      expect(AutonomousAgentService.planIntent("show my daily checklist", context).intent).toBe("daily_checklist");
+      expect(AutonomousAgentService.planIntent("show business analytics and revenue kpi", context).intent).toBe("analytics_overview");
+      expect(AutonomousAgentService.planIntent("check dead stock and slow moving items", context).intent).toBe("idle_stock");
+      expect(AutonomousAgentService.planIntent("give me stock movement summary report", context).intent).toBe("stock_summary_report");
+      expect(AutonomousAgentService.planIntent("show open purchase orders", context).intent).toBe("list_purchase_orders");
+      expect(AutonomousAgentService.planIntent("list recent goods receipt notes", context).intent).toBe("list_grns");
+      expect(AutonomousAgentService.planIntent("show pending invoices", context).intent).toBe("list_invoices");
+      expect(AutonomousAgentService.planIntent("show recent dispatches and delivery challans", context).intent).toBe("list_dispatches");
+      expect(AutonomousAgentService.planIntent("show all product batches", context).intent).toBe("list_batches");
+      expect(AutonomousAgentService.planIntent("check my notifications and unread alerts", context).intent).toBe("my_notifications");
+      expect(AutonomousAgentService.planIntent("can we reverse GRN-2026-0001 safely?", context).intent).toBe("reversal_check");
+    });
+  });
 });
+

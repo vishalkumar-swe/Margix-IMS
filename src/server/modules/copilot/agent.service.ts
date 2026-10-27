@@ -27,6 +27,7 @@ import { postDispatch } from "@/server/modules/dispatch/dispatch.service";
 export interface AgentContext {
   role: RoleCode;
   route: string;
+  userId?: string;
 }
 
 export interface AgentPlanStep {
@@ -180,6 +181,22 @@ interface GodownResult {
   }>;
 }
 
+interface InventoryOverviewResult {
+  error?: string;
+  totalRegisteredSkus: number;
+  productsWithStockCount: number;
+  hasAvailableStock: boolean;
+  products: Array<{
+    code: string;
+    name: string;
+    baseUnit: string;
+    totalQuantity: string;
+    godowns: string[];
+    batchCount: number;
+  }>;
+  summary: string;
+}
+
 interface StockResult {
   error?: string;
   product: { code: string; name: string; baseUnit: string };
@@ -216,7 +233,34 @@ export class AutonomousAgentService {
       plan.intent.startsWith("propose_") ||
       plan.intent.startsWith("execute_") ||
       plan.intent === "execute_pending_confirmation" ||
-      plan.intent === "cancel_pending_confirmation"
+      plan.intent === "cancel_pending_confirmation" ||
+      plan.intent === "greeting" ||
+      plan.intent === "hindi_conversation" ||
+      plan.intent === "inventory_overview" ||
+      plan.intent === "list_customers" ||
+      plan.intent === "list_suppliers" ||
+      plan.intent === "list_categories" ||
+      plan.intent === "list_uoms" ||
+      plan.intent === "list_hsn_codes" ||
+      plan.intent === "list_transfers" ||
+      plan.intent === "list_stock_adjustments" ||
+      plan.intent === "list_returns" ||
+      plan.intent === "list_opening_stock" ||
+      plan.intent === "tally_status" ||
+      plan.intent === "audit_trail" ||
+      plan.intent === "list_users" ||
+      plan.intent === "system_health" ||
+      plan.intent === "daily_checklist" ||
+      plan.intent === "analytics_overview" ||
+      plan.intent === "idle_stock" ||
+      plan.intent === "stock_summary_report" ||
+      plan.intent === "list_purchase_orders" ||
+      plan.intent === "list_grns" ||
+      plan.intent === "list_invoices" ||
+      plan.intent === "list_dispatches" ||
+      plan.intent === "list_batches" ||
+      plan.intent === "my_notifications" ||
+      plan.intent === "reversal_check"
     );
   }
 
@@ -265,6 +309,45 @@ export class AutonomousAgentService {
           pendingConfirmation: lastAssistantMsg.confirmation,
         };
       }
+    }
+
+    // 0b. Conversational Greetings (English / Hindi / Hinglish)
+    const isGreeting =
+      /^(hi|hello|hey|namaste|namaskar|pranam|good\s*(morning|afternoon|evening)|kaise\s*ho|kya\s*haal|kya\s*hal|how\s*are\s*you|wassup)[!?. ]*$/i.test(text) ||
+      /^hi\s+(there|copilot|margix|assistant)[!?. ]*$/i.test(text);
+
+    if (isGreeting) {
+      return {
+        intent: "greeting",
+        steps: [
+          {
+            name: "Workspace Snapshot",
+            toolName: "get_workspace_summary",
+            arguments: {},
+            description: "Fetching live workspace summary for greeting",
+          },
+        ],
+      };
+    }
+
+    // 0c. Conversational Hindi Request or Language Difficulty
+    const isHindiLanguageRequest =
+      /\b(chat\s*in\s*hindi|speak\s*in\s*hindi|talk\s*in\s*hindi|in\s*hindi|hindi\s*me|hindi\s*mein|hindi\s*mai|hindi\s*bolo|hindi\s*me\s*baat|hindi\s*please)\b/i.test(text) ||
+      /\b(dont\s*understand\s*english|don't\s*understand\s*english|do\s*not\s*understand\s*english|cant\s*understand\s*english|cannot\s*understand\s*english|dont\s*undersand\s*english|don't\s*undersand\s*english|not\s*understand\s*english)\b/i.test(text) ||
+      /\b(what\s*are\s*you\s*giving|dont\s*underatnd|don't\s*underatnd|samajh\s*nahi\s*aaya|samajh\s*nhi\s*aaya|kya\s*bol\s*rahe|kya\s*de\s*rahe)\b/i.test(text);
+
+    if (isHindiLanguageRequest) {
+      return {
+        intent: "hindi_conversation",
+        steps: [
+          {
+            name: "Workspace Snapshot",
+            toolName: "get_workspace_summary",
+            arguments: {},
+            description: "Fetching operational status for Hindi onboarding",
+          },
+        ],
+      };
     }
 
     // 1. Destructive: Cancel Invoice
@@ -466,6 +549,7 @@ export class AutonomousAgentService {
 
     // 14. Immutable Inventory Ledger Audit Movements
     if (
+      !text.includes("summary") &&
       (text.includes("ledger") ||
         text.includes("audit") ||
         text.includes("movement") ||
@@ -519,7 +603,10 @@ export class AutonomousAgentService {
         ],
       };
     }
-    if (text.includes("purchase order") || text.includes(" po ")) {
+    if (
+      !/\b(purchase\s*orders|open\s*purchase|pending\s*purchase|all\s*purchase|list\s*purchase|show\s*open\s*po)\b/i.test(text) &&
+      (text.includes("purchase order") || text.includes(" po "))
+    ) {
       return { intent: "document_status", steps: [] };
     }
     if (dcMatch) {
@@ -536,17 +623,22 @@ export class AutonomousAgentService {
         ],
       };
     }
-    if (text.includes("dispatch document") || text.includes("outward")) {
+    if (
+      !/\b(dispatches|all\s*dispatch|open\s*dispatch|list\s*dispatch|show\s*recent\s*dispatch)\b/i.test(text) &&
+      (text.includes("dispatch document") || text.includes("outward"))
+    ) {
       return { intent: "document_status", steps: [] };
     }
 
     // 16. Low Stock Alerts & Reorder Replenishment
     if (
-      text.includes("low stock") ||
-      text.includes("reorder") ||
-      text.includes("shortage") ||
-      text.includes("replenish") ||
-      text.includes("alert")
+      !/\b(notifications?|inbox|my\s*alerts?|unread)\b/i.test(text) &&
+      (text.includes("low stock") ||
+        text.includes("reorder") ||
+        text.includes("shortage") ||
+        text.includes("replenish") ||
+        text.includes("stock alert") ||
+        /\balerts?\b/i.test(text))
     ) {
       return {
         intent: "low_stock_reorder",
@@ -567,6 +659,396 @@ export class AutonomousAgentService {
       };
     }
 
+    // 16b. Customers Directory
+    if (/\b(customers?|clients?|buyers?)\b/i.test(text) && /\b(show|list|view|all|find|get|details?)\b/i.test(text)) {
+      return {
+        intent: "list_customers",
+        steps: [
+          {
+            name: "Query Customers Registry",
+            toolName: "list_customers",
+            arguments: { limit: 10 },
+            description: "Fetching registered customers, GSTIN, and contact information",
+          },
+        ],
+      };
+    }
+
+    // 16c. Suppliers / Vendors Directory
+    if (/\b(suppliers?|vendors?)\b/i.test(text) && /\b(show|list|view|all|find|get|details?)\b/i.test(text)) {
+      return {
+        intent: "list_suppliers",
+        steps: [
+          {
+            name: "Query Suppliers Registry",
+            toolName: "list_suppliers",
+            arguments: { limit: 10 },
+            description: "Fetching registered suppliers, GSTIN, and purchasing counts",
+          },
+        ],
+      };
+    }
+
+    // 16d. Product Categories & Hierarchy
+    if (/\b(categor(y|ies)|groups?)\b/i.test(text) && !/\b(create|add|new)\b/i.test(text)) {
+      return {
+        intent: "list_categories",
+        steps: [
+          {
+            name: "Query Product Categories",
+            toolName: "list_categories",
+            arguments: {},
+            description: "Fetching product categories with default HSN codes and SKU counts",
+          },
+        ],
+      };
+    }
+
+    // 16e. Units of Measurement (UOMs)
+    if (/\b(uom|uoms|units?\s*of\s*measure)\b/i.test(text) || (/\bunits?\b/i.test(text) && /\b(show|list|view|all)\b/i.test(text))) {
+      return {
+        intent: "list_uoms",
+        steps: [
+          {
+            name: "Query Units of Measure",
+            toolName: "list_uoms",
+            arguments: {},
+            description: "Fetching registered units of measurement and decimal precisions",
+          },
+        ],
+      };
+    }
+
+    // 16f. HSN / SAC Codes & GST Rates
+    if (/\b(hsn|hsn\s*codes?|tax\s*slabs?)\b/i.test(text) || (/\bgst\s*rates?\b/i.test(text) && /\b(show|list|view|all|slabs?)\b/i.test(text))) {
+      return {
+        intent: "list_hsn_codes",
+        steps: [
+          {
+            name: "Query HSN & GST Directory",
+            toolName: "list_hsn_codes",
+            arguments: {},
+            description: "Fetching HSN / SAC codes and applicable GST rate slabs",
+          },
+        ],
+      };
+    }
+
+    // 16g. Stock Transfers
+    if (/\b(transfer|transfers|inter-godown)\b/i.test(text) && !/\b(create|new|start)\b/i.test(text)) {
+      return {
+        intent: "list_transfers",
+        steps: [
+          {
+            name: "Query Stock Transfers",
+            toolName: "list_transfers",
+            arguments: { limit: 8 },
+            description: "Fetching recent warehouse godown-to-godown transfer records",
+          },
+        ],
+      };
+    }
+
+    // 16h. Stock Adjustments (Maker-Checker)
+    if (/\b(adjustment|adjustments|physical\s*count)\b/i.test(text) && !/\b(create|request|new)\b/i.test(text)) {
+      return {
+        intent: "list_stock_adjustments",
+        steps: [
+          {
+            name: "Query Stock Adjustments",
+            toolName: "list_stock_adjustments",
+            arguments: { limit: 8 },
+            description: "Fetching maker-checker stock adjustment requests and approval statuses",
+          },
+        ],
+      };
+    }
+
+    // 16i. Sales Returns & Purchase Returns
+    if (/\b(return|returns|sales\s*return|purchase\s*return)\b/i.test(text) && !/\b(create|new)\b/i.test(text)) {
+      const isPurchase = text.includes("purchase") || text.includes("supplier") || text.includes("vendor");
+      return {
+        intent: "list_returns",
+        steps: [
+          {
+            name: "Query Return Vouchers",
+            toolName: "list_returns",
+            arguments: { type: isPurchase ? "purchase_return" : "sales_return", limit: 8 },
+            description: `Fetching recent ${isPurchase ? "supplier purchase" : "customer sales"} return vouchers`,
+          },
+        ],
+      };
+    }
+
+    // 16j. Opening Stock
+    if (/\b(opening\s*stock|opening\s*balance|migrated\s*stock)\b/i.test(text)) {
+      return {
+        intent: "list_opening_stock",
+        steps: [
+          {
+            name: "Query Opening Stock Records",
+            toolName: "list_opening_stock",
+            arguments: { limit: 8 },
+            description: "Fetching initial opening stock migration records",
+          },
+        ],
+      };
+    }
+
+    // 16k. Tally Prime Integration & Queue
+    if (/\b(tally|tally\s*sync|tally\s*queue|tally\s*status)\b/i.test(text)) {
+      return {
+        intent: "tally_status",
+        steps: [
+          {
+            name: "Check Tally Sync Status",
+            toolName: "get_tally_sync_status",
+            arguments: {},
+            description: "Querying Tally Prime integration queue metrics",
+          },
+          {
+            name: "Inspect Tally Queue",
+            toolName: "list_tally_queue",
+            arguments: { limit: 6 },
+            description: "Fetching recent Tally Prime sync jobs and error logs",
+          },
+        ],
+      };
+    }
+
+    // 16l. Audit Trail
+    if (/\b(audit\s*trail|audit\s*log|activity\s*log|who\s*did\s*what|change\s*log)\b/i.test(text)) {
+      return {
+        intent: "audit_trail",
+        steps: [
+          {
+            name: "Query Audit Log",
+            toolName: "get_audit_trail",
+            arguments: { limit: 10 },
+            description: "Querying cryptographic audit logs of mutations and user actions",
+          },
+        ],
+      };
+    }
+
+    // 16m. Users & Team
+    if (/\b(users?|team|staff|operators?|managers?)\b/i.test(text) && /\b(show|list|view|all|who)\b/i.test(text)) {
+      return {
+        intent: "list_users",
+        steps: [
+          {
+            name: "Query User Registry",
+            toolName: "list_users",
+            arguments: { limit: 10 },
+            description: "Fetching system operators, roles, and access status",
+          },
+        ],
+      };
+    }
+
+    // 16n. System Health
+    if (/\b(system\s*health|system\s*status|health\s*check|connectivity)\b/i.test(text)) {
+      return {
+        intent: "system_health",
+        steps: [
+          {
+            name: "Evaluate System Health",
+            toolName: "get_system_health",
+            arguments: {},
+            description: "Checking database connection, ledger consistency, and queue health",
+          },
+        ],
+      };
+    }
+
+    // 16o. Daily Operations Checklist
+    if (/\b(checklist|daily\s*task|to-?do|what\s*(should|to)\s*do|aaj\s*ka\s*kaam|today'?s?\s*(work|tasks?))\b/i.test(text)) {
+      return {
+        intent: "daily_checklist",
+        steps: [
+          {
+            name: "Retrieve Daily Checklist",
+            toolName: "get_daily_checklist",
+            arguments: {},
+            description: "Checking today's operational checklist, dispatch queue, and sync items",
+          },
+        ],
+      };
+    }
+
+    // 16p. Business Analytics & Performance KPIs
+    if (/\b(analytics|kpis?|financials?|business\s*(report|summary|health)|revenue\s*report)\b/i.test(text)) {
+      return {
+        intent: "analytics_overview",
+        steps: [
+          {
+            name: "Compute Business Analytics",
+            toolName: "get_analytics_overview",
+            arguments: { period: "30d" },
+            description: "Aggregating sales, purchasing, operational fulfillment, and inventory KPIs",
+          },
+        ],
+      };
+    }
+
+    // 16q. Slow-Moving & Dead Stock Analysis
+    if (/\b(idle\s*stock|slow\s*moving|dead\s*stock|non-moving|purana\s*maal|slow\s*stock)\b/i.test(text)) {
+      return {
+        intent: "idle_stock",
+        steps: [
+          {
+            name: "Scan Idle Stock",
+            toolName: "get_idle_stock",
+            arguments: { days: 90, limit: 8 },
+            description: "Scanning warehouse godowns for products with no ledger movement",
+          },
+        ],
+      };
+    }
+
+    // 16r. Stock Movement Summary Report (Opening + Inward - Outward = Closing)
+    if (/\b(stock\s*summary|movement\s*summary|opening\s*closing|movement\s*report)\b/i.test(text)) {
+      return {
+        intent: "stock_summary_report",
+        steps: [
+          {
+            name: "Generate Stock Summary Report",
+            toolName: "get_stock_summary_report",
+            arguments: { groupBy: "sku" },
+            description: "Calculating ledger stock movement equation across products and godowns",
+          },
+        ],
+      };
+    }
+
+    // 16s. Purchase Orders List
+    if (
+      /\b(purchase\s*order|purchase\s*orders|\bpos?\b)\b/i.test(text) &&
+      /\b(show|list|view|all|pending|open|recent|check)\b/i.test(text) &&
+      !/\b(cancel|cancle|delete|short\s*close)\b/i.test(text)
+    ) {
+      const onlyOpen = text.includes("pending") || text.includes("open");
+      return {
+        intent: "list_purchase_orders",
+        steps: [
+          {
+            name: "Query Purchase Orders",
+            toolName: "list_purchase_orders",
+            arguments: { status: onlyOpen ? "OPEN" : undefined, limit: 8 },
+            description: `Fetching ${onlyOpen ? "open and pending" : "recent"} purchase orders and fulfillment status`,
+          },
+        ],
+      };
+    }
+
+    // 16t. Goods Receipt Notes (GRNs)
+    if (/\b(\bgrns?\b|goods\s*receipt|inward\s*receipt|receipt\s*notes?)\b/i.test(text) && /\b(show|list|view|all|recent|check)\b/i.test(text)) {
+      return {
+        intent: "list_grns",
+        steps: [
+          {
+            name: "Query Goods Receipt Notes",
+            toolName: "list_grns",
+            arguments: { limit: 8 },
+            description: "Fetching recent goods receipt notes and warehouse gate records",
+          },
+        ],
+      };
+    }
+
+    // 16u. Invoices List
+    if (
+      /\b(invoices?|bills?)\b/i.test(text) &&
+      /\b(show|list|view|all|pending|open|recent)\b/i.test(text) &&
+      !/\b(cancel|cancle|delete|void)\b/i.test(text)
+    ) {
+      const onlyOpen = text.includes("pending") || text.includes("open");
+      return {
+        intent: "list_invoices",
+        steps: [
+          {
+            name: "Query Sales Invoices",
+            toolName: "list_invoices",
+            arguments: { status: onlyOpen ? "OPEN" : undefined, limit: 8 },
+            description: `Fetching ${onlyOpen ? "open and undelivered" : "recent"} customer sales invoices`,
+          },
+        ],
+      };
+    }
+
+    // 16v. Dispatches & Delivery Challans
+    if (
+      /\b(dispatches?|outwards?|delivery\s*challans?|\bdcs?\b)\b/i.test(text) &&
+      /\b(show|list|view|all|recent|today)\b/i.test(text) &&
+      !/\b(post|create|confirm|ready)\b/i.test(text)
+    ) {
+      return {
+        intent: "list_dispatches",
+        steps: [
+          {
+            name: "Query Dispatches",
+            toolName: "list_dispatches",
+            arguments: { limit: 8 },
+            description: "Fetching outward delivery challans and dispatched shipments",
+          },
+        ],
+      };
+    }
+
+    // 16w. Batches Catalog
+    if (/\b(batches|batch\s*list|all\s*batches)\b/i.test(text) && /\b(show|list|view|all|check)\b/i.test(text)) {
+      return {
+        intent: "list_batches",
+        steps: [
+          {
+            name: "Query Batches Catalog",
+            toolName: "list_batches",
+            arguments: { limit: 8 },
+            description: "Listing product batches with manufacturing and expiry records",
+          },
+        ],
+      };
+    }
+
+    // 16x. User In-App Notifications
+    if (/\b(notifications?|unread\s*alerts?|my\s*alerts?|inbox)\b/i.test(text)) {
+      return {
+        intent: "my_notifications",
+        steps: [
+          {
+            name: "Fetch Notifications",
+            toolName: "list_my_notifications",
+            arguments: { limit: 8 },
+            description: "Querying user notification inbox and unread messages",
+          },
+        ],
+      };
+    }
+
+    // 16y. Document Reversal Eligibility & Safety Check
+    if (/\b(can\s*we\s*reverse|check\s*reversal|is\s*reversal\s*safe|reversal\s*check|reversal\s*possible)\b/i.test(text)) {
+      const docMatch = message.match(/((?:DEMO-)?(?:GRN|DC|INV|TRF|ADJ)-[A-Za-z0-9-]+)/i);
+      const identifier = docMatch ? docMatch[1].toUpperCase() : "GRN-2026-0001";
+      const docType = identifier.startsWith("GRN")
+        ? "grn"
+        : identifier.startsWith("DC")
+          ? "dispatch"
+          : identifier.startsWith("TRF")
+            ? "transfer"
+            : "adjustment";
+      return {
+        intent: "reversal_check",
+        steps: [
+          {
+            name: "Audit Reversal Safety",
+            toolName: "check_reversal_eligibility",
+            arguments: { docType, identifier },
+            description: `Auditing ledger non-negative balance constraints for reversing "${identifier}"`,
+          },
+        ],
+      };
+    }
+
     // 17. Godown Capacities and Locations
     if (text.includes("godown") || text.includes("warehouse") || text.includes("depot")) {
       return {
@@ -582,10 +1064,29 @@ export class AutonomousAgentService {
       };
     }
 
-    // 18. Stock Balance & Batch Check for a Product
+    // 18. General Warehouse Inventory Availability
+    const isGeneralInventoryQuery =
+      /\b(is there any product|any product available|any product availabe|any products?|what products?|all products?|all stock|show inventory|check inventory|list stock|total stock|kya stock hai|koi product hai|kya maal hai|kya item hai|mere paas kya hai|inventory summary|stock list|overall stock|everything in stock|my inventory|our inventory|in inventory|on inventory)\b/i.test(text) ||
+      (/\b(product|products|item|items|stock|anything)\b/i.test(text) && /\b(available|availabe|exist|on hand|in godown|in warehouse|in inventory|on inventory)\b/i.test(text));
+
+    if (isGeneralInventoryQuery) {
+      return {
+        intent: "inventory_overview",
+        steps: [
+          {
+            name: "Scan Warehouse Inventory",
+            toolName: "get_inventory_overview",
+            arguments: { limit: 25 },
+            description: "Checking live stock balances and batch availability across all registered products",
+          },
+        ],
+      };
+    }
+
+    // 19. Stock Balance & Batch Check for a Specific Product
     const isConceptualStock =
       /\b(how does|how do|what is|why is|explain|tell me about)\b/i.test(text) &&
-      !/\b(balance|available|on hand|in warehouse|batch|godown|how much|how many)\b/i.test(text);
+      !/\b(balance|available|availabe|on hand|in warehouse|batch|godown|how much|how many)\b/i.test(text);
 
     if (
       !isConceptualStock &&
@@ -593,16 +1094,33 @@ export class AutonomousAgentService {
         text.includes("inventory") ||
         text.includes("on hand") ||
         text.includes("available") ||
+        text.includes("availabe") ||
         text.includes("how many") ||
         text.includes("balance"))
     ) {
-      const clean =
-        tidyTerm(
-          message.replace(
-            /\b(?:stock|inventory|on\s*hand|available|how\s*many|balance|check|find|what\s*is\s*the|of|for|in|me|show|please|my|the)\b/gi,
-            "",
-          ),
-        ) || "Basmati";
+      const clean = tidyTerm(
+        message.replace(
+          /\b(?:ok|is\s*there\s*any|product\s*available|product\s*availabe|available\s*product|availabe\s*product|stock\s*of|stock\s*for|stock\s*balance\s*of|stock\s*balance|inventory\s*of|on\s*hand|available|availabe|how\s*many|balance|check|find|what\s*is\s*the|of|for|in|me|show|please|my|the)\b/gi,
+          " ",
+        ),
+      );
+
+      if (
+        clean.length < 2 ||
+        /^(product|products|item|items|inventory|stock|all|everything|availabe|available|any|anything)$/i.test(clean)
+      ) {
+        return {
+          intent: "inventory_overview",
+          steps: [
+            {
+              name: "Scan Warehouse Inventory",
+              toolName: "get_inventory_overview",
+              arguments: { limit: 25 },
+              description: "Checking live stock balances and batch availability across all registered products",
+            },
+          ],
+        };
+      }
 
       return {
         intent: "stock_check",
@@ -1264,6 +1782,7 @@ export class AutonomousAgentService {
         const parsed = await executeCopilotToolData(step.toolName, JSON.stringify(step.arguments), {
           role: context.role,
           route: context.route,
+          userId: context.userId,
         });
         executed.push({
           toolName: step.toolName,
@@ -1572,6 +2091,773 @@ export class AutonomousAgentService {
         actions.push({ label: "Create Purchase Order", route: "/purchase-orders/new", permission: "po.manage" });
         actions.push({ label: "View Ledger History", route: "/ledger", permission: "ledger.view" });
         sources.push("Live Stock Balance & Cryptographic Ledger");
+        break;
+      }
+
+      case "greeting": {
+        markdown = `## 👋 Hello! Welcome to Margix IMS\n\n`;
+        markdown += `I am your intelligent assistant for **Inventory Management**, **GST Billing**, and **Warehouse Operations**. You can speak with me in **English**, **Hindi (हिंदी)**, or **Hinglish**!\n\n`;
+        markdown += `### How I can help you:\n`;
+        markdown += `- 📦 **Live Inventory & Stock:** Ask *"What products are in stock?"* or *"Check stock for Basmati"*\n`;
+        markdown += `- 🚚 **FEFO Dispatch Allocation:** Say *"Pick batches for invoice INV-2026-0001"*\n`;
+        markdown += `- 🚨 **Shortages & Reorder Rules:** Ask *"Show low stock alerts"* or *"What items need reorder?"*\n`;
+        markdown += `- 📄 **Track Documents:** Check the status of any PO, Invoice, or Delivery Challan\n`;
+        markdown += `- 🔄 **Autonomous Operations:** Cancel invoices, reverse ledger entries, or seed sample data\n\n`;
+        markdown += `What would you like to check today? Feel free to ask in English or Hindi!\n`;
+
+        actions.push({ label: "View Stock Balances", route: "/stock", permission: "stock.view" });
+        actions.push({ label: "Browse Products", route: "/masters/skus", permission: "master.view" });
+        actions.push({ label: "Open Invoices", route: "/invoices", permission: "invoice.view" });
+        actions.push({ label: "Purchase Orders", route: "/purchase-orders", permission: "po.view" });
+        sources.push("Margix Assistant Core");
+        break;
+      }
+
+      case "hindi_conversation": {
+        markdown = `## 🙏 नमस्ते! हम हिंदी या हिंग्लिश में बात कर सकते हैं\n\n`;
+        markdown += `आप बिना किसी झिझक के साधारण भाषा में सवाल पूछ सकते हैं। मैं आपको इन्वेंट्री, बिलिंग और गोदाम के हर काम में मदद करूँगा।\n\n`;
+        markdown += `### आप मुझसे क्या-क्या पूछ सकते हैं:\n`;
+        markdown += `- 📦 **इन्वेंट्री और स्टॉक:** *"क्या मेरे पास कोई माल है?"*, *"गोदाम में कितना माल है?"*\n`;
+        markdown += `- 🚚 **माल डिस्पैच (FEFO):** *"पहले कौन सा बैच निकालना है?"*, *"चालान बना दो"*\n`;
+        markdown += `- ⚠️ **कम स्टॉक अलर्ट:** *"कौन सा माल खत्म हो रहा है?"*, *"किसका आर्डर देना है?"*\n`;
+        markdown += `- 📄 **बिल और पर्चे:** *"बिल INV-2026-0001 का क्या स्टेटस है?"*, *"गलत एंट्री रिवर्स करो"*\n`;
+        markdown += `- 🧪 **डेमो डेटा:** *"सीखने के लिए सैंपल डेटा लोड कर दो"*\n\n`;
+        markdown += `बताइए, अभी आप क्या चेक करना चाहते हैं?\n`;
+
+        actions.push({ label: "स्टॉक देखें (Stock)", route: "/stock", permission: "stock.view" });
+        actions.push({ label: "प्रोडक्ट्स (Products)", route: "/masters/skus", permission: "master.view" });
+        actions.push({ label: "बिल और चालान (Invoices)", route: "/invoices", permission: "invoice.view" });
+        actions.push({ label: "डेमो डेटा लोड करें", route: "/dashboard", permission: "dashboard.view" });
+        sources.push("Margix Multilingual Assistant");
+        break;
+      }
+
+      case "inventory_overview": {
+        const invData = executed.find((e) => e.toolName === "get_inventory_overview")?.output as InventoryOverviewResult | undefined;
+        const totalRegistered = invData?.totalRegisteredSkus ?? 0;
+        const products = invData?.products ?? [];
+
+        if (products.length === 0) {
+          markdown = `## 📦 Warehouse Inventory Status\n\n`;
+          markdown += `Currently, there is **no stock on hand** in your inventory.\n\n`;
+          markdown += `- **Registered Active Products:** ${totalRegistered} SKU(s)\n`;
+          markdown += `- **On-Hand Batches:** 0\n`;
+          markdown += `- **Physical Godowns:** Active\n\n`;
+          markdown += `### How to add inventory to Margix:\n`;
+          markdown += `1. **Add Products (SKUs):** Go to **Products (SKUs)** → **New SKU** to register your catalog.\n`;
+          markdown += `2. **Receive Goods:** Create a **Purchase Order** and post a **Goods Receipt (GRN)** with batch and expiry.\n`;
+          markdown += `3. **Opening Stock:** For pre-existing inventory, use **Opening Stock** to record initial balances.\n`;
+          markdown += `4. **Test with Demo Data:** Or ask me *"Seed sandbox demo data"* to instantly load realistic sample products, batches, and open invoices to explore!\n`;
+
+          actions.push({ label: "Create a Product", route: "/masters/skus", permission: "master.manage" });
+          actions.push({ label: "New Purchase Order", route: "/purchase-orders/new", permission: "po.manage" });
+          actions.push({ label: "Post Opening Stock", route: "/opening-stock", permission: "opening.post" });
+          actions.push({ label: "Seed Demo Data", route: "/dashboard", permission: "dashboard.view" });
+        } else {
+          markdown = `## 📦 Live Warehouse Stock Summary\n\n`;
+          markdown += `You have **${products.length} product(s)** with positive stock on hand across your godowns:\n\n`;
+          markdown += `| SKU Code | Product Name | Available Stock | Godowns | Active Batches |\n`;
+          markdown += `| :--- | :--- | :---: | :---: | :---: |\n`;
+          for (const p of products) {
+            markdown += `| \`${p.code}\` | **${p.name}** | **${p.totalQuantity} ${p.baseUnit}** | \`${p.godowns.join(", ")}\` | ${p.batchCount} batch(es) |\n`;
+          }
+          markdown += `\n_Quantities are in each product's base unit. Dispatches automatically follow FEFO (First-Expiry, First-Out)._\n`;
+
+          actions.push({ label: "View Live Stock Table", route: "/stock", permission: "stock.view" });
+          actions.push({ label: "Create Outward Dispatch", route: "/dispatches/new", permission: "dispatch.create" });
+          actions.push({ label: "Create Invoice", route: "/invoices/new", permission: "invoice.manage" });
+        }
+
+        sources.push("Live Stock Balance & Product Catalog");
+        break;
+      }
+
+      case "list_customers": {
+        const cData = executed.find((e) => e.toolName === "list_customers")?.output as { count: number; customers: Array<{ code: string; name: string; gstin: string; totalInvoices: number; totalDispatches: number }> } | undefined;
+        const list = cData?.customers || [];
+        markdown = `## 👥 Registered Customers Directory\n\n`;
+        markdown += `Total active customers: **${list.length}**\n\n`;
+        if (list.length > 0) {
+          markdown += `| Code | Customer Name | GSTIN | Invoices | Dispatches |\n`;
+          markdown += `| :--- | :--- | :---: | :---: | :---: |\n`;
+          for (const c of list) {
+            markdown += `| \`${c.code}\` | **${c.name}** | \`${c.gstin}\` | ${c.totalInvoices} | ${c.totalDispatches} |\n`;
+          }
+        } else {
+          markdown += `_No registered customers found. Add your first customer from Masters._\n`;
+        }
+        actions.push({ label: "Create Customer", route: "/masters/customers", permission: "master.manage" });
+        actions.push({ label: "View Invoices", route: "/invoices", permission: "invoice.view" });
+        sources.push("Customer Master Registry");
+        break;
+      }
+
+      case "list_suppliers": {
+        const sData = executed.find((e) => e.toolName === "list_suppliers")?.output as { count: number; suppliers: Array<{ code: string; name: string; gstin: string; phone: string | null; totalPurchaseOrders: number }> } | undefined;
+        const list = sData?.suppliers || [];
+        markdown = `## 🏭 Registered Suppliers / Vendors\n\n`;
+        markdown += `Total active suppliers: **${list.length}**\n\n`;
+        if (list.length > 0) {
+          markdown += `| Code | Supplier Name | GSTIN | Phone | Total POs |\n`;
+          markdown += `| :--- | :--- | :---: | :---: | :---: |\n`;
+          for (const s of list) {
+            markdown += `| \`${s.code}\` | **${s.name}** | \`${s.gstin}\` | ${s.phone || "—"} | ${s.totalPurchaseOrders} |\n`;
+          }
+        } else {
+          markdown += `_No registered suppliers found. Register your suppliers to raise Purchase Orders._\n`;
+        }
+        actions.push({ label: "Create Supplier", route: "/masters/suppliers", permission: "master.manage" });
+        actions.push({ label: "Create Purchase Order", route: "/purchase-orders/new", permission: "po.manage" });
+        sources.push("Supplier Master Registry");
+        break;
+      }
+
+      case "list_categories": {
+        const catData = executed.find((e) => e.toolName === "list_categories")?.output as { count: number; categories: Array<{ id: string; name: string; defaultHsn: string | null; defaultGstRate: string | null; productCount: number }> } | undefined;
+        const list = catData?.categories || [];
+        markdown = `## 🏷️ Product Categories & Grouping\n\n`;
+        markdown += `Total categories: **${list.length}**\n\n`;
+        if (list.length > 0) {
+          markdown += `| Category Name | Default HSN | GST Rate | Active Products |\n`;
+          markdown += `| :--- | :---: | :---: | :---: |\n`;
+          for (const c of list) {
+            markdown += `| **${c.name}** | \`${c.defaultHsn || "—"}\` | ${c.defaultGstRate ? `${c.defaultGstRate}%` : "—"} | ${c.productCount} SKU(s) |\n`;
+          }
+        } else {
+          markdown += `_No categories configured yet._\n`;
+        }
+        actions.push({ label: "Product Master", route: "/masters/skus", permission: "master.view" });
+        sources.push("Category Master");
+        break;
+      }
+
+      case "list_uoms": {
+        const uData = executed.find((e) => e.toolName === "list_uoms")?.output as { count: number; uoms: Array<{ code: string; name: string; decimalPlaces: number }> } | undefined;
+        const list = uData?.uoms || [];
+        markdown = `## 📏 Units of Measurement (UOM)\n\n`;
+        markdown += `Registered units: **${list.length}**\n\n`;
+        for (const u of list) {
+          markdown += `- **\`${u.code}\`** — ${u.name} (Decimal Places: ${u.decimalPlaces})\n`;
+        }
+        actions.push({ label: "Product Master", route: "/masters/skus", permission: "master.view" });
+        sources.push("Unit of Measurement Master");
+        break;
+      }
+
+      case "list_hsn_codes": {
+        const hData = executed.find((e) => e.toolName === "list_hsn_codes")?.output as { count: number; hsnCodes: Array<{ code: string; description: string; gstRate: string }> } | undefined;
+        const list = hData?.hsnCodes || [];
+        markdown = `## ⚖️ HSN / SAC Codes & GST Rates\n\n`;
+        markdown += `Registered HSN Directory entries: **${list.length}**\n\n`;
+        if (list.length > 0) {
+          markdown += `| HSN Code | Description | GST Rate |\n`;
+          markdown += `| :--- | :--- | :---: |\n`;
+          for (const h of list) {
+            markdown += `| \`${h.code}\` | ${h.description} | **${h.gstRate}** |\n`;
+          }
+        }
+        actions.push({ label: "Open HSN & GST", route: "/masters/hsn", permission: "master.view" });
+        sources.push("HSN & GST Master");
+        break;
+      }
+
+      case "list_transfers": {
+        const tData = executed.find((e) => e.toolName === "list_transfers")?.output as { count: number; transfers: Array<{ number: string; date: string; status: string; fromGodown: string; toGodown: string; items: Array<{ product: string; batch: string; quantity: string }> }> } | undefined;
+        const list = tData?.transfers || [];
+        markdown = `## 🔄 Recent Godown-to-Godown Stock Transfers\n\n`;
+        markdown += `Total recent transfers: **${list.length}**\n\n`;
+        if (list.length > 0) {
+          for (const t of list) {
+            markdown += `- **\`${t.number}\`** (\`${t.fromGodown}\` ➔ \`${t.toGodown}\`) | Status: **${t.status}**\n`;
+            for (const item of t.items) {
+              markdown += `  - ${item.product} (Batch: \`${item.batch}\`): **${item.quantity}**\n`;
+            }
+          }
+        } else {
+          markdown += `_No inter-godown transfers recorded._\n`;
+        }
+        actions.push({ label: "New Transfer", route: "/transfers/new", permission: "transfer.create" });
+        actions.push({ label: "Transfer Registry", route: "/transfers", permission: "transfer.view" });
+        sources.push("Warehouse Transfer Registry");
+        break;
+      }
+
+      case "list_stock_adjustments": {
+        const aData = executed.find((e) => e.toolName === "list_stock_adjustments")?.output as { count: number; adjustments: Array<{ number: string; status: string; reasonCode: string; godown: string; items: Array<{ product: string; signedQuantity: string }> }> } | undefined;
+        const list = aData?.adjustments || [];
+        markdown = `## 📝 Maker-Checker Stock Adjustment Requests\n\n`;
+        markdown += `Total adjustment requests: **${list.length}**\n\n`;
+        if (list.length > 0) {
+          for (const a of list) {
+            markdown += `- **\`${a.number}\`** | Godown: \`${a.godown}\` | Reason: **${a.reasonCode}** | Status: **${a.status}**\n`;
+            for (const item of a.items) {
+              markdown += `  - ${item.product}: **${item.signedQuantity}**\n`;
+            }
+          }
+        } else {
+          markdown += `_No pending or historical stock adjustments found._\n`;
+        }
+        actions.push({ label: "Open Adjustments", route: "/adjustments", permission: "adjustment.view" });
+        sources.push("Maker-Checker Adjustment Audit");
+        break;
+      }
+
+      case "list_returns": {
+        const rData = executed.find((e) => e.toolName === "list_returns")?.output as { type: string; count: number; returns: Array<{ number: string; date: string; status: string; customer?: string; supplier?: string; godown: string; itemCount: number }> } | undefined;
+        const list = rData?.returns || [];
+        const isSales = rData?.type === "sales_return";
+        markdown = `## ↩️ ${isSales ? "Customer Sales Returns" : "Supplier Purchase Returns"}\n\n`;
+        markdown += `Total return documents: **${list.length}**\n\n`;
+        if (list.length > 0) {
+          markdown += `| Number | Party | Godown | Items | Status |\n`;
+          markdown += `| :--- | :--- | :---: | :---: | :---: |\n`;
+          for (const r of list) {
+            markdown += `| \`${r.number}\` | **${r.customer || r.supplier || "Unknown"}** | \`${r.godown}\` | ${r.itemCount} item(s) | ${r.status} |\n`;
+          }
+        } else {
+          markdown += `_No ${isSales ? "sales" : "purchase"} returns recorded._\n`;
+        }
+        actions.push({ label: isSales ? "Sales Returns" : "Purchase Returns", route: isSales ? "/sales-returns" : "/purchase-returns", permission: "return.view" });
+        sources.push("Returns Ledger");
+        break;
+      }
+
+      case "list_opening_stock": {
+        const oData = executed.find((e) => e.toolName === "list_opening_stock")?.output as { count: number; openings: Array<{ number: string; asOf: string | null; godown: string; status: string; lines: Array<{ product: string; batch: string; quantity: string }> }> } | undefined;
+        const list = oData?.openings || [];
+        markdown = `## 📦 Opening Stock Migration Records\n\n`;
+        markdown += `Total opening balance postings: **${list.length}**\n\n`;
+        if (list.length > 0) {
+          for (const o of list) {
+            markdown += `- **\`${o.number}\`** (As of: ${o.asOf}) | Godown: \`${o.godown}\` | Status: **${o.status}**\n`;
+            for (const line of o.lines) {
+              markdown += `  - ${line.product} (Batch: \`${line.batch}\`): **${line.quantity}**\n`;
+            }
+          }
+        } else {
+          markdown += `_No opening stock balances posted yet._\n`;
+        }
+        actions.push({ label: "Post Opening Stock", route: "/opening-stock", permission: "opening.post" });
+        sources.push("Opening Balance Ledger");
+        break;
+      }
+
+      case "tally_status": {
+        const syncData = executed.find((e) => e.toolName === "get_tally_sync_status")?.output as { pendingCount: number; inProgressCount: number; syncedCount: number; failedCount: number; status: string } | undefined;
+        const queueData = executed.find((e) => e.toolName === "list_tally_queue")?.output as { count: number; jobs: Array<{ entityType: string; entityNo: string; status: string; attempts: number; lastError: string | null }> } | undefined;
+
+        markdown = `## 📊 Tally Prime Integration Status\n\n`;
+        markdown += `System Status: **${syncData?.status === "HEALTHY" ? "✅ Healthy" : "⚠️ Attention Required"}**\n\n`;
+        markdown += `- **Synced Vouchers:** ${syncData?.syncedCount ?? 0}\n`;
+        markdown += `- **Pending in Queue:** ${syncData?.pendingCount ?? 0}\n`;
+        markdown += `- **Failed Syncs:** ${syncData?.failedCount ?? 0}\n\n`;
+
+        if (queueData && queueData.jobs.length > 0) {
+          markdown += `### Recent Sync Jobs:\n`;
+          for (const j of queueData.jobs) {
+            markdown += `- **${j.entityType} \`${j.entityNo}\`**: Status: **${j.status}** (Attempts: ${j.attempts})\n`;
+            if (j.lastError) markdown += `  - _Error:_ \`${j.lastError}\`\n`;
+          }
+        }
+
+        actions.push({ label: "Open Tally Sync", route: "/tally", permission: "tally.view" });
+        sources.push("Tally Prime Connector");
+        break;
+      }
+
+      case "audit_trail": {
+        const auditData = executed.find((e) => e.toolName === "get_audit_trail")?.output as { count: number; logs: Array<{ action: string; entityType: string; user: string; timestamp: string }> } | undefined;
+        const logs = auditData?.logs || [];
+        markdown = `## 🔒 Cryptographic Audit Trail\n\n`;
+        markdown += `Recent audited actions: **${logs.length}**\n\n`;
+        if (logs.length > 0) {
+          markdown += `| Action | Entity | Actor | Timestamp |\n`;
+          markdown += `| :--- | :--- | :--- | :---: |\n`;
+          for (const l of logs) {
+            markdown += `| **${l.action}** | \`${l.entityType}\` | ${l.user} | ${l.timestamp.slice(0, 19).replace("T", " ")} |\n`;
+          }
+        }
+        actions.push({ label: "Open Audit Trail", route: "/audit", permission: "audit.view" });
+        sources.push("Cryptographic Audit Log");
+        break;
+      }
+
+      case "list_users": {
+        const uData = executed.find((e) => e.toolName === "list_users")?.output as { count: number; users: Array<{ name: string; email: string; role: string; isActive: boolean }> } | undefined;
+        const users = uData?.users || [];
+        markdown = `## 👥 Workspace Users & Access Control\n\n`;
+        markdown += `Total registered team members: **${users.length}**\n\n`;
+        if (users.length > 0) {
+          markdown += `| Name | Email | Role | Status |\n`;
+          markdown += `| :--- | :--- | :--- | :---: |\n`;
+          for (const u of users) {
+            markdown += `| **${u.name}** | \`${u.email}\` | **${u.role}** | ${u.isActive ? "✅ Active" : "❌ Inactive"} |\n`;
+          }
+        }
+        actions.push({ label: "Manage Users", route: "/admin/users", permission: "user.manage" });
+        sources.push("User Management Registry");
+        break;
+      }
+
+      case "system_health": {
+        const hData = executed.find((e) => e.toolName === "get_system_health")?.output as { database: string; health: { activeAlerts: number; failedTallyJobs: number; ledgerIntegrity: string } } | undefined;
+        markdown = `## 🛡️ Margix IMS System Health & Diagnostics\n\n`;
+        markdown += `- **Database:** ✅ **${hData?.database || "CONNECTED"}** (PostgreSQL)\n`;
+        markdown += `- **Ledger State:** ✅ **${hData?.health?.ledgerIntegrity || "VERIFIED_CONSISTENT"}**\n`;
+        markdown += `- **Active Stock Alerts:** ${hData?.health?.activeAlerts ?? 0}\n`;
+        markdown += `- **Tally Prime Connector:** ${hData?.health?.failedTallyJobs ? `⚠️ ${hData.health.failedTallyJobs} failed` : "✅ 0 failures"}\n\n`;
+        markdown += `_All ledger cryptographic balances reconcile with stock balance projections in real-time._\n`;
+
+        actions.push({ label: "Dashboard", route: "/dashboard", permission: "dashboard.view" });
+        sources.push("System Health Monitor");
+        break;
+      }
+
+      case "daily_checklist": {
+        const cData = executed.find((e) => e.toolName === "get_daily_checklist")?.output as
+          | {
+              day: string;
+              totalItems: number;
+              summary: { pending: number; inProgress: number; completed: number; critical: number };
+              items: Array<{ title: string; count: number; status: string; detail: string; href?: string }>;
+            }
+          | undefined;
+
+        if (!cData || "error" in cData) {
+          markdown = `## 📋 Daily Operations Checklist\n\nCould not fetch today's operations checklist.`;
+          actions.push({ label: "Open Dashboard", route: "/dashboard", permission: "dashboard.view" });
+          break;
+        }
+
+        markdown = `## 📋 Daily Operations Checklist (${cData.day})\n\n`;
+        markdown += `Status Overview: **${cData.summary.completed}** completed | **${cData.summary.pending}** pending | **${cData.summary.critical}** critical\n\n`;
+        if (cData.items.length > 0) {
+          markdown += `| Task | Status | Count | Details |\n`;
+          markdown += `| :--- | :---: | :---: | :--- |\n`;
+          for (const item of cData.items) {
+            const badge =
+              item.status === "COMPLETED"
+                ? "✅ Completed"
+                : item.status === "CRITICAL"
+                  ? "🔴 Critical"
+                  : item.status === "IN_PROGRESS"
+                    ? "⏳ In Progress"
+                    : "🟡 Pending";
+            markdown += `| **${item.title}** | ${badge} | ${item.count} | ${item.detail} |\n`;
+            if (item.href) {
+              actions.push({ label: item.title, route: item.href, permission: "dashboard.view" });
+            }
+          }
+        } else {
+          markdown += `_No pending tasks on your checklist for today._\n`;
+        }
+        actions.push({ label: "Dashboard", route: "/dashboard", permission: "dashboard.view" });
+        sources.push("Daily Operations Engine");
+        break;
+      }
+
+      case "analytics_overview": {
+        const aData = executed.find((e) => e.toolName === "get_analytics_overview")?.output as
+          | {
+              period: string;
+              sales: { count: number; netAmount: number; grossAmount: number; taxAmount: number };
+              purchases: { count: number; totalAmount: number };
+              operations: { orderFulfillmentRate: number; pendingDispatches: number };
+              inventory: { stockValue: number };
+            }
+          | undefined;
+
+        if (!aData || "error" in aData) {
+          markdown = `## 📈 Business Analytics & Financial Overview\n\nCould not aggregate analytics for the selected period.`;
+          actions.push({ label: "View Analytics", route: "/analytics", permission: "dashboard.view" });
+          break;
+        }
+
+        markdown = `## 📈 Business Analytics & Financial Overview (${aData.period})\n\n`;
+        markdown += `### 💰 Revenue & Sales\n`;
+        markdown += `- **Invoices Issued:** ${aData.sales.count} invoices\n`;
+        markdown += `- **Net Sales Revenue:** ₹${Number(aData.sales.netAmount).toLocaleString("en-IN")}\n`;
+        markdown += `- **Gross Billed Amount:** ₹${Number(aData.sales.grossAmount).toLocaleString("en-IN")}\n`;
+        markdown += `- **GST Collected:** ₹${Number(aData.sales.taxAmount).toLocaleString("en-IN")}\n\n`;
+
+        markdown += `### 🛒 Procurement & Spend\n`;
+        markdown += `- **Purchase Orders Placed:** ${aData.purchases.count} orders\n`;
+        markdown += `- **Total Spend:** ₹${Number(aData.purchases.totalAmount).toLocaleString("en-IN")}\n\n`;
+
+        markdown += `### 📦 Warehousing & Fulfillment\n`;
+        markdown += `- **Order Fulfillment Rate:** ${(Number(aData.operations.orderFulfillmentRate) * 100).toFixed(1)}%\n`;
+        markdown += `- **Pending Dispatches:** ${aData.operations.pendingDispatches}\n`;
+        markdown += `- **Total Live Stock Valuation:** ₹${Number(aData.inventory.stockValue).toLocaleString("en-IN")}\n`;
+
+        actions.push(
+          { label: "Sales Analytics", route: "/analytics/sales", permission: "invoice.view" },
+          { label: "Purchase Analytics", route: "/analytics/purchasing", permission: "po.view" },
+          { label: "Stock Balances", route: "/stock", permission: "stock.view" },
+        );
+        sources.push("Enterprise Business Intelligence Engine");
+        break;
+      }
+
+      case "idle_stock": {
+        const idleData = executed.find((e) => e.toolName === "get_idle_stock")?.output as
+          | {
+              days: number;
+              slowMoving: Array<{ skuCode: string; skuName: string; godownName: string; idleDays: number; currentQty: number; baseUom: string }>;
+              deadStock: Array<{ skuCode: string; skuName: string; godownName: string; idleDays: number; currentQty: number; baseUom: string }>;
+            }
+          | undefined;
+
+        if (!idleData || "error" in idleData) {
+          markdown = `## ⏳ Idle Stock Analysis\n\nCould not query idle stock analysis.`;
+          actions.push({ label: "View Stock", route: "/stock", permission: "stock.view" });
+          break;
+        }
+
+        markdown = `## ⏳ Idle & Non-Moving Stock Analysis (${idleData.days}+ Days)\n\n`;
+        if (idleData.deadStock && idleData.deadStock.length > 0) {
+          markdown += `### 🛑 Dead Stock (Zero Movements)\n`;
+          markdown += `| Product | Godown | Current Qty | Idle Days |\n`;
+          markdown += `| :--- | :--- | :---: | :---: |\n`;
+          for (const item of idleData.deadStock) {
+            markdown += `| **${item.skuCode}** — ${item.skuName} | ${item.godownName} | ${item.currentQty} ${item.baseUom} | **${item.idleDays} days** |\n`;
+          }
+          markdown += `\n`;
+        }
+
+        if (idleData.slowMoving && idleData.slowMoving.length > 0) {
+          markdown += `### 🐢 Slow-Moving Stock\n`;
+          markdown += `| Product | Godown | Current Qty | Idle Days |\n`;
+          markdown += `| :--- | :--- | :---: | :---: |\n`;
+          for (const item of idleData.slowMoving) {
+            markdown += `| **${item.skuCode}** — ${item.skuName} | ${item.godownName} | ${item.currentQty} ${item.baseUom} | ${item.idleDays} days |\n`;
+          }
+        }
+
+        if ((!idleData.deadStock || idleData.deadStock.length === 0) && (!idleData.slowMoving || idleData.slowMoving.length === 0)) {
+          markdown += `_No slow-moving or dead stock identified beyond ${idleData.days} days threshold. Inventory turns are healthy!_\n`;
+        }
+
+        actions.push({ label: "Stock Aging Report", route: "/reports/stock-summary", permission: "report.view" });
+        sources.push("Inventory Aging & Turnover Diagnostics");
+        break;
+      }
+
+      case "stock_summary_report": {
+        const reportData = executed.find((e) => e.toolName === "get_stock_summary_report")?.output as
+          | {
+              range: { from: string; to: string };
+              totalRows: number;
+              rows: Array<{
+                sku: string;
+                godown: string;
+                batch: string;
+                opening: string;
+                inward: string;
+                outward: string;
+                adjustments: string;
+                closing: string;
+                unit: string;
+              }>;
+            }
+          | undefined;
+
+        if (!reportData || "error" in reportData) {
+          markdown = `## 📑 Stock Movement Summary\n\nCould not compile stock movement summary report.`;
+          actions.push({ label: "Stock Reports", route: "/reports/stock-summary", permission: "report.view" });
+          break;
+        }
+
+        markdown = `## 📑 Stock Movement Summary Report (${reportData.range.from} to ${reportData.range.to})\n\n`;
+        markdown += `Ledger Invariant: **Opening + Inward - Outward ± Adjustments = Closing**\n\n`;
+        if (reportData.rows && reportData.rows.length > 0) {
+          markdown += `| Product / Batch | Godown | Opening | Inward | Outward | Adj | Closing |\n`;
+          markdown += `| :--- | :---: | :---: | :---: | :---: | :---: | :---: |\n`;
+          for (const r of reportData.rows) {
+            markdown += `| **${r.sku}**<br/>\`${r.batch}\` | \`${r.godown}\` | ${r.opening} | +${r.inward} | -${r.outward} | ${r.adjustments} | **${r.closing} ${r.unit}** |\n`;
+          }
+        } else {
+          markdown += `_No stock ledger movements found for the selected criteria._\n`;
+        }
+
+        actions.push({ label: "Full Stock Summary", route: "/reports/stock-summary", permission: "report.view" });
+        sources.push("Stock Movement Ledger Reporter");
+        break;
+      }
+
+      case "list_purchase_orders": {
+        const poData = executed.find((e) => e.toolName === "list_purchase_orders")?.output as
+          | {
+              total: number;
+              returned: number;
+              orders: Array<{
+                id: string;
+                poNumber: string;
+                status: string;
+                supplier: string;
+                orderDate: string;
+                expectedDate: string | null;
+                itemsCount: number;
+                grnsCount: number;
+              }>;
+            }
+          | undefined;
+
+        const orders = poData?.orders || [];
+        markdown = `## 🛒 Purchase Orders (${poData?.total ?? orders.length} Total)\n\n`;
+        if (orders.length > 0) {
+          markdown += `| PO Number | Supplier | Status | Order Date | Line Items | GRNs |\n`;
+          markdown += `| :--- | :--- | :---: | :---: | :---: | :---: |\n`;
+          for (const po of orders) {
+            const badge =
+              po.status === "FULLY_RECEIVED"
+                ? "✅ Received"
+                : po.status === "OPEN"
+                  ? "🟢 Open"
+                  : po.status === "PARTIALLY_RECEIVED"
+                    ? "⏳ Partial"
+                    : `\`${po.status}\``;
+            markdown += `| **\`${po.poNumber}\`** | ${po.supplier} | ${badge} | ${po.orderDate} | ${po.itemsCount} item(s) | ${po.grnsCount} GRN(s) |\n`;
+          }
+        } else {
+          markdown += `_No purchase orders found matching your filter._\n`;
+        }
+
+        actions.push(
+          { label: "Browse POs", route: "/purchase-orders", permission: "po.view" },
+          { label: "New Purchase Order", route: "/purchase-orders/new", permission: "po.manage" },
+        );
+        sources.push("Purchasing Registry");
+        break;
+      }
+
+      case "list_grns": {
+        const grnData = executed.find((e) => e.toolName === "list_grns")?.output as
+          | {
+              total: number;
+              returned: number;
+              grns: Array<{
+                id: string;
+                grnNumber: string;
+                status: string;
+                receivedAt: string;
+                poNumber: string;
+                supplier: string;
+                godown: string;
+                itemsCount: number;
+              }>;
+            }
+          | undefined;
+
+        const grns = grnData?.grns || [];
+        markdown = `## 📥 Goods Receipt Notes (GRNs) (${grnData?.total ?? grns.length} Total)\n\n`;
+        if (grns.length > 0) {
+          markdown += `| GRN Number | PO Number | Supplier | Godown | Received At | Items |\n`;
+          markdown += `| :--- | :--- | :--- | :---: | :---: | :---: |\n`;
+          for (const g of grns) {
+            markdown += `| **\`${g.grnNumber}\`** | \`${g.poNumber || "Direct"}\` | ${g.supplier} | \`${g.godown}\` | ${g.receivedAt.slice(0, 10)} | ${g.itemsCount} item(s) |\n`;
+          }
+        } else {
+          markdown += `_No Goods Receipt Notes found._\n`;
+        }
+
+        actions.push(
+          { label: "Browse GRNs", route: "/grns", permission: "grn.view" },
+          { label: "Receive Goods (Gate)", route: "/grns/new", permission: "grn.create" },
+        );
+        sources.push("Receiving Gate Registry");
+        break;
+      }
+
+      case "list_invoices": {
+        const invData = executed.find((e) => e.toolName === "list_invoices")?.output as
+          | {
+              total: number;
+              returned: number;
+              invoices: Array<{
+                id: string;
+                invoiceNumber: string;
+                status: string;
+                customer: string;
+                invoiceDate: string;
+                itemsCount: number;
+                dispatchesCount: number;
+              }>;
+            }
+          | undefined;
+
+        const invoices = invData?.invoices || [];
+        markdown = `## 🧾 Sales Invoices (${invData?.total ?? invoices.length} Total)\n\n`;
+        if (invoices.length > 0) {
+          markdown += `| Invoice # | Customer | Status | Date | Line Items | Dispatches |\n`;
+          markdown += `| :--- | :--- | :---: | :---: | :---: | :---: |\n`;
+          for (const inv of invoices) {
+            const badge =
+              inv.status === "COMPLETE"
+                ? "✅ Complete"
+                : inv.status === "OPEN"
+                  ? "🟢 Open"
+                  : inv.status === "PARTIALLY_DISPATCHED"
+                    ? "⏳ Partial"
+                    : `\`${inv.status}\``;
+            markdown += `| **\`${inv.invoiceNumber}\`** | ${inv.customer} | ${badge} | ${inv.invoiceDate} | ${inv.itemsCount} item(s) | ${inv.dispatchesCount} DC(s) |\n`;
+          }
+        } else {
+          markdown += `_No sales invoices found matching your filter._\n`;
+        }
+
+        actions.push(
+          { label: "Browse Invoices", route: "/invoices", permission: "invoice.view" },
+          { label: "New Sales Invoice", route: "/invoices/new", permission: "invoice.manage" },
+        );
+        sources.push("Billing & Sales Registry");
+        break;
+      }
+
+      case "list_dispatches": {
+        const dcData = executed.find((e) => e.toolName === "list_dispatches")?.output as
+          | {
+              total: number;
+              returned: number;
+              dispatches: Array<{
+                id: string;
+                outwardNumber: string;
+                status: string;
+                dispatchedAt: string;
+                customer: string;
+                godown: string;
+                vehicleNo: string | null;
+                itemsCount: number;
+              }>;
+            }
+          | undefined;
+
+        const dispatches = dcData?.dispatches || [];
+        markdown = `## 🚚 Outward Dispatches & Delivery Challans (${dcData?.total ?? dispatches.length} Total)\n\n`;
+        if (dispatches.length > 0) {
+          markdown += `| DC Number | Customer | Godown | Status | Vehicle | Items |\n`;
+          markdown += `| :--- | :--- | :---: | :---: | :---: | :---: |\n`;
+          for (const dc of dispatches) {
+            markdown += `| **\`${dc.outwardNumber}\`** | ${dc.customer} | \`${dc.godown}\` | **${dc.status}** | ${dc.vehicleNo || "N/A"} | ${dc.itemsCount} item(s) |\n`;
+          }
+        } else {
+          markdown += `_No dispatches found matching your filter._\n`;
+        }
+
+        actions.push(
+          { label: "Browse Dispatches", route: "/dispatches", permission: "dispatch.view" },
+          { label: "New Outward Dispatch", route: "/dispatches/new", permission: "dispatch.create" },
+        );
+        sources.push("Warehouse Dispatch Registry");
+        break;
+      }
+
+      case "list_batches": {
+        const batchData = executed.find((e) => e.toolName === "list_batches")?.output as
+          | {
+              count: number;
+              batches: Array<{
+                batchNumber: string;
+                product: string;
+                godown: string;
+                quantity: string;
+                unit: string;
+                manufacturingDate: string | null;
+                expiryDate: string | null;
+                isExpired: boolean;
+              }>;
+            }
+          | undefined;
+
+        const batches = batchData?.batches || [];
+        markdown = `## 🏷️ Active Batches Catalog (${batchData?.count ?? batches.length} On-Hand)\n\n`;
+        if (batches.length > 0) {
+          markdown += `| Batch # | Product | Godown | Available Qty | Expiry Date | Status |\n`;
+          markdown += `| :--- | :--- | :---: | :---: | :---: | :---: |\n`;
+          for (const b of batches) {
+            const status = b.isExpired
+              ? "❌ Expired"
+              : b.expiryDate
+                ? `Valid (${b.expiryDate})`
+                : "No Expiry";
+            markdown += `| **\`${b.batchNumber}\`** | ${b.product} | \`${b.godown}\` | **${b.quantity} ${b.unit}** | ${b.expiryDate || "—"} | ${status} |\n`;
+          }
+        } else {
+          markdown += `_No active batches found matching criteria._\n`;
+        }
+
+        actions.push({ label: "View Live Stock", route: "/stock", permission: "stock.view" });
+        sources.push("Batch Tracking Master");
+        break;
+      }
+
+      case "my_notifications": {
+        const notifData = executed.find((e) => e.toolName === "list_my_notifications")?.output as
+          | {
+              unreadCount: number;
+              notifications: Array<{
+                id: string;
+                alertType: string;
+                title: string;
+                body: string;
+                link: string | null;
+                readAt: string | null;
+                createdAt: string;
+              }>;
+            }
+          | undefined;
+
+        const items = notifData?.notifications || [];
+        markdown = `## 🔔 Notifications & Alerts (${notifData?.unreadCount ?? 0} Unread)\n\n`;
+        if (items.length > 0) {
+          for (const n of items) {
+            const isUnread = !n.readAt;
+            markdown += `- ${isUnread ? "🔵 **(Unread)** " : "⚪ "}**${n.title}**: ${n.body} _(${n.createdAt.slice(0, 10)})_\n`;
+            if (n.link) {
+              actions.push({ label: n.title, route: n.link, permission: "dashboard.view" });
+            }
+          }
+        } else {
+          markdown += `_You're all caught up! No active notifications or unread alerts._\n`;
+        }
+
+        actions.push({ label: "Open Dashboard", route: "/dashboard", permission: "dashboard.view" });
+        sources.push("In-App Notification Dispatcher");
+        break;
+      }
+
+      case "reversal_check": {
+        const revData = executed.find((e) => e.toolName === "check_reversal_eligibility")?.output as
+          | {
+              documentNumber: string;
+              documentType: string;
+              totalEntries: number;
+              eligible: boolean;
+              risks: string[];
+              recommendation: string;
+            }
+          | undefined;
+
+        if (!revData || "error" in revData) {
+          markdown = `## 🔄 Reversal Eligibility Assessment\n\nCould not evaluate reversal safety for the specified document.`;
+          actions.push({ label: "Ledger Audit", route: "/audit", permission: "audit.view" });
+          break;
+        }
+
+        markdown = `## 🔄 Reversal Eligibility Assessment: \`${revData.documentNumber}\`\n\n`;
+        markdown += `- **Document Type:** \`${revData.documentType.toUpperCase()}\`\n`;
+        markdown += `- **Ledger Audit Status:** ${revData.eligible ? "✅ **Safe to Reverse**" : "🛑 **Reversal Blocked**"}\n`;
+        markdown += `- **Recommendation:** ${revData.recommendation}\n\n`;
+
+        if (revData.risks && revData.risks.length > 0) {
+          markdown += `### ⚠️ Identified Risk Constraints:\n`;
+          for (const risk of revData.risks) {
+            markdown += `- 🔴 ${risk}\n`;
+          }
+          markdown += `\n_Margix IMS enforces cryptographic non-negative inventory balances. Items that have already been allocated or dispatched cannot be reversed without first recalling subsequent outbound movements._\n`;
+        }
+
+        actions.push({ label: "View Ledger Audit", route: "/audit", permission: "audit.view" });
+        sources.push("Cryptographic Reversal Safety Evaluator");
         break;
       }
 

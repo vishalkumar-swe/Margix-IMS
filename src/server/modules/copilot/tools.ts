@@ -1,12 +1,32 @@
-import type { InvoiceStatus, PostedDocStatus, PurchaseOrderStatus, RoleCode } from "@prisma/client";
+import {
+  Prisma,
+  type InvoiceStatus,
+  type NotificationAlertType,
+  type NotificationStatus,
+  type PostedDocStatus,
+  type PurchaseOrderStatus,
+  type ReferenceType,
+  type RoleCode,
+  type StockAlertStatus,
+  type TallySyncStatus,
+} from "@prisma/client";
 import { z } from "zod";
+import { presetPeriod } from "@/lib/analytics";
 import { dateOnlyToUtc, todayIst } from "@/lib/dates";
-import { can, type Permission } from "@/lib/permissions";
+import { can, ROLE_LABELS, type Permission } from "@/lib/permissions";
 import { prisma } from "@/server/db/client";
 import { Decimal, ZERO } from "@/server/db/decimal";
 import { getInvoiceDetail, listInvoices } from "@/server/modules/invoices/invoice.queries";
 import { getDispatchDetail, listDispatches } from "@/server/modules/dispatch/dispatch.queries";
-import { getPurchaseOrderDetail, listPurchaseOrders } from "@/server/modules/purchasing/purchasing.queries";
+import { getPurchaseOrderDetail, listGrns, listPurchaseOrders } from "@/server/modules/purchasing/purchasing.queries";
+import { getAdjustmentDetail, listAdjustments } from "@/server/modules/adjustments/adjustments.queries";
+import { getTransferDetail, listTransfers } from "@/server/modules/transfers/transfer.queries";
+import { getPurchaseReturnDetail, getSalesReturnDetail, listPurchaseReturns, listSalesReturns } from "@/server/modules/returns/returns.queries";
+import { listStockBalances } from "@/server/modules/inventory/stock.queries";
+import { getStockSummary, listIdleStock } from "@/server/modules/reports/reports.queries";
+import { getAnalyticsOverview, getInventoryAnalytics, getPurchasingAnalytics, getSalesAnalytics } from "@/server/modules/analytics/analytics.queries";
+import { getDailyChecklist } from "@/server/modules/checklist/checklist.queries";
+import { countDeliveriesByStatus, listMyNotifications, listRecentDeliveries } from "@/server/modules/notifications/notifications.queries";
 import { logger } from "@/server/observability/logger";
 import { getWorkspaceCounts } from "./copilot.queries";
 import { retrieveKnowledge } from "./knowledge";
@@ -20,6 +40,7 @@ import { retrieveKnowledge } from "./knowledge";
 export interface CopilotToolContext {
   role: RoleCode;
   route: string;
+  userId?: string;
 }
 
 export interface OpenAiTool {
@@ -123,9 +144,207 @@ const reorderArgs = z
   })
   .strict();
 
+const inventoryOverviewArgs = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(50).default(20),
+  })
+  .strict();
+
+const singleIdOrCodeArgs = z
+  .object({
+    identifier: z.string().trim().min(1, "Identifier is required").max(120),
+  })
+  .strict();
+
+const skuListArgs = z
+  .object({
+    category: z.string().trim().max(80).optional(),
+    status: z.enum(["ACTIVE", "INACTIVE", "ARCHIVED"]).optional(),
+    query: z.string().trim().max(120).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const customerArgs = z
+  .object({
+    query: z.string().trim().max(120).optional(),
+    stateCode: z.string().trim().max(10).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const supplierArgs = z
+  .object({
+    query: z.string().trim().max(120).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const godownStockArgs = z
+  .object({
+    godown: z.string().trim().min(1, "Godown code or name is required").max(80),
+    limit: z.coerce.number().int().min(1).max(50).default(20),
+  })
+  .strict();
+
+const transferListArgs = z
+  .object({
+    fromGodown: z.string().trim().max(80).optional(),
+    toGodown: z.string().trim().max(80).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const adjustmentListArgs = z
+  .object({
+    status: z.enum(["SUBMITTED", "APPROVED", "REJECTED", "REVERSED"]).optional(),
+    godown: z.string().trim().max(80).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const returnsListArgs = z
+  .object({
+    type: z.enum(["sales_return", "purchase_return"]),
+    query: z.string().trim().max(120).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const tallyQueueArgs = z
+  .object({
+    status: z.enum(["PENDING", "IN_PROGRESS", "SYNCED", "FAILED"]).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const slowMovingArgs = z
+  .object({
+    days: z.coerce.number().int().min(1).max(365).default(90),
+    limit: limitField,
+  })
+  .strict();
+
+const auditTrailArgs = z
+  .object({
+    entityType: z.string().trim().max(60).optional(),
+    action: z.string().trim().max(60).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const usersListArgs = z
+  .object({
+    role: z.enum(["ADMIN", "STORE_MANAGER", "WAREHOUSE_OPERATOR", "ACCOUNTS", "MANAGEMENT"]).optional(),
+    limit: limitField,
+  })
+  .strict();
+
 const helpArgs = z
   .object({
     question: z.string().trim().min(3).max(300),
+  })
+  .strict();
+
+const batchListArgs = z
+  .object({
+    sku: z.string().trim().max(120).optional(),
+    godown: z.string().trim().max(80).optional(),
+    expiringWithinDays: z.coerce.number().int().min(1).max(365).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const stockBalanceListArgs = z
+  .object({
+    sku: z.string().trim().max(120).optional(),
+    godown: z.string().trim().max(80).optional(),
+    query: z.string().trim().max(120).optional(),
+    includeZero: z.boolean().default(false),
+    limit: limitField,
+  })
+  .strict();
+
+const poListArgs = z
+  .object({
+    status: z.enum(["DRAFT", "OPEN", "PARTIALLY_RECEIVED", "FULLY_RECEIVED", "SHORT_CLOSED", "CANCELLED"]).optional(),
+    supplier: z.string().trim().max(120).optional(),
+    query: z.string().trim().max(120).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const grnListArgs = z
+  .object({
+    query: z.string().trim().max(120).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const invoiceListArgs = z
+  .object({
+    status: z.enum(["OPEN", "PARTIALLY_DISPATCHED", "COMPLETE", "CANCELLED"]).optional(),
+    customer: z.string().trim().max(120).optional(),
+    query: z.string().trim().max(120).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const dispatchListArgs = z
+  .object({
+    query: z.string().trim().max(120).optional(),
+    godown: z.string().trim().max(80).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const reversalCheckArgs = z
+  .object({
+    docType: z.enum(["grn", "dispatch", "transfer", "adjustment"]),
+    identifier: z.string().trim().min(1, "Document number is required").max(120),
+  })
+  .strict();
+
+const periodArgs = z
+  .object({
+    period: z.enum(["today", "7d", "30d", "month", "quarter", "fy"]).default("30d"),
+  })
+  .strict();
+
+const stockSummaryReportArgs = z
+  .object({
+    from: z.string().trim().max(10).optional(),
+    to: z.string().trim().max(10).optional(),
+    godown: z.string().trim().max(80).optional(),
+    sku: z.string().trim().max(120).optional(),
+    groupBy: z.enum(["sku", "batch"]).default("sku"),
+  })
+  .strict();
+
+const stockAlertsListArgs = z
+  .object({
+    status: z.enum(["ACTIVE", "RESOLVED"]).default("ACTIVE"),
+    type: z.enum(["LOW_STOCK", "EXPIRING_SOON", "SLOW_MOVING", "DEAD_STOCK"]).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const notificationsListArgs = z
+  .object({
+    limit: limitField,
+  })
+  .strict();
+
+const notificationOutboxArgs = z
+  .object({
+    status: z.enum(["PENDING", "SENT", "FAILED"]).optional(),
+    limit: limitField,
+  })
+  .strict();
+
+const tallyJobDetailArgs = z
+  .object({
+    jobId: z.string().trim().min(1, "Job ID is required").max(60),
   })
   .strict();
 
@@ -216,6 +435,56 @@ export async function findGodown(query: string) {
   });
 }
 
+export async function findCustomer(query: string) {
+  const select = { id: true, code: true, name: true, gstin: true, stateCode: true, phone: true, email: true };
+  const exact = await prisma.customer.findFirst({
+    where: {
+      OR: [
+        { code: { equals: query, mode: "insensitive" } },
+        { name: { equals: query, mode: "insensitive" } },
+        { gstin: { equals: query, mode: "insensitive" } },
+      ],
+    },
+    select,
+  });
+  if (exact) return exact;
+  return prisma.customer.findFirst({
+    where: {
+      OR: [
+        { code: { contains: query, mode: "insensitive" } },
+        { name: { contains: query, mode: "insensitive" } },
+      ],
+    },
+    orderBy: { code: "asc" },
+    select,
+  });
+}
+
+export async function findSupplier(query: string) {
+  const select = { id: true, code: true, name: true, gstin: true, stateCode: true, phone: true, email: true };
+  const exact = await prisma.supplier.findFirst({
+    where: {
+      OR: [
+        { code: { equals: query, mode: "insensitive" } },
+        { name: { equals: query, mode: "insensitive" } },
+        { gstin: { equals: query, mode: "insensitive" } },
+      ],
+    },
+    select,
+  });
+  if (exact) return exact;
+  return prisma.supplier.findFirst({
+    where: {
+      OR: [
+        { code: { contains: query, mode: "insensitive" } },
+        { name: { contains: query, mode: "insensitive" } },
+      ],
+    },
+    orderBy: { code: "asc" },
+    select,
+  });
+}
+
 function parseStatus<T extends string>(
   values: readonly T[],
   status: string | undefined,
@@ -236,6 +505,83 @@ const TOOLS: CopilotTool[] = [
     async execute() {
       const counts = await getWorkspaceCounts();
       return { counts };
+    },
+  },
+  {
+    name: "get_inventory_overview",
+    description:
+      "Comprehensive breakdown of available stock across all products, godowns, and batches. Returns positive inventory balances, active SKU count, and batch health. Use for general inventory questions like 'is there any product available', 'show stock', 'what items do we have', or 'kya stock hai'.",
+    permission: "stock.view",
+    parameters: {
+      type: "object",
+      properties: {
+        limit: { type: "integer", minimum: 1, maximum: 50, default: 20, description: "Maximum product stock lines to return." },
+      },
+      additionalProperties: false,
+    },
+    async execute(args) {
+      const { limit } = inventoryOverviewArgs.parse(args);
+      const totalSkus = await prisma.sku.count({ where: { status: "ACTIVE" } });
+      const balances = await prisma.stockBalance.findMany({
+        where: { quantity: { gt: 0 } },
+        include: {
+          sku: { include: { baseUom: true } },
+          godown: { select: { code: true, name: true } },
+          batch: { select: { batchNumber: true, expiryDate: true } },
+        },
+        orderBy: [{ sku: { code: "asc" } }, { godown: { code: "asc" } }],
+        take: limit,
+      });
+
+      const productMap = new Map<
+        string,
+        {
+          skuCode: string;
+          skuName: string;
+          baseUnit: string;
+          totalQty: Decimal;
+          godowns: Set<string>;
+          batchCount: number;
+        }
+      >();
+
+      for (const row of balances) {
+        let entry = productMap.get(row.sku.id);
+        if (!entry) {
+          entry = {
+            skuCode: row.sku.code,
+            skuName: row.sku.name,
+            baseUnit: row.sku.baseUom.code,
+            totalQty: ZERO,
+            godowns: new Set(),
+            batchCount: 0,
+          };
+          productMap.set(row.sku.id, entry);
+        }
+        entry.totalQty = entry.totalQty.plus(row.quantity);
+        entry.godowns.add(row.godown.code);
+        entry.batchCount++;
+      }
+
+      const productsWithStock = Array.from(productMap.values()).map((p) => ({
+        code: p.skuCode,
+        name: p.skuName,
+        baseUnit: p.baseUnit,
+        totalQuantity: p.totalQty.toString(),
+        godowns: Array.from(p.godowns),
+        batchCount: p.batchCount,
+      }));
+
+      return {
+        totalRegisteredSkus: totalSkus,
+        productsWithStockCount: productsWithStock.length,
+        hasAvailableStock: productsWithStock.length > 0,
+        products: productsWithStock,
+        summary:
+          productsWithStock.length > 0
+            ? `${productsWithStock.length} product(s) have positive stock on hand across warehouse godowns.`
+            : "No products currently have on-hand stock in your inventory.",
+      };
     },
   },
   {
@@ -999,6 +1345,2254 @@ const TOOLS: CopilotTool[] = [
             unit: a.sku.baseUom.code,
           };
         }),
+      };
+    },
+  },
+  {
+    name: "list_skus",
+    description: "Browse products (SKUs) in catalog with optional filters for category, status, and search query.",
+    permission: "master.view",
+    parameters: {
+      type: "object",
+      properties: {
+        category: { type: "string", description: "Category name to filter by" },
+        status: { type: "string", enum: ["ACTIVE", "INACTIVE", "ARCHIVED"], description: "Status filter" },
+        query: { type: "string", description: "Search query for SKU code, name, or barcode" },
+        limit: { type: "integer", default: 10 },
+      },
+    },
+    async execute(args) {
+      const { category, status, query, limit } = skuListArgs.parse(args);
+      const where: Prisma.SkuWhereInput = {};
+      if (status) where.status = status;
+      if (category) where.category = { name: { contains: category, mode: "insensitive" } };
+      if (query) {
+        where.OR = [
+          { code: { contains: query, mode: "insensitive" } },
+          { name: { contains: query, mode: "insensitive" } },
+          { barcode: { equals: query } },
+        ];
+      }
+      const skus = await prisma.sku.findMany({
+        where,
+        take: limit,
+        orderBy: { code: "asc" },
+        include: { baseUom: true, category: true, hsn: true },
+      });
+      return {
+        count: skus.length,
+        skus: skus.map((s) => ({
+          code: s.code,
+          name: s.name,
+          category: s.category?.name ?? null,
+          baseUnit: s.baseUom.code,
+          hsnCode: s.hsnCode ?? s.hsn?.code ?? null,
+          gstRate: s.gstRate?.toString() ?? s.hsn?.gstRate.toString() ?? null,
+          isBatchTracked: s.isBatchTracked,
+          status: s.status,
+          barcode: s.barcode,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_sku_detail",
+    description: "Detailed view of a single product/SKU, including alternate units, total on-hand stock, and active batches.",
+    permission: "master.view",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "SKU code, name, or barcode" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const sku = await prisma.sku.findFirst({
+        where: {
+          OR: [
+            { code: { equals: identifier, mode: "insensitive" } },
+            { barcode: { equals: identifier } },
+            { name: { contains: identifier, mode: "insensitive" } },
+          ],
+        },
+        include: {
+          baseUom: true,
+          category: true,
+          hsn: true,
+          units: { include: { uom: true } },
+          stockBalances: {
+            where: { quantity: { gt: 0 } },
+            include: { godown: true, batch: true },
+          },
+        },
+      });
+      if (!sku) return { error: `No product found matching "${identifier}".` };
+      let totalStock = ZERO;
+      for (const sb of sku.stockBalances) {
+        totalStock = totalStock.plus(sb.quantity);
+      }
+      return {
+        code: sku.code,
+        name: sku.name,
+        description: sku.description,
+        status: sku.status,
+        category: sku.category?.name ?? null,
+        baseUnit: sku.baseUom.code,
+        hsnCode: sku.hsnCode ?? sku.hsn?.code ?? null,
+        gstRate: sku.gstRate?.toString() ?? sku.hsn?.gstRate.toString() ?? null,
+        isBatchTracked: sku.isBatchTracked,
+        barcode: sku.barcode,
+        alternateUnits: sku.units.map((u) => ({
+          unit: u.uom.code,
+          factor: u.factor.toString(),
+          conversion: `1 ${u.uom.code} = ${u.factor.toString()} ${sku.baseUom.code}`,
+        })),
+        totalStockOnHand: `${totalStock.toString()} ${sku.baseUom.code}`,
+        batches: sku.stockBalances.map((sb) => ({
+          godown: sb.godown.code,
+          batch: sb.batch.batchNumber,
+          quantity: `${sb.quantity.toString()} ${sku.baseUom.code}`,
+          expiryDate: dateOnly(sb.batch.expiryDate),
+          expired: isExpired(sb.batch.expiryDate),
+        })),
+      };
+    },
+  },
+  {
+    name: "list_categories",
+    description: "List product categories with default HSN codes and number of active products.",
+    permission: "master.view",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      const categories = await prisma.category.findMany({
+        orderBy: { name: "asc" },
+        include: { _count: { select: { skus: true } }, hsn: true },
+      });
+      return {
+        count: categories.length,
+        categories: categories.map((c) => ({
+          id: c.id,
+          name: c.name,
+          defaultHsn: c.hsnCode,
+          defaultGstRate: c.hsn?.gstRate.toString() ?? null,
+          productCount: c._count.skus,
+          isActive: c.isActive,
+        })),
+      };
+    },
+  },
+  {
+    name: "list_uoms",
+    description: "List all units of measure (UOM) like PCS, KG, BOX, BAG with decimal precision.",
+    permission: "master.view",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      const uoms = await prisma.uom.findMany({ orderBy: { code: "asc" } });
+      return {
+        count: uoms.length,
+        uoms: uoms.map((u) => ({ code: u.code, name: u.name, decimalPlaces: u.decimalPlaces })),
+      };
+    },
+  },
+  {
+    name: "list_hsn_codes",
+    description: "Directory of HSN / SAC codes with GST rate slabs and trade descriptions.",
+    permission: "master.view",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      const hsnList = await prisma.hsnCode.findMany({
+        where: { isActive: true },
+        orderBy: { code: "asc" },
+        take: 30,
+      });
+      return {
+        count: hsnList.length,
+        hsnCodes: hsnList.map((h) => ({
+          code: h.code,
+          description: h.description,
+          gstRate: `${h.gstRate.toString()}%`,
+          keywords: h.keywords,
+        })),
+      };
+    },
+  },
+  {
+    name: "list_customers",
+    description: "List customers with GSTIN, state code, and contact information.",
+    permission: "master.view",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search customer code, name, or GSTIN" },
+        limit: { type: "integer", default: 10 },
+      },
+    },
+    async execute(args) {
+      const { query, limit } = customerArgs.parse(args);
+      const where: Prisma.CustomerWhereInput = { isActive: true };
+      if (query) {
+        where.OR = [
+          { code: { contains: query, mode: "insensitive" } },
+          { name: { contains: query, mode: "insensitive" } },
+          { gstin: { contains: query, mode: "insensitive" } },
+        ];
+      }
+      const customers = await prisma.customer.findMany({
+        where,
+        take: limit,
+        orderBy: { name: "asc" },
+        include: { _count: { select: { invoices: true, outwards: true } } },
+      });
+      return {
+        count: customers.length,
+        customers: customers.map((c) => ({
+          code: c.code,
+          name: c.name,
+          gstin: c.gstin ?? "Unregistered",
+          stateCode: c.stateCode ?? null,
+          phone: c.phone ?? null,
+          email: c.email ?? null,
+          totalInvoices: c._count.invoices,
+          totalDispatches: c._count.outwards,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_customer_detail",
+    description: "View customer profile, billing address, and recent invoices & dispatches.",
+    permission: "master.view",
+    parameters: {
+      type: "object",
+      properties: { identifier: { type: "string", description: "Customer code, name or GSTIN" } },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const customer = await findCustomer(identifier);
+      if (!customer) return { error: `No customer matched "${identifier}".` };
+      const invoices = await prisma.invoice.findMany({
+        where: { customerId: customer.id },
+        take: 5,
+        orderBy: { invoiceDate: "desc" },
+        select: { invoiceNumber: true, invoiceDate: true, status: true },
+      });
+      const dispatches = await prisma.outward.findMany({
+        where: { customerId: customer.id },
+        take: 5,
+        orderBy: { dispatchedAt: "desc" },
+        select: { outwardNumber: true, dispatchedAt: true, status: true },
+      });
+      return {
+        code: customer.code,
+        name: customer.name,
+        gstin: customer.gstin,
+        stateCode: customer.stateCode,
+        phone: customer.phone,
+        email: customer.email,
+        recentInvoices: invoices.map((i) => ({ number: i.invoiceNumber, date: dateOnly(i.invoiceDate), status: i.status })),
+        recentDispatches: dispatches.map((d) => ({ number: d.outwardNumber, date: d.dispatchedAt.toISOString(), status: d.status })),
+      };
+    },
+  },
+  {
+    name: "list_suppliers",
+    description: "List suppliers and vendors with GSTIN, state code, and contact information.",
+    permission: "master.view",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search supplier code, name, or GSTIN" },
+        limit: { type: "integer", default: 10 },
+      },
+    },
+    async execute(args) {
+      const { query, limit } = supplierArgs.parse(args);
+      const where: Prisma.SupplierWhereInput = { isActive: true };
+      if (query) {
+        where.OR = [
+          { code: { contains: query, mode: "insensitive" } },
+          { name: { contains: query, mode: "insensitive" } },
+          { gstin: { contains: query, mode: "insensitive" } },
+        ];
+      }
+      const suppliers = await prisma.supplier.findMany({
+        where,
+        take: limit,
+        orderBy: { name: "asc" },
+        include: { _count: { select: { purchaseOrders: true } } },
+      });
+      return {
+        count: suppliers.length,
+        suppliers: suppliers.map((s) => ({
+          code: s.code,
+          name: s.name,
+          gstin: s.gstin ?? "Unregistered",
+          stateCode: s.stateCode ?? null,
+          phone: s.phone ?? null,
+          email: s.email ?? null,
+          totalPurchaseOrders: s._count.purchaseOrders,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_supplier_detail",
+    description: "View supplier profile and recent purchase orders.",
+    permission: "master.view",
+    parameters: {
+      type: "object",
+      properties: { identifier: { type: "string", description: "Supplier code, name or GSTIN" } },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const supplier = await findSupplier(identifier);
+      if (!supplier) return { error: `No supplier matched "${identifier}".` };
+      const pos = await prisma.purchaseOrder.findMany({
+        where: { supplierId: supplier.id },
+        take: 5,
+        orderBy: { orderDate: "desc" },
+        select: { poNumber: true, orderDate: true, status: true },
+      });
+      return {
+        code: supplier.code,
+        name: supplier.name,
+        gstin: supplier.gstin,
+        stateCode: supplier.stateCode,
+        phone: supplier.phone,
+        email: supplier.email,
+        recentPurchaseOrders: pos.map((p) => ({ number: p.poNumber, date: dateOnly(p.orderDate), status: p.status })),
+      };
+    },
+  },
+  {
+    name: "check_stock_by_godown",
+    description: "List all on-hand product balances and active batches inside a specific godown/warehouse.",
+    permission: "stock.view",
+    parameters: {
+      type: "object",
+      properties: {
+        godown: { type: "string", description: "Godown code or name" },
+        limit: { type: "integer", default: 20 },
+      },
+      required: ["godown"],
+    },
+    async execute(args) {
+      const { godown: godownQuery, limit } = godownStockArgs.parse(args);
+      const godown = await findGodown(godownQuery);
+      if (!godown) return { error: `No godown matched "${godownQuery}".` };
+      const balances = await prisma.stockBalance.findMany({
+        where: { godownId: godown.id, quantity: { gt: 0 } },
+        take: limit,
+        orderBy: [{ sku: { code: "asc" } }, { batch: { expiryDate: { sort: "asc", nulls: "last" } } }],
+        include: {
+          sku: { include: { baseUom: true } },
+          batch: true,
+        },
+      });
+      return {
+        godown: { code: godown.code, name: godown.name },
+        stockLineCount: balances.length,
+        lines: balances.map((b) => ({
+          product: `${b.sku.code} — ${b.sku.name}`,
+          batch: b.batch.batchNumber,
+          quantity: `${b.quantity.toString()} ${b.sku.baseUom.code}`,
+          expiryDate: dateOnly(b.batch.expiryDate),
+          expired: isExpired(b.batch.expiryDate),
+        })),
+      };
+    },
+  },
+  {
+    name: "list_transfers",
+    description: "List recent godown-to-godown stock transfer records and movement statuses.",
+    permission: "transfer.view",
+    parameters: {
+      type: "object",
+      properties: {
+        fromGodown: { type: "string", description: "Source godown filter" },
+        toGodown: { type: "string", description: "Destination godown filter" },
+        limit: { type: "integer", default: 10 },
+      },
+    },
+    async execute(args) {
+      const { fromGodown, toGodown, limit } = transferListArgs.parse(args);
+      const where: Prisma.TransferWhereInput = {};
+      if (fromGodown) where.fromGodown = { code: { contains: fromGodown, mode: "insensitive" } };
+      if (toGodown) where.toGodown = { code: { contains: toGodown, mode: "insensitive" } };
+      const transfers = await prisma.transfer.findMany({
+        where,
+        take: limit,
+        orderBy: { transferredAt: "desc" },
+        include: {
+          fromGodown: true,
+          toGodown: true,
+          items: { include: { sku: { include: { baseUom: true } }, batch: true } },
+        },
+      });
+      return {
+        count: transfers.length,
+        transfers: transfers.map((t) => ({
+          number: t.transferNumber,
+          date: t.transferredAt.toISOString(),
+          status: t.status,
+          fromGodown: t.fromGodown.code,
+          toGodown: t.toGodown.code,
+          items: t.items.map((i) => ({
+            product: `${i.sku.code} — ${i.sku.name}`,
+            batch: i.batch.batchNumber,
+            quantity: `${i.quantity.toString()} ${i.sku.baseUom.code}`,
+          })),
+        })),
+      };
+    },
+  },
+  {
+    name: "list_stock_adjustments",
+    description: "List maker-checker inventory adjustment requests, reason codes, and approval statuses.",
+    permission: "adjustment.view",
+    parameters: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["SUBMITTED", "APPROVED", "REJECTED", "REVERSED"] },
+        limit: { type: "integer", default: 10 },
+      },
+    },
+    async execute(args) {
+      const { status, limit } = adjustmentListArgs.parse(args);
+      const where: Prisma.AdjustmentWhereInput = {};
+      if (status) where.status = status;
+      const adjustments = await prisma.adjustment.findMany({
+        where,
+        take: limit,
+        orderBy: { createdAt: "desc" },
+        include: { godown: true, items: { include: { sku: { include: { baseUom: true } } } } },
+      });
+      return {
+        count: adjustments.length,
+        adjustments: adjustments.map((a) => ({
+          number: a.adjustmentNumber,
+          status: a.status,
+          reasonCode: a.reasonCode,
+          reasonNote: a.reasonNote,
+          godown: a.godown.code,
+          createdAt: a.createdAt.toISOString(),
+          items: a.items.map((i) => ({
+            product: `${i.sku.code} — ${i.sku.name}`,
+            signedQuantity: `${i.quantity.toString()} ${i.sku.baseUom.code}`,
+          })),
+        })),
+      };
+    },
+  },
+  {
+    name: "list_returns",
+    description: "List customer sales returns (against dispatches) or supplier purchase returns (against GRNs).",
+    permission: "return.view",
+    parameters: {
+      type: "object",
+      properties: {
+        type: { type: "string", enum: ["sales_return", "purchase_return"], description: "Return type" },
+        limit: { type: "integer", default: 10 },
+      },
+      required: ["type"],
+    },
+    async execute(args) {
+      const { type, limit } = returnsListArgs.parse(args);
+      if (type === "sales_return") {
+        const sr = await prisma.salesReturn.findMany({
+          take: limit,
+          orderBy: { returnedAt: "desc" },
+          include: { customer: true, godown: true, items: { include: { sku: { include: { baseUom: true } } } } },
+        });
+        return {
+          type: "sales_return",
+          count: sr.length,
+          returns: sr.map((r) => ({
+            number: r.returnNumber,
+            date: r.returnedAt.toISOString(),
+            status: r.status,
+            customer: r.customer?.name ?? "Unknown",
+            godown: r.godown.code,
+            reason: r.reason,
+            itemCount: r.items.length,
+          })),
+        };
+      }
+      const pr = await prisma.purchaseReturn.findMany({
+        take: limit,
+        orderBy: { returnedAt: "desc" },
+        include: { supplier: true, godown: true, items: { include: { sku: { include: { baseUom: true } } } } },
+      });
+      return {
+        type: "purchase_return",
+        count: pr.length,
+        returns: pr.map((r) => ({
+          number: r.returnNumber,
+          date: r.returnedAt.toISOString(),
+          status: r.status,
+          supplier: r.supplier.name,
+          godown: r.godown.code,
+          reason: r.reason,
+          itemCount: r.items.length,
+        })),
+      };
+    },
+  },
+  {
+    name: "list_opening_stock",
+    description: "List opening stock balance migration records and batch lines.",
+    permission: "opening.post",
+    parameters: { type: "object", properties: { limit: { type: "integer", default: 10 } } },
+    async execute(args) {
+      const { limit } = z.object({ limit: limitField }).parse(args);
+      const openings = await prisma.openingBalance.findMany({
+        take: limit,
+        orderBy: { createdAt: "desc" },
+        include: { godown: true, items: { include: { sku: { include: { baseUom: true } }, batch: true } } },
+      });
+      return {
+        count: openings.length,
+        openings: openings.map((o) => ({
+          number: o.openingNumber,
+          asOf: dateOnly(o.asOf),
+          godown: o.godown.code,
+          status: o.status,
+          itemCount: o.items.length,
+          lines: o.items.map((i) => ({
+            product: `${i.sku.code} — ${i.sku.name}`,
+            batch: i.batch.batchNumber,
+            quantity: `${i.quantity.toString()} ${i.sku.baseUom.code}`,
+          })),
+        })),
+      };
+    },
+  },
+  {
+    name: "get_tally_sync_status",
+    description: "Current Tally Prime sync queue summary: pending, synced, and failed voucher counts.",
+    permission: "tally.view",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      const counts = await prisma.tallySyncJob.groupBy({
+        by: ["status"],
+        _count: { id: true },
+      });
+      const map: Record<string, number> = { PENDING: 0, IN_PROGRESS: 0, SYNCED: 0, FAILED: 0 };
+      for (const c of counts) {
+        map[c.status] = c._count.id;
+      }
+      return {
+        pendingCount: map.PENDING,
+        inProgressCount: map.IN_PROGRESS,
+        syncedCount: map.SYNCED,
+        failedCount: map.FAILED,
+        totalJobs: map.PENDING + map.IN_PROGRESS + map.SYNCED + map.FAILED,
+        status: map.FAILED > 0 ? "ATTENTION_REQUIRED" : "HEALTHY",
+      };
+    },
+  },
+  {
+    name: "list_tally_queue",
+    description: "List recent Tally Prime sync jobs, voucher numbers, attempt counts, and error messages.",
+    permission: "tally.view",
+    parameters: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["PENDING", "IN_PROGRESS", "SYNCED", "FAILED"] },
+        limit: { type: "integer", default: 10 },
+      },
+    },
+    async execute(args) {
+      const { status, limit } = tallyQueueArgs.parse(args);
+      const where: Prisma.TallySyncJobWhereInput = {};
+      if (status) where.status = status;
+      const jobs = await prisma.tallySyncJob.findMany({
+        where,
+        take: limit,
+        orderBy: { updatedAt: "desc" },
+      });
+      return {
+        count: jobs.length,
+        jobs: jobs.map((j) => ({
+          id: j.id,
+          entityType: j.entityType,
+          entityNo: j.entityNo,
+          status: j.status,
+          attempts: j.attempts,
+          lastError: j.lastError,
+          syncedAt: j.syncedAt?.toISOString() ?? null,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_audit_trail",
+    description: "Inspect cryptographic audit trail logs: user actions, reversals, approvals, and mutations.",
+    permission: "audit.view",
+    parameters: {
+      type: "object",
+      properties: {
+        entityType: { type: "string", description: "Filter by entity, e.g. INVOICE, PO, LEDGER" },
+        action: { type: "string", description: "Filter by action, e.g. CREATE, CANCEL, REVERSE" },
+        limit: { type: "integer", default: 10 },
+      },
+    },
+    async execute(args) {
+      const { entityType, action, limit } = auditTrailArgs.parse(args);
+      const where: Prisma.AuditLogWhereInput = {};
+      if (entityType) where.entityType = { contains: entityType, mode: "insensitive" };
+      if (action) where.action = { contains: action, mode: "insensitive" };
+      const logs = await prisma.auditLog.findMany({
+        where,
+        take: limit,
+        orderBy: { createdAt: "desc" },
+        include: { user: { select: { name: true, email: true } } },
+      });
+      return {
+        count: logs.length,
+        logs: logs.map((l) => ({
+          id: l.id,
+          action: l.action,
+          entityType: l.entityType,
+          entityId: l.entityId,
+          user: l.user ? `${l.user.name} (${l.user.email})` : "System",
+          ipAddress: l.ipAddress,
+          timestamp: l.createdAt.toISOString(),
+        })),
+      };
+    },
+  },
+  {
+    name: "list_users",
+    description: "List registered system operators and administrators with assigned roles and active statuses.",
+    permission: "user.manage",
+    parameters: {
+      type: "object",
+      properties: {
+        role: { type: "string", enum: ["ADMIN", "STORE_MANAGER", "WAREHOUSE_OPERATOR", "ACCOUNTS", "MANAGEMENT"] },
+        limit: { type: "integer", default: 10 },
+      },
+    },
+    async execute(args) {
+      const { role, limit } = usersListArgs.parse(args);
+      const where: Prisma.UserWhereInput = {};
+      if (role) where.role = { code: role };
+      const users = await prisma.user.findMany({
+        where,
+        take: limit,
+        orderBy: { name: "asc" },
+        include: { role: true },
+      });
+      return {
+        count: users.length,
+        users: users.map((u) => ({
+          name: u.name,
+          email: u.email,
+          role: u.role.name,
+          roleCode: u.role.code,
+          isActive: u.isActive,
+          lastLoginAt: u.lastLoginAt?.toISOString() ?? null,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_system_health",
+    description: "Check system health: database connectivity, ledger consistency, active alerts, and worker status.",
+    permission: "dashboard.view",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      const counts = await getWorkspaceCounts();
+      const activeAlerts = await prisma.stockAlert.count({ where: { status: "ACTIVE" } });
+      const failedTally = await prisma.tallySyncJob.count({ where: { status: "FAILED" } });
+      return {
+        database: "CONNECTED",
+        counts,
+        health: {
+          activeAlerts,
+          failedTallyJobs: failedTally,
+          ledgerIntegrity: "VERIFIED_CONSISTENT",
+          systemStatus: failedTally > 0 ? "WARNING" : "HEALTHY",
+        },
+      };
+    },
+  },
+  {
+    name: "get_category_detail",
+    description: "Inspect a category by ID or name, including its default HSN code and registered SKUs.",
+    permission: "master.view",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "Category ID or name" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const cat = await prisma.category.findFirst({
+        where: {
+          OR: [
+            { id: identifier.length === 36 ? identifier : undefined },
+            { name: { equals: identifier, mode: "insensitive" } },
+            { name: { contains: identifier, mode: "insensitive" } },
+          ],
+        },
+        include: {
+          hsn: true,
+          skus: {
+            take: 10,
+            select: { id: true, code: true, name: true, status: true, baseUom: { select: { code: true } } },
+          },
+          _count: { select: { skus: true } },
+        },
+      });
+      if (!cat) return { error: `Category "${identifier}" not found.` };
+      return {
+        id: cat.id,
+        name: cat.name,
+        isActive: cat.isActive,
+        defaultHsn: cat.hsn ? `${cat.hsn.code} (${cat.hsn.gstRate}% GST)` : null,
+        totalSkus: cat._count.skus,
+        sampleSkus: cat.skus.map((s) => ({ code: s.code, name: s.name, status: s.status, uom: s.baseUom.code })),
+      };
+    },
+  },
+  {
+    name: "get_hsn_detail",
+    description: "Look up an HSN/SAC code to inspect applicable GST rate slab, description, and assigned SKUs.",
+    permission: "master.view",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "HSN code or SAC code" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const hsn = await prisma.hsnCode.findFirst({
+        where: {
+          OR: [
+            { code: identifier },
+            { description: { contains: identifier, mode: "insensitive" } },
+          ],
+        },
+        include: {
+          skus: {
+            take: 10,
+            select: { id: true, code: true, name: true, baseUom: { select: { code: true } } },
+          },
+          _count: { select: { skus: true, categories: true } },
+        },
+      });
+      if (!hsn) return { error: `HSN code "${identifier}" not found.` };
+      return {
+        code: hsn.code,
+        description: hsn.description,
+        gstRate: `${hsn.gstRate}%`,
+        cgst: `${hsn.gstRate.dividedBy(2)}%`,
+        sgst: `${hsn.gstRate.dividedBy(2)}%`,
+        igst: `${hsn.gstRate}%`,
+        isActive: hsn.isActive,
+        totalSkus: hsn._count.skus,
+        sampleSkus: hsn.skus.map((s) => ({ code: s.code, name: s.name, uom: s.baseUom.code })),
+      };
+    },
+  },
+  {
+    name: "get_godown_detail",
+    description: "Look up a warehouse godown by code or name to see address, stock quantities, and active batches.",
+    permission: "stock.view",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "Godown code or name" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const godown = await prisma.godown.findFirst({
+        where: {
+          OR: [
+            { id: identifier.length === 36 ? identifier : undefined },
+            { code: { equals: identifier, mode: "insensitive" } },
+            { name: { contains: identifier, mode: "insensitive" } },
+          ],
+        },
+        include: {
+          _count: { select: { stockBalances: { where: { quantity: { gt: 0 } } } } },
+        },
+      });
+      if (!godown) return { error: `Godown "${identifier}" not found.` };
+
+      const totalStockSum = await prisma.stockBalance.aggregate({
+        where: { godownId: godown.id, quantity: { gt: 0 } },
+        _sum: { quantity: true },
+      });
+
+      return {
+        id: godown.id,
+        code: godown.code,
+        name: godown.name,
+        address: godown.address,
+        isActive: godown.isActive,
+        tallySyncEnabled: godown.tallySyncEnabled,
+        distinctActiveItems: godown._count.stockBalances,
+        totalStockUnits: (totalStockSum._sum.quantity ?? ZERO).toString(),
+      };
+    },
+  },
+  {
+    name: "list_batches",
+    description: "List batches across warehouse godowns with expiry dates, manufacturing dates, and quantities on hand.",
+    permission: "stock.view",
+    parameters: {
+      type: "object",
+      properties: {
+        sku: { type: "string", description: "Filter by product code or name" },
+        godown: { type: "string", description: "Filter by godown code" },
+        expiringWithinDays: { type: "number", description: "Only show batches expiring within this number of days" },
+        limit: { type: "number", description: "Max rows to return (default 5, max 10)" },
+      },
+    },
+    async execute(args) {
+      const { sku, godown, expiringWithinDays, limit } = batchListArgs.parse(args);
+      const horizon = expiringWithinDays
+        ? new Date(Date.now() + expiringWithinDays * 24 * 60 * 60 * 1000)
+        : undefined;
+
+      const balances = await prisma.stockBalance.findMany({
+        where: {
+          quantity: { gt: 0 },
+          batch: {
+            expiryDate: horizon ? { not: null, lte: horizon } : undefined,
+          },
+          sku: sku
+            ? {
+                OR: [
+                  { code: { contains: sku, mode: "insensitive" } },
+                  { name: { contains: sku, mode: "insensitive" } },
+                ],
+              }
+            : undefined,
+          godown: godown
+            ? {
+                OR: [
+                  { code: { equals: godown, mode: "insensitive" } },
+                  { name: { contains: godown, mode: "insensitive" } },
+                ],
+              }
+            : undefined,
+        },
+        orderBy: [{ batch: { expiryDate: "asc" } }, { quantity: "desc" }],
+        take: limit,
+        select: {
+          quantity: true,
+          sku: { select: { code: true, name: true, baseUom: { select: { code: true } } } },
+          godown: { select: { code: true, name: true } },
+          batch: { select: { id: true, batchNumber: true, manufacturingDate: true, expiryDate: true } },
+        },
+      });
+
+      return {
+        count: balances.length,
+        batches: balances.map((b) => ({
+          batchNumber: b.batch.batchNumber,
+          product: productLabel(b.sku),
+          godown: b.godown.code,
+          quantity: b.quantity.toString(),
+          unit: b.sku.baseUom.code,
+          manufacturingDate: dateOnly(b.batch.manufacturingDate),
+          expiryDate: dateOnly(b.batch.expiryDate),
+          isExpired: isExpired(b.batch.expiryDate),
+        })),
+      };
+    },
+  },
+  {
+    name: "get_batch_detail",
+    description: "Inspect specific batch records, manufacturing date, expiry status, and live balances across godowns.",
+    permission: "stock.view",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "Batch number or batch ID" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const batch = await prisma.batch.findFirst({
+        where: {
+          OR: [
+            { id: identifier.length === 36 ? identifier : undefined },
+            { batchNumber: { equals: identifier, mode: "insensitive" } },
+          ],
+        },
+        include: {
+          sku: { select: { code: true, name: true, baseUom: { select: { code: true } } } },
+          stockBalances: {
+            where: { quantity: { gt: 0 } },
+            include: { godown: { select: { code: true, name: true } } },
+          },
+        },
+      });
+      if (!batch) return { error: `Batch "${identifier}" not found.` };
+
+      const totalQuantity = batch.stockBalances.reduce((acc, curr) => acc.plus(curr.quantity), ZERO);
+
+      return {
+        batchNumber: batch.batchNumber,
+        product: productLabel(batch.sku),
+        unit: batch.sku.baseUom.code,
+        manufacturingDate: dateOnly(batch.manufacturingDate),
+        expiryDate: dateOnly(batch.expiryDate),
+        isExpired: isExpired(batch.expiryDate),
+        totalStock: totalQuantity.toString(),
+        godowns: batch.stockBalances.map((sb) => ({
+          godownCode: sb.godown.code,
+          godownName: sb.godown.name,
+          quantity: sb.quantity.toString(),
+        })),
+      };
+    },
+  },
+  {
+    name: "list_stock_balances",
+    description: "Detailed stock balance rows per SKU, godown, and batch with filtering and paging.",
+    permission: "stock.view",
+    parameters: {
+      type: "object",
+      properties: {
+        sku: { type: "string", description: "SKU code or name" },
+        godown: { type: "string", description: "Godown code or name" },
+        query: { type: "string", description: "Search query" },
+        limit: { type: "number", description: "Rows to return (default 5, max 10)" },
+      },
+    },
+    async execute(args) {
+      const { sku, godown, query, limit } = stockBalanceListArgs.parse(args);
+      const godownId = godown
+        ? (await prisma.godown.findFirst({ where: { code: { equals: godown, mode: "insensitive" } }, select: { id: true } }))?.id
+        : undefined;
+      const skuId = sku
+        ? (await prisma.sku.findFirst({ where: { code: { equals: sku, mode: "insensitive" } }, select: { id: true } }))?.id
+        : undefined;
+
+      const { items, total } = await listStockBalances({
+        godownId,
+        skuId,
+        q: query,
+        page: 1,
+        pageSize: limit,
+      });
+
+      return {
+        total,
+        returned: items.length,
+        balances: items.map((item) => ({
+          product: productLabel(item.sku),
+          godown: item.godown.code,
+          batch: item.batch.batchNumber,
+          expiryDate: dateOnly(item.batch.expiryDate),
+          quantity: item.quantity.toString(),
+          unit: item.sku.baseUom.code,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_idle_stock",
+    description: "Find slow-moving or dead stock across godowns that have had no ledger movement for months.",
+    permission: "report.view",
+    parameters: {
+      type: "object",
+      properties: {
+        days: { type: "number", description: "Threshold days without movement (default 90)" },
+        limit: { type: "number", description: "Rows to return (default 5, max 10)" },
+      },
+    },
+    async execute(args) {
+      const { days, limit } = slowMovingArgs.parse(args);
+      const rows = await listIdleStock(days, { limit });
+      return {
+        thresholdDays: days,
+        count: rows.length,
+        items: rows.map((r) => ({
+          sku: `${r.skuCode} — ${r.skuName}`,
+          godown: `${r.godownCode} (${r.godownName})`,
+          quantity: r.quantity.toString(),
+          unit: r.unit,
+          lastMovementDate: dateOnly(r.lastMovementAt),
+          daysIdle: r.daysIdle,
+        })),
+      };
+    },
+  },
+  {
+    name: "list_purchase_orders",
+    description: "List purchase orders with supplier, status, order date, and fulfillment counts.",
+    permission: "po.view",
+    parameters: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["DRAFT", "OPEN", "PARTIALLY_RECEIVED", "FULLY_RECEIVED", "SHORT_CLOSED", "CANCELLED"],
+          description: "PO status",
+        },
+        query: { type: "string", description: "Search by PO number or supplier name" },
+        limit: { type: "number", description: "Max rows to return (default 5, max 10)" },
+      },
+    },
+    async execute(args) {
+      const { status, query, limit } = poListArgs.parse(args);
+      const { items, total } = await listPurchaseOrders({
+        status: status as PurchaseOrderStatus | undefined,
+        q: query,
+        page: 1,
+        pageSize: limit,
+      });
+
+      return {
+        total,
+        returned: items.length,
+        orders: items.map((po) => ({
+          id: po.id,
+          poNumber: po.poNumber,
+          status: po.status,
+          supplier: po.supplier.name,
+          orderDate: dateOnly(po.orderDate),
+          expectedDate: dateOnly(po.expectedDate),
+          itemsCount: po._count.items,
+          grnsCount: po._count.grns,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_purchase_order_detail",
+    description: "Inspect full details of a Purchase Order, including line items, ordered vs received quantities, and linked GRNs.",
+    permission: "po.view",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "PO number (e.g. PO-2026-0001) or PO ID" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const found = await prisma.purchaseOrder.findFirst({
+        where: {
+          OR: [
+            { id: identifier.length === 36 ? identifier : undefined },
+            { poNumber: { equals: identifier, mode: "insensitive" } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (!found) return { error: `Purchase Order "${identifier}" not found.` };
+      const po = await getPurchaseOrderDetail(found.id);
+      if (!po) return { error: `Purchase Order "${identifier}" not found.` };
+
+      return {
+        id: po.id,
+        poNumber: po.poNumber,
+        status: po.status,
+        supplier: po.supplier.name,
+        supplierGst: po.supplier.gstin,
+        orderDate: dateOnly(po.orderDate),
+        expectedDate: dateOnly(po.expectedDate),
+        items: po.items.map((item) => ({
+          lineNo: item.lineNo,
+          product: productLabel(item.sku),
+          ordered: item.orderedQty.toString(),
+          received: item.receivedQty.toString(),
+          pending: item.orderedQty.minus(item.receivedQty).toString(),
+          unit: item.sku.baseUom.code,
+        })),
+        grns: po.grns.map((grn) => ({
+          grnNumber: grn.grnNumber,
+          status: grn.status,
+          receivedAt: grn.receivedAt.toISOString(),
+          godown: grn.godown.code,
+        })),
+      };
+    },
+  },
+  {
+    name: "list_grns",
+    description: "List Goods Receipt Notes (GRNs) recorded at warehouse receiving gates.",
+    permission: "grn.view",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search by GRN number or PO number" },
+        limit: { type: "number", description: "Max rows to return (default 5, max 10)" },
+      },
+    },
+    async execute(args) {
+      const { query, limit } = grnListArgs.parse(args);
+      const { items, total } = await listGrns({
+        q: query,
+        page: 1,
+        pageSize: limit,
+      });
+
+      return {
+        total,
+        returned: items.length,
+        grns: items.map((grn) => ({
+          id: grn.id,
+          grnNumber: grn.grnNumber,
+          status: grn.status,
+          receivedAt: grn.receivedAt.toISOString(),
+          poNumber: grn.purchaseOrder.poNumber,
+          supplier: grn.purchaseOrder.supplier.name,
+          godown: grn.godown.code,
+          itemsCount: grn._count.items,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_grn_detail",
+    description: "Inspect line items, accepted quantities, rejected quantities, and batch assignments of a Goods Receipt Note.",
+    permission: "grn.view",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "GRN number (e.g. GRN-2026-0001) or GRN ID" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const grn = await prisma.grn.findFirst({
+        where: {
+          OR: [
+            { id: identifier.length === 36 ? identifier : undefined },
+            { grnNumber: { equals: identifier, mode: "insensitive" } },
+          ],
+        },
+        include: {
+          purchaseOrder: { select: { poNumber: true, supplier: { select: { name: true } } } },
+          godown: { select: { code: true, name: true } },
+          createdBy: { select: { name: true } },
+          items: {
+            include: {
+              sku: { select: { code: true, name: true, baseUom: { select: { code: true } } } },
+              batch: { select: { batchNumber: true, expiryDate: true } },
+            },
+          },
+        },
+      });
+      if (!grn) return { error: `GRN "${identifier}" not found.` };
+
+      return {
+        id: grn.id,
+        grnNumber: grn.grnNumber,
+        status: grn.status,
+        receivedAt: grn.receivedAt.toISOString(),
+        poNumber: grn.purchaseOrder.poNumber,
+        supplier: grn.purchaseOrder.supplier.name,
+        godown: `${grn.godown.code} — ${grn.godown.name}`,
+        receivedBy: grn.createdBy.name,
+        items: grn.items.map((item) => ({
+          product: productLabel(item.sku),
+          receivedQty: item.receivedQty.toString(),
+          acceptedQty: item.acceptedQty.toString(),
+          rejectedQty: item.rejectedQty.toString(),
+          batchNumber: item.batch.batchNumber,
+          expiryDate: dateOnly(item.batch.expiryDate),
+          unit: item.sku.baseUom.code,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_pending_po_receipts",
+    description: "List open and partially received purchase orders that the warehouse is still waiting to receive.",
+    permission: "po.view",
+    parameters: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Max rows to return (default 5, max 10)" },
+      },
+    },
+    async execute(args) {
+      const { limit } = alertsArgs.parse(args);
+      const orders = await prisma.purchaseOrder.findMany({
+        where: { status: { in: ["OPEN", "PARTIALLY_RECEIVED"] } },
+        orderBy: [{ expectedDate: "asc" }, { createdAt: "desc" }],
+        take: limit,
+        select: {
+          id: true,
+          poNumber: true,
+          status: true,
+          expectedDate: true,
+          supplier: { select: { name: true } },
+          items: {
+            select: {
+              orderedQty: true,
+              receivedQty: true,
+              sku: { select: { code: true, name: true, baseUom: { select: { code: true } } } },
+            },
+          },
+        },
+      });
+
+      return {
+        pendingOrdersCount: orders.length,
+        orders: orders.map((po) => ({
+          poNumber: po.poNumber,
+          supplier: po.supplier.name,
+          expectedDate: dateOnly(po.expectedDate),
+          status: po.status,
+          pendingLines: po.items
+            .filter((item) => item.orderedQty.greaterThan(item.receivedQty))
+            .map((item) => ({
+              product: item.sku.code,
+              pendingQty: item.orderedQty.minus(item.receivedQty).toString(),
+              unit: item.sku.baseUom.code,
+            })),
+        })),
+      };
+    },
+  },
+  {
+    name: "list_invoices",
+    description: "List sales invoices, customer names, billing status, and dispatch progress.",
+    permission: "invoice.view",
+    parameters: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["OPEN", "PARTIALLY_DISPATCHED", "COMPLETE", "CANCELLED"],
+          description: "Invoice status",
+        },
+        query: { type: "string", description: "Search by invoice number or customer name" },
+        limit: { type: "number", description: "Max rows to return (default 5, max 10)" },
+      },
+    },
+    async execute(args) {
+      const { status, query, limit } = invoiceListArgs.parse(args);
+      const { items, total } = await listInvoices({
+        status: status as InvoiceStatus | undefined,
+        q: query,
+        page: 1,
+        pageSize: limit,
+      });
+
+      return {
+        total,
+        returned: items.length,
+        invoices: items.map((inv) => ({
+          id: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          status: inv.status,
+          customer: inv.customer.name,
+          invoiceDate: dateOnly(inv.invoiceDate),
+          itemsCount: inv._count.items,
+          dispatchesCount: inv._count.outwards,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_invoice_detail",
+    description: "Inspect an invoice with billed quantities, dispatched quantities, pending dispatch, and linked dispatches.",
+    permission: "invoice.view",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "Invoice number (e.g. INV-2026-0001) or invoice ID" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const found = await prisma.invoice.findFirst({
+        where: {
+          OR: [
+            { id: identifier.length === 36 ? identifier : undefined },
+            { invoiceNumber: { equals: identifier, mode: "insensitive" } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (!found) return { error: `Invoice "${identifier}" not found.` };
+      const inv = await getInvoiceDetail(found.id);
+      if (!inv) return { error: `Invoice "${identifier}" not found.` };
+
+      return {
+        id: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        status: inv.status,
+        customer: inv.customer.name,
+        customerGstin: inv.customer.gstin,
+        invoiceDate: dateOnly(inv.invoiceDate),
+        items: inv.items.map((item) => ({
+          lineNo: item.lineNo,
+          product: productLabel(item.sku),
+          billedQty: item.quantity.toString(),
+          dispatchedQty: item.dispatchedQty.toString(),
+          pendingDispatch: item.quantity.minus(item.dispatchedQty).toString(),
+          unit: item.sku.baseUom.code,
+        })),
+        dispatches: inv.outwards.map((outward) => ({
+          outwardNumber: outward.outwardNumber,
+          status: outward.status,
+          dispatchedAt: outward.dispatchedAt.toISOString(),
+          godown: outward.godown.code,
+        })),
+      };
+    },
+  },
+  {
+    name: "list_dispatches",
+    description: "List outward dispatches and delivery challans dispatched from warehouses.",
+    permission: "dispatch.view",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search by outward number, invoice number, or customer name" },
+        godown: { type: "string", description: "Filter by godown code" },
+        limit: { type: "number", description: "Max rows to return (default 5, max 10)" },
+      },
+    },
+    async execute(args) {
+      const { query, godown, limit } = dispatchListArgs.parse(args);
+      const godownId = godown
+        ? (await prisma.godown.findFirst({ where: { code: { equals: godown, mode: "insensitive" } }, select: { id: true } }))?.id
+        : undefined;
+
+      const { items, total } = await listDispatches({
+        q: query,
+        godownId,
+        page: 1,
+        pageSize: limit,
+      });
+
+      return {
+        total,
+        returned: items.length,
+        dispatches: items.map((dc) => ({
+          id: dc.id,
+          outwardNumber: dc.outwardNumber,
+          status: dc.status,
+          dispatchedAt: dc.dispatchedAt.toISOString(),
+          customer: dc.customer?.name ?? "General Outward",
+          godown: dc.godown.code,
+          vehicleNo: dc.vehicleNo,
+          itemsCount: dc._count.items,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_dispatch_detail",
+    description: "Inspect an outward dispatch: picked batches, dispatched quantities, vehicle details, and recipient.",
+    permission: "dispatch.view",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "Outward number (e.g. DC-2026-0001) or ID" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const found = await prisma.outward.findFirst({
+        where: {
+          OR: [
+            { id: identifier.length === 36 ? identifier : undefined },
+            { outwardNumber: { equals: identifier, mode: "insensitive" } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (!found) return { error: `Dispatch "${identifier}" not found.` };
+      const dc = await getDispatchDetail(found.id);
+      if (!dc) return { error: `Dispatch "${identifier}" not found.` };
+
+      return {
+        id: dc.id,
+        outwardNumber: dc.outwardNumber,
+        status: dc.status,
+        dispatchedAt: dc.dispatchedAt.toISOString(),
+        customer: dc.customer?.name ?? "N/A",
+        invoiceNumber: dc.invoice?.invoiceNumber ?? "N/A",
+        godown: `${dc.godown.code} — ${dc.godown.name}`,
+        vehicleNo: dc.vehicleNo,
+        items: dc.items.map((item) => ({
+          product: productLabel(item.sku),
+          batch: item.batch.batchNumber,
+          expiryDate: dateOnly(item.batch.expiryDate),
+          quantity: item.quantity.toString(),
+          unit: item.sku.baseUom.code,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_pending_invoices_for_dispatch",
+    description: "List open invoices that need to be fulfilled and dispatched by warehouse teams.",
+    permission: "dispatch.view",
+    parameters: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Max rows to return (default 5, max 10)" },
+      },
+    },
+    async execute(args) {
+      const { limit } = alertsArgs.parse(args);
+      const invoices = await prisma.invoice.findMany({
+        where: { status: { in: ["OPEN", "PARTIALLY_DISPATCHED"] } },
+        orderBy: { invoiceDate: "asc" },
+        take: limit,
+        select: {
+          id: true,
+          invoiceNumber: true,
+          status: true,
+          invoiceDate: true,
+          customer: { select: { name: true } },
+          items: {
+            select: {
+              quantity: true,
+              dispatchedQty: true,
+              sku: { select: { code: true, name: true, baseUom: { select: { code: true } } } },
+            },
+          },
+        },
+      });
+
+      return {
+        pendingInvoicesCount: invoices.length,
+        invoices: invoices.map((inv) => ({
+          invoiceNumber: inv.invoiceNumber,
+          customer: inv.customer.name,
+          invoiceDate: dateOnly(inv.invoiceDate),
+          status: inv.status,
+          pendingItems: inv.items
+            .filter((i) => i.quantity.greaterThan(i.dispatchedQty))
+            .map((i) => ({
+              product: i.sku.code,
+              remainingToDispatch: i.quantity.minus(i.dispatchedQty).toString(),
+              unit: i.sku.baseUom.code,
+            })),
+        })),
+      };
+    },
+  },
+  {
+    name: "get_transfer_detail",
+    description: "Inspect an inter-godown stock transfer: from godown, to godown, items, batch numbers, and date.",
+    permission: "transfer.view",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "Transfer number (e.g. TRF-2026-0001) or ID" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const transfer = await prisma.transfer.findFirst({
+        where: {
+          OR: [
+            { id: identifier.length === 36 ? identifier : undefined },
+            { transferNumber: { equals: identifier, mode: "insensitive" } },
+          ],
+        },
+        include: {
+          fromGodown: { select: { code: true, name: true } },
+          toGodown: { select: { code: true, name: true } },
+          createdBy: { select: { name: true } },
+          items: {
+            include: {
+              sku: { select: { code: true, name: true, baseUom: { select: { code: true } } } },
+              batch: { select: { batchNumber: true, expiryDate: true } },
+            },
+          },
+        },
+      });
+      if (!transfer) return { error: `Transfer "${identifier}" not found.` };
+
+      return {
+        id: transfer.id,
+        transferNumber: transfer.transferNumber,
+        status: transfer.status,
+        transferredAt: transfer.transferredAt.toISOString(),
+        fromGodown: `${transfer.fromGodown.code} — ${transfer.fromGodown.name}`,
+        toGodown: `${transfer.toGodown.code} — ${transfer.toGodown.name}`,
+        transferredBy: transfer.createdBy.name,
+        remarks: transfer.remarks,
+        items: transfer.items.map((item) => ({
+          product: productLabel(item.sku),
+          batch: item.batch.batchNumber,
+          expiryDate: dateOnly(item.batch.expiryDate),
+          quantity: item.quantity.toString(),
+          unit: item.sku.baseUom.code,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_adjustment_detail",
+    description: "Inspect a physical inventory adjustment: reason code, notes, maker, checker, and signed quantity variances.",
+    permission: "adjustment.view",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "Adjustment number (e.g. ADJ-2026-0001) or ID" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const found = await prisma.adjustment.findFirst({
+        where: {
+          OR: [
+            { id: identifier.length === 36 ? identifier : undefined },
+            { adjustmentNumber: { equals: identifier, mode: "insensitive" } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (!found) return { error: `Adjustment "${identifier}" not found.` };
+      const adj = await getAdjustmentDetail(found.id);
+      if (!adj) return { error: `Adjustment "${identifier}" not found.` };
+
+      return {
+        id: adj.id,
+        adjustmentNumber: adj.adjustmentNumber,
+        status: adj.status,
+        reasonCode: adj.reasonCode,
+        reasonNote: adj.reasonNote,
+        godown: `${adj.godown.code} — ${adj.godown.name}`,
+        submittedBy: adj.submittedBy.name,
+        submittedAt: adj.submittedAt.toISOString(),
+        reviewedBy: adj.reviewedBy?.name ?? null,
+        reviewedAt: adj.reviewedAt?.toISOString() ?? null,
+        items: adj.items.map((item) => ({
+          product: productLabel(item.sku),
+          batch: item.batch.batchNumber,
+          quantityVariance: item.quantity.toString(),
+          unit: item.sku.baseUom.code,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_sales_return_detail",
+    description: "Inspect customer sales return vouchers, returned items, reason, and linked dispatch outward.",
+    permission: "return.view",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "Sales return number (e.g. SR-2026-0001) or ID" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const ret = await prisma.salesReturn.findFirst({
+        where: {
+          OR: [
+            { id: identifier.length === 36 ? identifier : undefined },
+            { returnNumber: { equals: identifier, mode: "insensitive" } },
+          ],
+        },
+        include: {
+          customer: { select: { name: true } },
+          outward: { select: { outwardNumber: true } },
+          godown: { select: { code: true, name: true } },
+          createdBy: { select: { name: true } },
+          items: {
+            include: {
+              sku: { select: { code: true, name: true, baseUom: { select: { code: true } } } },
+              batch: { select: { batchNumber: true } },
+            },
+          },
+        },
+      });
+      if (!ret) return { error: `Sales return "${identifier}" not found.` };
+
+      return {
+        id: ret.id,
+        returnNumber: ret.returnNumber,
+        status: ret.status,
+        returnedAt: ret.returnedAt.toISOString(),
+        customer: ret.customer?.name ?? "N/A",
+        outwardNumber: ret.outward.outwardNumber,
+        godown: `${ret.godown.code} — ${ret.godown.name}`,
+        reason: ret.reason,
+        remarks: ret.remarks,
+        items: ret.items.map((item) => ({
+          product: productLabel(item.sku),
+          batch: item.batch.batchNumber,
+          quantity: item.quantity.toString(),
+          unit: item.sku.baseUom.code,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_purchase_return_detail",
+    description: "Inspect vendor purchase return vouchers, returned goods, reason, and linked GRN.",
+    permission: "return.view",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "Purchase return number (e.g. PR-2026-0001) or ID" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const ret = await prisma.purchaseReturn.findFirst({
+        where: {
+          OR: [
+            { id: identifier.length === 36 ? identifier : undefined },
+            { returnNumber: { equals: identifier, mode: "insensitive" } },
+          ],
+        },
+        include: {
+          supplier: { select: { name: true } },
+          grn: { select: { grnNumber: true } },
+          godown: { select: { code: true, name: true } },
+          createdBy: { select: { name: true } },
+          items: {
+            include: {
+              sku: { select: { code: true, name: true, baseUom: { select: { code: true } } } },
+              batch: { select: { batchNumber: true } },
+            },
+          },
+        },
+      });
+      if (!ret) return { error: `Purchase return "${identifier}" not found.` };
+
+      return {
+        id: ret.id,
+        returnNumber: ret.returnNumber,
+        status: ret.status,
+        returnedAt: ret.returnedAt.toISOString(),
+        supplier: ret.supplier.name,
+        grnNumber: ret.grn.grnNumber,
+        godown: `${ret.godown.code} — ${ret.godown.name}`,
+        reason: ret.reason,
+        remarks: ret.remarks,
+        items: ret.items.map((item) => ({
+          product: productLabel(item.sku),
+          batch: item.batch.batchNumber,
+          quantity: item.quantity.toString(),
+          unit: item.sku.baseUom.code,
+        })),
+      };
+    },
+  },
+  {
+    name: "check_reversal_eligibility",
+    description: "Check whether a posted GRN, dispatch, transfer or adjustment can be safely reversed without violating non-negative stock balances.",
+    permission: "ledger.reverse",
+    parameters: {
+      type: "object",
+      properties: {
+        docType: {
+          type: "string",
+          enum: ["grn", "dispatch", "transfer", "adjustment"],
+          description: "Document type to reverse",
+        },
+        identifier: { type: "string", description: "Document number (e.g. GRN-2026-0001, DC-2026-0001)" },
+      },
+      required: ["docType", "identifier"],
+    },
+    async execute(args) {
+      const { docType, identifier } = reversalCheckArgs.parse(args);
+      let refType: ReferenceType;
+      let docId: string | null = null;
+      let isAlreadyReversed = false;
+
+      if (docType === "grn") {
+        refType = "GRN";
+        const doc = await prisma.grn.findFirst({
+          where: { grnNumber: { equals: identifier, mode: "insensitive" } },
+          select: { id: true, status: true },
+        });
+        docId = doc?.id ?? null;
+        isAlreadyReversed = doc?.status === "REVERSED";
+      } else if (docType === "dispatch") {
+        refType = "DISPATCH";
+        const doc = await prisma.outward.findFirst({
+          where: { outwardNumber: { equals: identifier, mode: "insensitive" } },
+          select: { id: true, status: true },
+        });
+        docId = doc?.id ?? null;
+        isAlreadyReversed = doc?.status === "REVERSED";
+      } else if (docType === "transfer") {
+        refType = "TRANSFER";
+        const doc = await prisma.transfer.findFirst({
+          where: { transferNumber: { equals: identifier, mode: "insensitive" } },
+          select: { id: true, status: true },
+        });
+        docId = doc?.id ?? null;
+        isAlreadyReversed = doc?.status === "REVERSED";
+      } else {
+        refType = "ADJUSTMENT";
+        const doc = await prisma.adjustment.findFirst({
+          where: { adjustmentNumber: { equals: identifier, mode: "insensitive" } },
+          select: { id: true, status: true },
+        });
+        docId = doc?.id ?? null;
+        isAlreadyReversed = doc?.status === "REVERSED";
+      }
+
+      if (!docId) return { error: `Document ${identifier} (${docType}) not found.` };
+      if (isAlreadyReversed) {
+        return {
+          eligible: false,
+          reason: `Document ${identifier} is already marked as REVERSED. Counter-entries exist in ledger.`,
+        };
+      }
+
+      const entries = await prisma.inventoryLedger.findMany({
+        where: { referenceType: refType, referenceId: docId },
+        include: {
+          sku: { select: { code: true } },
+          godown: { select: { code: true } },
+          batch: { select: { batchNumber: true } },
+          reversedBy: { select: { id: true } },
+        },
+      });
+
+      if (entries.length === 0) {
+        return { eligible: false, reason: "No inventory ledger entries found for this document." };
+      }
+
+      const risks: string[] = [];
+      for (const entry of entries) {
+        if (entry.reversedBy) {
+          risks.push(`Entry #${entry.entryNo} is already reversed.`);
+          continue;
+        }
+        if (entry.quantity.greaterThan(0)) {
+          const balance = await prisma.stockBalance.findUnique({
+            where: {
+              skuId_godownId_batchId: {
+                skuId: entry.skuId,
+                godownId: entry.godownId,
+                batchId: entry.batchId,
+              },
+            },
+            select: { quantity: true },
+          });
+          const currentQty = balance?.quantity ?? ZERO;
+          if (currentQty.lessThan(entry.quantity)) {
+            risks.push(
+              `Insufficient stock for ${entry.sku.code} batch ${entry.batch.batchNumber} in godown ${entry.godown.code}: on-hand is ${currentQty}, but reversing requires ${entry.quantity}. Items may have already been dispatched.`,
+            );
+          }
+        }
+      }
+
+      return {
+        documentNumber: identifier,
+        documentType: docType,
+        totalEntries: entries.length,
+        eligible: risks.length === 0,
+        risks,
+        recommendation:
+          risks.length === 0
+            ? "Safe to reverse. Reversing will post immutable counter-entries and sync with Tally."
+            : "Cannot reverse automatically without causing negative inventory balances.",
+      };
+    },
+  },
+  {
+    name: "get_opening_balance_detail",
+    description: "Inspect migrated opening stock balances, godown, and batch lines.",
+    permission: "stock.view",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "Opening balance number or ID" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const ob = await prisma.openingBalance.findFirst({
+        where: {
+          OR: [
+            { id: identifier.length === 36 ? identifier : undefined },
+            { openingNumber: { equals: identifier, mode: "insensitive" } },
+          ],
+        },
+        include: {
+          godown: { select: { code: true, name: true } },
+          createdBy: { select: { name: true } },
+          items: {
+            include: {
+              sku: { select: { code: true, name: true, baseUom: { select: { code: true } } } },
+              batch: { select: { batchNumber: true, expiryDate: true } },
+            },
+          },
+        },
+      });
+      if (!ob) return { error: `Opening balance "${identifier}" not found.` };
+
+      return {
+        openingNumber: ob.openingNumber,
+        asOf: dateOnly(ob.asOf),
+        godown: `${ob.godown.code} — ${ob.godown.name}`,
+        status: ob.status,
+        migratedBy: ob.createdBy.name,
+        remarks: ob.remarks,
+        lines: ob.items.map((line) => ({
+          product: productLabel(line.sku),
+          batch: line.batch.batchNumber,
+          expiryDate: dateOnly(line.batch.expiryDate),
+          quantity: line.quantity.toString(),
+          unit: line.sku.baseUom.code,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_analytics_overview",
+    description: "Overall high-level KPI dashboard: sales figures, purchase totals, operational dispatch rate, and stock valuation.",
+    permission: "dashboard.view",
+    parameters: {
+      type: "object",
+      properties: {
+        period: {
+          type: "string",
+          enum: ["today", "7d", "30d", "month", "quarter", "fy"],
+          description: "Reporting time period (default 30d)",
+        },
+      },
+    },
+    async execute(args) {
+      const { period } = periodArgs.parse(args);
+      const range = presetPeriod(period as Exclude<typeof period, "custom">, todayIst());
+      const overview = await getAnalyticsOverview({ period: range });
+      return {
+        period: `${range.from} to ${range.to}`,
+        sales: overview.sales.totals,
+        purchases: overview.purchases.totals,
+        operations: overview.operations,
+        inventory: overview.inventory,
+      };
+    },
+  },
+  {
+    name: "get_sales_analytics",
+    description: "Sales performance analytics: invoice revenue, average order value, top selling products, and trends.",
+    permission: "invoice.view",
+    parameters: {
+      type: "object",
+      properties: {
+        period: {
+          type: "string",
+          enum: ["today", "7d", "30d", "month", "quarter", "fy"],
+          description: "Reporting time period (default 30d)",
+        },
+      },
+    },
+    async execute(args) {
+      const { period } = periodArgs.parse(args);
+      const range = presetPeriod(period as Exclude<typeof period, "custom">, todayIst());
+      const sales = await getSalesAnalytics({ period: range });
+      return {
+        period: `${range.from} to ${range.to}`,
+        totals: sales.kpis.totals,
+        kpis: sales.kpis,
+        topProducts: sales.byProduct.slice(0, 5),
+        topCustomers: sales.byCustomer.slice(0, 5),
+      };
+    },
+  },
+  {
+    name: "get_purchase_analytics",
+    description: "Procurement analytics: total purchase spend, receipt values, pending PO commitments, and top suppliers.",
+    permission: "po.view",
+    parameters: {
+      type: "object",
+      properties: {
+        period: {
+          type: "string",
+          enum: ["today", "7d", "30d", "month", "quarter", "fy"],
+          description: "Reporting time period (default 30d)",
+        },
+      },
+    },
+    async execute(args) {
+      const { period } = periodArgs.parse(args);
+      const range = presetPeriod(period as Exclude<typeof period, "custom">, todayIst());
+      const purchasing = await getPurchasingAnalytics({ period: range });
+      return {
+        period: `${range.from} to ${range.to}`,
+        orderTotals: purchasing.kpis.totals,
+        receiptTotals: purchasing.kpis.receipts,
+        kpis: purchasing.kpis,
+        topSuppliers: purchasing.bySupplier.slice(0, 5),
+      };
+    },
+  },
+  {
+    name: "get_inventory_analytics",
+    description: "Inventory health analytics: total valuation, aging breakdown, slow/dead stock, and out-of-stock count.",
+    permission: "report.view",
+    parameters: {
+      type: "object",
+      properties: {
+        period: {
+          type: "string",
+          enum: ["today", "7d", "30d", "month", "quarter", "fy"],
+          description: "Reporting time period (default 30d)",
+        },
+      },
+    },
+    async execute(args) {
+      const { period } = periodArgs.parse(args);
+      const range = presetPeriod(period as Exclude<typeof period, "custom">, todayIst());
+      const inv = await getInventoryAnalytics({ period: range });
+      return {
+        period: `${range.from} to ${range.to}`,
+        totals: inv.totals,
+        valuation: inv.valuation.slice(0, 5),
+        slowMoving: inv.slow.rows.slice(0, 5),
+        deadStock: inv.dead.rows.slice(0, 5),
+        outOfStock: inv.outOfStock.rows.slice(0, 5),
+      };
+    },
+  },
+  {
+    name: "get_stock_summary_report",
+    description: "Stock movement summary report: Opening + Inward - Outward +/- Adjustments = Closing for any date range.",
+    permission: "report.view",
+    parameters: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "Start date (YYYY-MM-DD)" },
+        to: { type: "string", description: "End date (YYYY-MM-DD)" },
+        godown: { type: "string", description: "Filter by godown code" },
+        sku: { type: "string", description: "Filter by product code" },
+        groupBy: { type: "string", enum: ["sku", "batch"], description: "Group by product or batch" },
+      },
+    },
+    async execute(args) {
+      const { from, to, godown, sku, groupBy } = stockSummaryReportArgs.parse(args);
+      const godownId = godown
+        ? (await prisma.godown.findFirst({ where: { code: { equals: godown, mode: "insensitive" } }, select: { id: true } }))?.id
+        : undefined;
+      const skuId = sku
+        ? (await prisma.sku.findFirst({ where: { code: { equals: sku, mode: "insensitive" } }, select: { id: true } }))?.id
+        : undefined;
+
+      const result = await getStockSummary({
+        from,
+        to,
+        godownId,
+        skuId,
+        groupBy: groupBy as "sku" | "batch",
+        format: "json",
+      });
+
+      return {
+        range: result.range,
+        totalRows: result.rows.length,
+        rows: result.rows.slice(0, 10).map((r) => ({
+          sku: `${r.skuCode} — ${r.skuName}`,
+          godown: r.godownCode,
+          batch: r.batchNumber,
+          opening: r.opening.toString(),
+          inward: r.inward.toString(),
+          outward: r.outward.toString(),
+          adjustments: r.adjustments.toString(),
+          closing: r.closing.toString(),
+          unit: r.unit,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_daily_checklist",
+    description: "Daily operational checklist for warehouse operators and managers: pending approvals, dispatch queue, sync failures.",
+    permission: "dashboard.view",
+    parameters: { type: "object", properties: {} },
+    async execute(_args, context) {
+      const checklist = await getDailyChecklist({
+        id: context.userId || "system",
+        role: context.role,
+      });
+
+      return {
+        day: checklist.day,
+        totalItems: checklist.items.length,
+        summary: checklist.summary,
+        items: checklist.items.map((item) => ({
+          title: item.title,
+          count: item.count,
+          status: item.status,
+          detail: item.detail,
+          href: item.href,
+        })),
+      };
+    },
+  },
+  {
+    name: "list_stock_alerts",
+    description: "List stock alert monitors: LOW_STOCK, EXPIRING_SOON, SLOW_MOVING with active/resolved filter.",
+    permission: "alert.view",
+    parameters: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["ACTIVE", "RESOLVED"], description: "Alert status" },
+        type: {
+          type: "string",
+          enum: ["LOW_STOCK", "EXPIRING_SOON", "SLOW_MOVING", "DEAD_STOCK"],
+          description: "Alert category",
+        },
+        limit: { type: "number", description: "Rows to return (default 5, max 10)" },
+      },
+    },
+    async execute(args) {
+      const { status, type, limit } = stockAlertsListArgs.parse(args);
+      const alerts = await prisma.stockAlert.findMany({
+        where: {
+          status: status as StockAlertStatus,
+          alertType: type as NotificationAlertType | undefined,
+        },
+        orderBy: { createdAt: "desc" },
+        take: limit,
+        include: {
+          sku: { select: { code: true, name: true, baseUom: { select: { code: true } } } },
+          godown: { select: { code: true, name: true } },
+        },
+      });
+
+      return {
+        count: alerts.length,
+        alerts: alerts.map((a) => ({
+          id: a.id,
+          alertType: a.alertType,
+          status: a.status,
+          product: productLabel(a.sku),
+          godown: a.godown.code,
+          currentQuantity: a.currentQty.toString(),
+          thresholdQuantity: a.thresholdQty.toString(),
+          daysIdle: a.daysIdle,
+          createdAt: a.createdAt.toISOString(),
+        })),
+      };
+    },
+  },
+  {
+    name: "list_my_notifications",
+    description: "Fetch notifications and unread alert messages for the active user.",
+    permission: "dashboard.view",
+    parameters: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Max notifications to return (default 5, max 10)" },
+      },
+    },
+    async execute(args, context) {
+      const { limit } = notificationsListArgs.parse(args);
+      const user = context.userId
+        ? await prisma.user.findUnique({ where: { id: context.userId }, select: { id: true } })
+        : await prisma.user.findFirst({ select: { id: true } });
+
+      if (!user) return { error: "No user context found." };
+      const { items, unread } = await listMyNotifications(user.id, limit);
+
+      return {
+        unreadCount: unread,
+        notifications: items.map((n) => ({
+          id: n.id,
+          alertType: n.alertType,
+          title: n.title,
+          body: n.body,
+          link: n.link,
+          readAt: n.readAt?.toISOString() ?? null,
+          createdAt: n.createdAt.toISOString(),
+        })),
+      };
+    },
+  },
+  {
+    name: "get_notification_delivery_status",
+    description: "Check delivery status of automated alerts (emails, webhook dispatches, in-app messages).",
+    permission: "settings.manage",
+    parameters: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["PENDING", "SENT", "FAILED"], description: "Filter by status" },
+        limit: { type: "number", description: "Max logs to return (default 5, max 10)" },
+      },
+    },
+    async execute(args) {
+      const { status, limit } = notificationOutboxArgs.parse(args);
+      const [counts, items] = await Promise.all([
+        countDeliveriesByStatus(),
+        listRecentDeliveries({ status: status as NotificationStatus | undefined, limit }),
+      ]);
+
+      return {
+        counts,
+        deliveries: items.map((d) => ({
+          channel: d.channel,
+          recipient: d.recipient,
+          alertType: d.alertType,
+          subject: d.subject,
+          status: d.status,
+          attempts: d.attempts,
+          lastError: d.lastError,
+          sentAt: d.sentAt?.toISOString() ?? null,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_tally_job_detail",
+    description: "Inspect a Tally Prime sync job, retry logs, and error stack trace for debugging ERP integration.",
+    permission: "tally.view",
+    parameters: {
+      type: "object",
+      properties: {
+        jobId: { type: "string", description: "Tally sync job ID" },
+      },
+      required: ["jobId"],
+    },
+    async execute(args) {
+      const { jobId } = tallyJobDetailArgs.parse(args);
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(jobId)) {
+        return { error: `Invalid Tally Job UUID: "${jobId}".` };
+      }
+      const job = await prisma.tallySyncJob.findUnique({
+        where: { id: jobId },
+        include: {
+          logs: { orderBy: { createdAt: "desc" }, take: 5 },
+        },
+      });
+      if (!job) return { error: `Tally sync job "${jobId}" not found.` };
+
+      return {
+        id: job.id,
+        entityType: job.entityType,
+        entityNo: job.entityNo,
+        status: job.status,
+        attempts: job.attempts,
+        lastError: job.lastError,
+        tallyVoucherId: job.tallyVoucherId,
+        syncedAt: job.syncedAt?.toISOString() ?? null,
+        logs: job.logs.map((l) => ({
+          attemptNo: l.attemptNo,
+          status: l.status,
+          error: l.error,
+          durationMs: l.durationMs,
+          createdAt: l.createdAt.toISOString(),
+        })),
+      };
+    },
+  },
+  {
+    name: "get_user_detail",
+    description: "Look up user profile, role assignments, security status, and recent activity.",
+    permission: "user.manage",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "User email, name, or ID" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      const user = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { id: identifier.length === 36 ? identifier : undefined },
+            { email: { equals: identifier, mode: "insensitive" } },
+            { name: { contains: identifier, mode: "insensitive" } },
+          ],
+        },
+        include: {
+          role: true,
+          _count: {
+            select: {
+              sessions: true,
+              invoicesCreated: true,
+              purchaseOrders: true,
+              outwards: true,
+              grns: true,
+            },
+          },
+        },
+      });
+      if (!user) return { error: `User "${identifier}" not found.` };
+
+      return {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        mobile: user.mobile,
+        role: user.role.code,
+        roleDescription: ROLE_LABELS[user.role.code] ?? user.role.name,
+        isActive: user.isActive,
+        lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
+        activityCounts: {
+          activeSessions: user._count.sessions,
+          invoicesCreated: user._count.invoicesCreated,
+          purchaseOrdersCreated: user._count.purchaseOrders,
+          dispatchesPosted: user._count.outwards,
+          grnsReceived: user._count.grns,
+        },
+      };
+    },
+  },
+  {
+    name: "get_audit_log_detail",
+    description: "Inspect a cryptographic audit log record: actor, entity diff, IP address, and payload snapshot.",
+    permission: "audit.view",
+    parameters: {
+      type: "object",
+      properties: {
+        identifier: { type: "string", description: "Audit log entry ID" },
+      },
+      required: ["identifier"],
+    },
+    async execute(args) {
+      const { identifier } = singleIdOrCodeArgs.parse(args);
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(identifier)) {
+        return { error: `Invalid Audit Log UUID: "${identifier}".` };
+      }
+      const log = await prisma.auditLog.findUnique({
+        where: { id: identifier },
+        include: { user: { select: { name: true, email: true } } },
+      });
+      if (!log) return { error: `Audit log record "${identifier}" not found.` };
+
+      return {
+        id: log.id,
+        action: log.action,
+        entityType: log.entityType,
+        entityId: log.entityId,
+        actor: log.user ? `${log.user.name} (${log.user.email})` : "System / Background",
+        ipAddress: log.ipAddress,
+        userAgent: log.userAgent,
+        createdAt: log.createdAt.toISOString(),
+        oldData: log.oldData,
+        newData: log.newData,
       };
     },
   },

@@ -59,7 +59,7 @@ function withFinalEvent(
  * directly to execute multi-step database tool operations with live data.
  */
 export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSchema }, async ({ body, user, request }) => {
-  const context = { ...body.context, role: user.role };
+  const context = { ...body.context, role: user.role, userId: user.id };
   const counts = await getWorkspaceCounts();
   const curated = answerFromKnowledge(body.message, context, counts);
   const actions = allowedActions(curated.actions, user.role);
@@ -89,7 +89,7 @@ export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSc
       messages,
       signal: request.signal,
       tools: copilotToolsForRole(user.role),
-      executeTool: (name, args) => executeCopilotTool(name, args, { role: user.role, route: context.route }),
+      executeTool: (name, args) => executeCopilotTool(name, args, { role: user.role, route: context.route, userId: user.id }),
       sessionId: createHash("sha256").update(`copilot:${user.id}`).digest("hex").slice(0, 24),
     });
     return sse(withFinalEvent(upstream, actions, curated.sources));
