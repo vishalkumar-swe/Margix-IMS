@@ -77,7 +77,9 @@ export function VisualBarChart({
                   )}
                 </div>
                 <span className="font-bold tabular-nums text-slate-900 shrink-0">
-                  {item.formattedValue ?? item.value.toLocaleString("en-IN")}
+                  {item.formattedValue
+                    ? item.formattedValue.replace(/\*\*/g, "").replace(/`/g, "")
+                    : item.value.toLocaleString("en-IN")}
                 </span>
               </div>
 

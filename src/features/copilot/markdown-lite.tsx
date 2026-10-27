@@ -120,8 +120,8 @@ export function MarkdownLite({ text }: { text: string }) {
           const items: ChartItem[] = rows.map((r, rIdx) => ({
             label: r[0].replace(/\*\*/g, "").replace(/`/g, "").trim(),
             value: parsedVals[rIdx] ?? 0,
-            formattedValue: r[col],
-            sublabel: headers[col],
+            formattedValue: r[col].replace(/\*\*/g, "").replace(/`/g, "").trim(),
+            sublabel: headers[col].replace(/\*\*/g, "").replace(/`/g, "").trim(),
           }));
 
           blocks.push(
