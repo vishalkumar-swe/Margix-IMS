@@ -1081,6 +1081,26 @@ export class AutonomousAgentService {
       };
     }
 
+    // 0d2. Visual Architecture, Flowchart, Graph & Core Ledger Rules
+    const isGraphOrArchitectureQuery =
+      /\b(graph|diagram|flowchart|chart|architecture|representation|visual|how\s*(?:does\s*)?stock\s*move|core\s*rule|ledger\s*flow|system\s*flow|how\s*ledger\s*works)\b/i.test(
+        text,
+      );
+
+    if (isGraphOrArchitectureQuery) {
+      return {
+        intent: "system_architecture_graph",
+        steps: [
+          {
+            name: "Audit Workspace Ledger Snapshot",
+            toolName: "get_workspace_summary",
+            arguments: {},
+            description: "Fetching operational metrics and active ledger state",
+          },
+        ],
+      };
+    }
+
     // 0e. Order Creation Guidance (Purchase Order vs Sales Invoice)
     const isOrderCreationQuery =
       /\b(will\s*you\s*(be\s*)?able\s*to\s*(create|make|place|raise)\s*(a|an)?\s*order|can\s*you\s*(create|make|place|raise)\s*(a|an)?\s*order|how\s*to\s*(create|make|place|raise)\s*(a|an)?\s*order)\b/i.test(text) ||
@@ -3150,6 +3170,84 @@ export class AutonomousAgentService {
         break;
       }
 
+      case "system_architecture_graph": {
+        const summaryOutput = executed.find((e) => e.toolName === "get_workspace_summary")?.output as
+          | {
+              activeSkus?: number;
+              totalBatches?: number;
+              unexpiredBatches?: number;
+              totalStockQuantity?: number;
+              openPurchaseOrders?: number;
+              pendingDispatches?: number;
+              recentMovementsCount?: number;
+            }
+          | undefined;
+
+        markdown = `## 📊 Margix IMS Architectural Ledger & Flowchart\n\n`;
+        markdown += `> **Core Cryptographic Rule:** Stock **never** changes directly by overwriting balance records. The only way inventory quantities change is through immutable, double-entry transactional ledger records: **GRNs, dispatches, transfers, returns, and approved adjustments**.\n\n`;
+        markdown += `\`\`\`text\n`;
+        markdown += `                               [ PHYSICAL & BUSINESS EVENTS ]\n`;
+        markdown += `                                              │\n`;
+        markdown += `       ┌──────────────────────┬───────────────┴──────────────┬──────────────────────┐\n`;
+        markdown += `       ▼                      ▼                              ▼                      ▼\n`;
+        markdown += ` [ GOODS RECEIPT ]     [ SALES DISPATCH ]            [ GODOWN TRANSFER ]    [ CYCLE COUNT ]\n`;
+        markdown += `   (PO / Inward)        (Invoice / Order)              (Inter-Godown)         (Audit / Loss)\n`;
+        markdown += `       │                      │                              │                      │\n`;
+        markdown += `       ▼                      ▼                              ▼                      ▼\n`;
+        markdown += ` + INWARD (Credit)     - OUTWARD (Debit)             - OUTWARD (Origin)     ± ADJUSTMENT\n`;
+        markdown += ` • Assigns Batch       • FEFO Algorithm               + INWARD (Dest)        • Approved Variance\n`;
+        markdown += ` • Sets Mf & Expiry    • Decrements Batch             • Batch Preserved      • Reason Code\n`;
+        markdown += `       │                      │                              │                      │\n`;
+        markdown += `       └──────────────────────┼──────────────────────────────┴──────────────────────┘\n`;
+        markdown += `                              │\n`;
+        markdown += `                              ▼\n`;
+        markdown += `              ┌───────────────────────────────┐\n`;
+        markdown += `              │    IMMUTABLE STOCK LEDGER     │\n`;
+        markdown += `              │     (Append-Only History)     │\n`;
+        markdown += `              │  • Id, SKU, Batch, Godown     │\n`;
+        markdown += `              │  • Movement Type, Quantity    │\n`;
+        markdown += `              │  • Transaction Reference No   │\n`;
+        markdown += `              └───────────────┬───────────────┘\n`;
+        markdown += `                              │\n`;
+        markdown += `                [ NON-NEGATIVE INVARIANT CHECK ]\n`;
+        markdown += `                  IF SUM(entries) < 0  ──► ❌ ROLLBACK & REJECT\n`;
+        markdown += `                  IF SUM(entries) >= 0 ──► ✅ COMMIT\n`;
+        markdown += `                              │\n`;
+        markdown += `                              ▼\n`;
+        markdown += `              ┌───────────────────────────────┐\n`;
+        markdown += `              │     LIVE STOCK BALANCES       │\n`;
+        markdown += `              │    SUM(Ledger) = Balance      │\n`;
+        markdown += `              │    Batch-level Real-time      │\n`;
+        markdown += `              └───────────────────────────────┘\n`;
+        markdown += `\`\`\`\n\n`;
+        markdown += `### 🔄 Lifecycle of Stock Movements\n\n`;
+        markdown += `| Movement Type | Source Document | Ledger Effect | Validation Rules |\n`;
+        markdown += `| :--- | :--- | :---: | :--- |\n`;
+        markdown += `| **INWARD** | Goods Receipt Note (GRN) | \`+ Qty\` | Requires PO, Batch No, and Expiry Date. |\n`;
+        markdown += `| **OUTWARD** | Sales Invoice / Dispatch Challan | \`- Qty\` | Enforces FEFO pick; blocked if batch unallocated. |\n`;
+        markdown += `| **TRANSFER** | Inter-Godown Transfer Order | \`- Qty\` (Origin)<br/>\`+ Qty\` (Target) | Atomic two-legged transaction; net enterprise delta = 0. |\n`;
+        markdown += `| **ADJUSTMENT** | Cycle Count / Damage Audit | \`± Qty\` | Supervisor approval required; mandatory audit note. |\n`;
+        markdown += `| **RETURN** | Sales / Purchase Return | \`+ Qty\` / \`- Qty\` | Quarantined batches for customer returns; vendor RTV. |\n\n`;
+        markdown += `### 🛡️ Cryptographic & Integrity Guarantees\n`;
+        markdown += `- **Non-Negative Invariant:** A PostgreSQL trigger & application mutex prevent batch stock from dropping below zero under concurrent dispatches.\n`;
+        markdown += `- **Auditability:** Every movement stores the \`actor_id\`, \`timestamp\`, and \`reference_number\` (e.g. \`GRN-2026-0042\`, \`INV-2026-0089\`).\n`;
+        markdown += `- **FEFO Auto-Allocation:** Sales invoices automatically prioritize batches expiring soonest to eliminate wastage.\n`;
+
+        if (summaryOutput) {
+          markdown += `\n### 📦 Active Workspace Snapshot\n`;
+          markdown += `- **Active SKUs:** ${summaryOutput.activeSkus ?? 0} products\n`;
+          markdown += `- **Live Batches:** ${summaryOutput.unexpiredBatches ?? 0} unexpired / ${summaryOutput.totalBatches ?? 0} total batches\n`;
+          markdown += `- **Open Purchase Orders:** ${summaryOutput.openPurchaseOrders ?? 0}\n`;
+        }
+
+        actions.push({ label: "📜 Audit Stock Ledger", route: "/ledger", permission: "stock.view" });
+        actions.push({ label: "📦 View Stock Balances", route: "/stock", permission: "stock.view" });
+        actions.push({ label: "🏷️ SKU & Batch Master", route: "/masters/skus", permission: "master.view" });
+        actions.push({ label: "📊 Operations Dashboard", route: "/dashboard", permission: "dashboard.view" });
+        sources.push("Margix Cryptographic Ledger Invariants", "Core Double-Entry Stock Architecture");
+        break;
+      }
+
       case "order_creation_guidance": {
         markdown = `## 📝 Order Creation in Margix IMS\n\n`;
         markdown += `**Yes, absolutely!** Margix IMS manages both sides of your business order workflow:\n\n`;
@@ -4184,6 +4282,8 @@ export class AutonomousAgentService {
             thinking = isStateWise
               ? `Formulating 4-stage APMC mandi investigation across National benchmarks, producing mandis, and terminal consumption hubs for ${commodity || "Basmati Rice"} to discover regional prices and trade arbitrage.`
               : `Formulating multi-stage deep research across APMC mandis, official GST/HSN classifications, and live warehouse inventory for ${commodity || "agricultural produce"}.`;
+          } else if (intent === "system_architecture_graph") {
+            thinking = `Generating visual architecture flowchart and cryptographic ledger state machine diagram.`;
           } else if (intent.startsWith("propose_")) {
             thinking = `Evaluating operational prerequisites, schema invariants, and building a safety confirmation proposal.`;
           } else if (intent === "fefo_allocation") {

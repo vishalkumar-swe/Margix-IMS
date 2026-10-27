@@ -480,6 +480,22 @@ describe("AutonomousAgentService", () => {
       expect(plan.steps[0].arguments.query).toContain("basmati rice");
       expect(plan.steps[0].arguments.query).not.toContain("create me a list");
     });
+
+    it("plans and executes visual architecture graph when requested", async () => {
+      const prompt = "please can you creaet a graph representation";
+      const plan = AutonomousAgentService.planIntent(prompt, context);
+      expect(plan.intent).toBe("system_architecture_graph");
+      expect(plan.steps).toHaveLength(1);
+      expect(plan.steps[0].toolName).toBe("get_workspace_summary");
+
+      const result = await AutonomousAgentService.executePlan(prompt, context);
+      expect(result.markdownAnswer).toContain("Margix IMS Architectural Ledger & Flowchart");
+      expect(result.markdownAnswer).toContain("IMMUTABLE STOCK LEDGER");
+      expect(result.markdownAnswer).toContain("Core Cryptographic Rule");
+      expect(result.actions.some((a) => a.route === "/ledger")).toBe(true);
+      expect(result.actions.some((a) => a.route === "/stock")).toBe(true);
+    });
   });
 });
+
 

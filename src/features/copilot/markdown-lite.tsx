@@ -129,8 +129,42 @@ export function MarkdownLite({ text }: { text: string }) {
     );
   };
 
+  let codeBlockLines: string[] = [];
+  let inCodeBlock = false;
+
+  const flushCodeBlock = () => {
+    if (codeBlockLines.length === 0 && !inCodeBlock) return;
+    const content = codeBlockLines.join("\n");
+    blocks.push(
+      <pre
+        key={`code-${blocks.length}`}
+        className="my-3 overflow-x-auto rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-100 shadow-sm"
+      >
+        <code>{content}</code>
+      </pre>,
+    );
+    codeBlockLines = [];
+    inCodeBlock = false;
+  };
+
   for (const [index, raw] of lines.entries()) {
     const line = raw.trim();
+
+    if (line.startsWith("```")) {
+      if (inCodeBlock) {
+        flushCodeBlock();
+      } else {
+        flushList();
+        flushTable();
+        inCodeBlock = true;
+      }
+      continue;
+    }
+
+    if (inCodeBlock) {
+      codeBlockLines.push(raw);
+      continue;
+    }
 
     if (line.startsWith("|") && line.endsWith("|")) {
       flushList();
@@ -185,6 +219,7 @@ export function MarkdownLite({ text }: { text: string }) {
 
   flushList();
   flushTable();
+  flushCodeBlock();
 
   return <div className="space-y-2 text-xs sm:text-sm leading-relaxed text-slate-700">{blocks}</div>;
 }
