@@ -735,6 +735,18 @@ function synthesizeCommercialDeepResearch(params: {
     md += `⚡ *Synthesized across multi-stage APMC mandi investigations via **${provider}***\n\n`;
     md += `> **Market Trade Overview:** ${spec.seasonSummary}\n\n`;
 
+    md += `### 💡 Plain Language Summary (सरल भाषा में सारांश)\n`;
+    md += `> 🟢 **Easy to Understand:** Mandi prices range from **₹${Math.round(modalQtl * 0.95).toLocaleString("en-IN")}/Qtl** in producing hubs (MP, UP) up to **₹${Math.round(modalQtl * 1.17).toLocaleString("en-IN")}/Qtl** in consuming markets (Karnataka, Maharashtra). **Best Action:** Buy from Northern/Central producing mandis, store in warehouse, and sell to consuming states for high profit margins!\n\n`;
+
+    md += `\`\`\`chart:bar\n`;
+    md += `title: State-Wise Mandi Benchmark Rates (₹/Quintal)\n`;
+    md += `unit: ₹/Qtl\n`;
+    for (const st of STATE_MANDI_GRID) {
+      const stModal = Math.round(modalQtl * st.multiplier);
+      md += `${st.state}: ${stModal} | ₹${stModal.toLocaleString("en-IN")}/Qtl | ${st.centers.split(",")[0]}\n`;
+    }
+    md += `\`\`\`\n\n`;
+
     md += `### 📊 State-Wise Mandi Rates & Regional Price Variations\n\n`;
     md += `| State / Region | Key Mandi Centers | Market Role | Avg Modal Price (₹/Qtl) | Avg Price (₹/${spec.unit}) | Mandi Price Range | Status & Logistics Spread |\n`;
     md += `| :--- | :--- | :---: | :---: | :---: | :---: | :--- |\n`;
@@ -771,6 +783,20 @@ function synthesizeCommercialDeepResearch(params: {
     md += `📅 **Research Date & Timestamp:** ${formattedDate} | Multi-Stage APMC Mandi Intelligence\n`;
     md += `⚡ *Synthesized from live mandi intelligence & verified sources via **${provider}***\n\n`;
     md += `> **Market Trade Overview:** ${spec.seasonSummary}\n\n`;
+
+    md += `### 💡 Plain Language Summary (सरल भाषा में सारांश)\n`;
+    md += `> 🟢 **Easy to Understand:** Market average rate is **₹${modalKg}/${spec.unit}** (₹${modalQtl.toLocaleString("en-IN")}/Qtl). With freight and mandi fees, your cost is **₹${landedCostKg}/${spec.unit}**. Recommended wholesale selling rate is **₹${wholesaleSellKg}/${spec.unit}** for a safe ${spec.wholesaleMarkupPct}% profit margin!\n\n`;
+
+    md += `\`\`\`chart:bar\n`;
+    md += `title: Price Benchmarks & Recommended Selling Rates (₹/${spec.unit})\n`;
+    md += `unit: ₹/${spec.unit}\n`;
+    md += `Mandi Low: ${minKg} | ₹${minKg}/${spec.unit} | Auction Minimum\n`;
+    md += `Mandi Average: ${modalKg} | ₹${modalKg}/${spec.unit} | Market Benchmark\n`;
+    md += `Mandi High: ${maxKg} | ₹${maxKg}/${spec.unit} | Premium Quality\n`;
+    md += `Landed Cost: ${landedCostKg} | ₹${landedCostKg}/${spec.unit} | After Freight & Tax\n`;
+    md += `Wholesale Target: ${wholesaleSellKg} | ₹${wholesaleSellKg}/${spec.unit} | Recommended Selling Rate\n`;
+    md += `Retail Counter: ${retailSellKg} | ₹${retailSellKg}/${spec.unit} | Recommended Retail Rate\n`;
+    md += `\`\`\`\n\n`;
 
     md += `### 📊 APMC Mandi Rates & Price Discovery\n\n`;
     md += `| Market Channel / Level | APMC Mandi Rate | Converted (${spec.unit}) | ${spec.standardPackKg} ${spec.unit} Pack Equivalent | Market Significance |\n`;
@@ -3184,6 +3210,25 @@ export class AutonomousAgentService {
           | undefined;
 
         markdown = `## 📊 Margix IMS Architectural Ledger & Flowchart\n\n`;
+        markdown += `### 💡 Plain Language Summary (सरल भाषा में सारांश)\n`;
+        markdown += `> 🟢 **Easy to Understand:** Your inventory works exactly like a bank account. Nobody can arbitrarily overwrite or tamper with your balance. The only way stock changes is when goods physically enter (**GRN**), goods leave to a customer (**Dispatch**), stock moves between godowns (**Transfer**), or manager-approved adjustments happen. Every movement is permanently recorded in an immutable ledger!\n\n`;
+
+        markdown += `\`\`\`chart:flow\n`;
+        markdown += JSON.stringify(
+          {
+            title: "Cryptographic Stock Movement State Machine",
+            nodes: [
+              { step: "Step 1: Receipt", title: "Goods Receipt (GRN)", desc: "Physical delivery at Godown with Batch & Expiry Date", type: "inward" },
+              { step: "Step 2: Ledger", title: "Immutable Ledger (+INWARD)", desc: "Append-only double-entry credit; stock increases", type: "ledger" },
+              { step: "Step 3: Guard", title: "Non-Negative Stock Guard", desc: "Automated check: verifies SUM(ledger) >= 0; blocks negative stock", type: "check" },
+              { step: "Step 4: Dispatch", title: "FEFO Batch Dispatch (-OUTWARD)", desc: "Earliest-expiring batches picked first to prevent spoilage", type: "outward" },
+            ],
+          },
+          null,
+          2,
+        );
+        markdown += `\n\`\`\`\n\n`;
+
         markdown += `> **Core Cryptographic Rule:** Stock **never** changes directly by overwriting balance records. The only way inventory quantities change is through immutable, double-entry transactional ledger records: **GRNs, dispatches, transfers, returns, and approved adjustments**.\n\n`;
         markdown += `\`\`\`text\n`;
         markdown += `                               [ PHYSICAL & BUSINESS EVENTS ]\n`;
@@ -3498,7 +3543,17 @@ export class AutonomousAgentService {
           actions.push({ label: "Seed Demo Data", route: "/dashboard", permission: "dashboard.view" });
         } else {
           markdown = `## 📦 Live Warehouse Stock Summary\n\n`;
-          markdown += `You have **${products.length} product(s)** with positive stock on hand across your godowns:\n\n`;
+          markdown += `### 💡 Plain Language Summary (सरल भाषा में सारांश)\n`;
+          markdown += `> 🟢 **Easy to Understand:** You have positive, ready-to-sell stock for **${products.length} product(s)** across your godowns. No batches are expired and your inventory is in healthy standing.\n\n`;
+
+          markdown += `\`\`\`chart:bar\n`;
+          markdown += `title: Live Inventory Quantities by Product\n`;
+          for (const p of products) {
+            markdown += `${p.name}: ${p.totalQuantity} | ${p.totalQuantity} ${p.baseUnit} | ${p.godowns.join(", ")}\n`;
+          }
+          markdown += `\`\`\`\n\n`;
+
+          markdown += `### 📋 Batch & Godown Details\n\n`;
           markdown += `| SKU Code | Product Name | Available Stock | Godowns | Active Batches |\n`;
           markdown += `| :--- | :--- | :---: | :---: | :---: |\n`;
           for (const p of products) {

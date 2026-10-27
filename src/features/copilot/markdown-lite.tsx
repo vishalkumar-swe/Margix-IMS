@@ -1,4 +1,11 @@
 import type { ReactNode } from "react";
+import {
+  VisualBarChart,
+  VisualLineChart,
+  VisualFlowGraph,
+  parseChartDSL,
+  type ChartItem,
+} from "./copilot-charts";
 
 /** Renders bold, code, italics, and clickable links safely without raw HTML. */
 function inline(text: string): ReactNode[] {
@@ -98,6 +105,37 @@ export function MarkdownLite({ text }: { text: string }) {
       rows = rawRows.slice(1);
     }
 
+    // Auto-detect numeric column in tables to proactively render accessible VisualBarChart
+    if (rows.length >= 2 && rows.length <= 15 && headers.length >= 2) {
+      for (let col = 1; col < Math.min(headers.length, 4); col++) {
+        const parsedVals = rows.map((r) => {
+          const raw = r[col] || "";
+          const cleaned = raw.replace(/[₹$,]/g, "").replace(/\b(kg|qtl|boxes|box|pcs|bags|mt|quintal|%)\b/gi, "").trim();
+          const match = cleaned.match(/-?\d+(?:\.\d+)?/);
+          return match ? parseFloat(match[0]) : null;
+        });
+
+        const validCount = parsedVals.filter((v) => v !== null && !isNaN(v) && v > 0).length;
+        if (validCount >= rows.length * 0.7) {
+          const items: ChartItem[] = rows.map((r, rIdx) => ({
+            label: r[0].replace(/\*\*/g, "").replace(/`/g, "").trim(),
+            value: parsedVals[rIdx] ?? 0,
+            formattedValue: r[col],
+            sublabel: headers[col],
+          }));
+
+          blocks.push(
+            <VisualBarChart
+              key={`autochart-${blocks.length}`}
+              title={`📊 Visual Comparison: ${headers[0].replace(/\*\*/g, "")} (${headers[col].replace(/\*\*/g, "")})`}
+              items={items}
+            />,
+          );
+          break;
+        }
+      }
+    }
+
     blocks.push(
       <div
         key={`table-${blocks.length}`}
@@ -130,11 +168,71 @@ export function MarkdownLite({ text }: { text: string }) {
   };
 
   let codeBlockLines: string[] = [];
+  let codeBlockLang = "";
   let inCodeBlock = false;
 
   const flushCodeBlock = () => {
     if (codeBlockLines.length === 0 && !inCodeBlock) return;
     const content = codeBlockLines.join("\n");
+    const lang = codeBlockLang.toLowerCase();
+
+    // Check if code block is an accessible chart DSL
+    if (
+      lang.includes("chart") ||
+      lang.includes("graph") ||
+      lang.includes("flow") ||
+      lang.includes("bar") ||
+      lang.includes("line")
+    ) {
+      const typeHint = lang.includes("line") ? "line" : lang.includes("flow") || lang.includes("graph") ? "flow" : "bar";
+      const parsed = parseChartDSL(content, typeHint);
+
+      if (parsed) {
+        if (parsed.type === "bar" && parsed.items && parsed.items.length > 0) {
+          blocks.push(
+            <VisualBarChart
+              key={`chart-${blocks.length}`}
+              title={parsed.title}
+              unit={parsed.unit}
+              items={parsed.items}
+            />,
+          );
+          codeBlockLines = [];
+          codeBlockLang = "";
+          inCodeBlock = false;
+          return;
+        }
+
+        if (parsed.type === "line" && parsed.lineData && parsed.lineData.length >= 2) {
+          blocks.push(
+            <VisualLineChart
+              key={`chart-${blocks.length}`}
+              title={parsed.title}
+              data={parsed.lineData}
+            />,
+          );
+          codeBlockLines = [];
+          codeBlockLang = "";
+          inCodeBlock = false;
+          return;
+        }
+
+        if (parsed.type === "flow" && parsed.flowNodes && parsed.flowNodes.length > 0) {
+          blocks.push(
+            <VisualFlowGraph
+              key={`chart-${blocks.length}`}
+              title={parsed.title}
+              nodes={parsed.flowNodes}
+            />,
+          );
+          codeBlockLines = [];
+          codeBlockLang = "";
+          inCodeBlock = false;
+          return;
+        }
+      }
+    }
+
     blocks.push(
       <pre
         key={`code-${blocks.length}`}
@@ -144,6 +242,7 @@ export function MarkdownLite({ text }: { text: string }) {
       </pre>,
     );
     codeBlockLines = [];
+    codeBlockLang = "";
     inCodeBlock = false;
   };
 
@@ -157,6 +256,7 @@ export function MarkdownLite({ text }: { text: string }) {
         flushList();
         flushTable();
         inCodeBlock = true;
+        codeBlockLang = line.slice(3).trim();
       }
       continue;
     }

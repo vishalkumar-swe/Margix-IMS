@@ -217,11 +217,14 @@ export function CopilotDrawer() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const Recognition = speechRecognition();
 
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+
   function speakText(text: string) {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
     try {
       window.speechSynthesis.cancel();
       const clean = text
+        .replace(/```[\s\S]*?```/g, "")
         .replace(/[*#_`[\]]/g, "")
         .replace(/\(.*?\)/g, "")
         .replace(/https?:\/\/\S+/g, "")
@@ -233,6 +236,36 @@ export function CopilotDrawer() {
       window.speechSynthesis.speak(utterance);
     } catch {
       // Best-effort synthesis
+    }
+  }
+
+  function toggleSpeakMessage(messageId: string, text: string) {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    if (speakingMessageId === messageId) {
+      window.speechSynthesis.cancel();
+      setSpeakingMessageId(null);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    try {
+      const clean = text
+        .replace(/```[\s\S]*?```/g, " [Chart displayed on screen] ")
+        .replace(/\|[^\n]+\|/g, "")
+        .replace(/[*#_`[\]]/g, "")
+        .replace(/\(.*?\)/g, "")
+        .replace(/https?:\/\/\S+/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!clean) return;
+      const utterance = new SpeechSynthesisUtterance(clean);
+      utterance.lang = /[\u0900-\u097F]/.test(text) ? "hi-IN" : "en-IN";
+      utterance.rate = 1.0;
+      utterance.onend = () => setSpeakingMessageId(null);
+      utterance.onerror = () => setSpeakingMessageId(null);
+      setSpeakingMessageId(messageId);
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      setSpeakingMessageId(null);
     }
   }
 
@@ -520,7 +553,30 @@ export function CopilotDrawer() {
                       <AgentExecutionCard thinking={message.thinking} steps={message.steps} />
                     )}
                     {message.content ? (
-                      <MarkdownLite text={message.content} />
+                      <>
+                        <MarkdownLite text={message.content} />
+                        <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-1.5">
+                          <button
+                            type="button"
+                            onClick={() => toggleSpeakMessage(message.id, message.content)}
+                            className="inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-[11px] font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                            title="Listen to this answer read aloud in plain voice"
+                            aria-label="Listen to answer"
+                          >
+                            {speakingMessageId === message.id ? (
+                              <>
+                                <VolumeX className="size-3.5 text-rose-600 animate-pulse" />
+                                <span className="font-semibold text-rose-600">Stop Voice</span>
+                              </>
+                            ) : (
+                              <>
+                                <Volume2 className="size-3.5 text-brand-700" />
+                                <span>Listen (सुनें)</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </>
                     ) : !message.steps || message.steps.length === 0 ? (
                       <span className="flex items-center gap-1 py-1" aria-label="Copilot is thinking">
                         <span className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.2s]" />
