@@ -1,7 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import { BarChart3, TrendingUp, GitFork, CheckCircle, AlertTriangle, ArrowRight } from "lucide-react";
+import { BarChart3, TrendingUp, GitFork, ArrowRight } from "lucide-react";
 
 export interface ChartItem {
   label: string;
@@ -37,9 +36,17 @@ export function VisualBarChart({
   unit?: string;
   items: ChartItem[];
 }) {
-  if (!items || items.length === 0) return null;
+  if (!items || !Array.isArray(items) || items.length === 0) return null;
 
-  const maxValue = Math.max(...items.map((i) => i.value), 1);
+  const validItems = items.filter(
+    (i) => i && typeof i === "object" && typeof i.label === "string" && i.label.length > 0,
+  );
+  if (validItems.length === 0) return null;
+
+  const maxValue = Math.max(
+    ...validItems.map((i) => (typeof i.value === "number" && Number.isFinite(i.value) ? i.value : 0)),
+    1,
+  );
 
   return (
     <div className="my-3 overflow-hidden rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all hover:shadow-md">
@@ -60,10 +67,15 @@ export function VisualBarChart({
       )}
 
       <div className="space-y-2.5">
-        {items.map((item, idx) => {
-          const pct = Math.max(Math.min(Math.round((item.value / maxValue) * 100), 100), 4);
+        {validItems.map((item, idx) => {
+          const numVal = typeof item.value === "number" && Number.isFinite(item.value) ? item.value : 0;
+          const pct = Math.max(Math.min(Math.round((numVal / maxValue) * 100), 100), 4);
           const colorKey = item.color || DEFAULT_PALETTE[idx % DEFAULT_PALETTE.length];
           const colorStyle = COLOR_MAP[colorKey] || COLOR_MAP.blue;
+
+          const formattedDisplay = item.formattedValue
+            ? String(item.formattedValue).replace(/\*\*/g, "").replace(/`/g, "")
+            : numVal.toLocaleString("en-IN");
 
           return (
             <div key={`${item.label}-${idx}`} className="group">
@@ -77,9 +89,7 @@ export function VisualBarChart({
                   )}
                 </div>
                 <span className="font-bold tabular-nums text-slate-900 shrink-0">
-                  {item.formattedValue
-                    ? item.formattedValue.replace(/\*\*/g, "").replace(/`/g, "")
-                    : item.value.toLocaleString("en-IN")}
+                  {formattedDisplay}
                 </span>
               </div>
 
@@ -92,7 +102,9 @@ export function VisualBarChart({
               </div>
 
               {item.sublabel && (
-                <p className="mt-0.5 text-[10px] text-slate-500 truncate">{item.sublabel}</p>
+                <p className="mt-0.5 text-[10px] text-slate-500 truncate">
+                  {String(item.sublabel).replace(/\*\*/g, "").replace(/`/g, "")}
+                </p>
               )}
             </div>
           );
@@ -113,26 +125,35 @@ export function VisualLineChart({
   title?: string;
   data: Array<{ label: string; value: number }>;
 }) {
-  if (!data || data.length < 2) return null;
+  if (!data || !Array.isArray(data) || data.length < 2) return null;
+
+  const validData = data.filter(
+    (d) => d && typeof d === "object" && typeof d.label === "string" && typeof d.value === "number" && Number.isFinite(d.value),
+  );
+  if (validData.length < 2) return null;
 
   const width = 360;
   const height = 120;
   const paddingX = 30;
   const paddingY = 20;
 
-  const values = data.map((d) => d.value);
+  const values = validData.map((d) => d.value);
   const minVal = Math.min(...values);
   const maxVal = Math.max(...values);
   const range = maxVal - minVal || 1;
 
-  const points = data.map((d, i) => {
-    const x = paddingX + (i / (data.length - 1)) * (width - 2 * paddingX);
+  const points = validData.map((d, i) => {
+    const x = paddingX + (i / (validData.length - 1)) * (width - 2 * paddingX);
     const y = height - paddingY - ((d.value - minVal) / range) * (height - 2 * paddingY);
     return { x, y, ...d };
   });
 
+  if (points.length < 2) return null;
+
   const pathD = points.reduce((acc, p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `${acc} L ${p.x} ${p.y}`), "");
-  const areaD = `${pathD} L ${points[points.length - 1].x} ${height - paddingY} L ${points[0].x} ${height - paddingY} Z`;
+  const lastPoint = points[points.length - 1];
+  const firstPoint = points[0];
+  const areaD = `${pathD} L ${lastPoint.x} ${height - paddingY} L ${firstPoint.x} ${height - paddingY} Z`;
 
   return (
     <div className="my-3 overflow-hidden rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
@@ -207,6 +228,8 @@ export function VisualFlowGraph({
   title?: string;
   nodes: Array<{ step: string; title: string; desc: string; type: "inward" | "ledger" | "outward" | "check" }>;
 }) {
+  if (!nodes || !Array.isArray(nodes) || nodes.length === 0) return null;
+
   return (
     <div className="my-3 overflow-hidden rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
       {title && (
@@ -220,6 +243,8 @@ export function VisualFlowGraph({
 
       <div className="flex flex-col gap-2">
         {nodes.map((node, idx) => {
+          if (!node || typeof node !== "object") return null;
+
           const isLedger = node.type === "ledger";
           const isInward = node.type === "inward";
           const isOutward = node.type === "outward";
@@ -240,12 +265,12 @@ export function VisualFlowGraph({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-1">
-                    <p className="font-bold text-xs text-slate-900">{node.title}</p>
+                    <p className="font-bold text-xs text-slate-900">{node.title || "Step"}</p>
                     <span className="rounded bg-white/80 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-slate-700 border border-slate-200">
-                      {node.step}
+                      {node.step || `Step ${idx + 1}`}
                     </span>
                   </div>
-                  <p className="mt-0.5 text-[11px] leading-snug text-slate-700">{node.desc}</p>
+                  <p className="mt-0.5 text-[11px] leading-snug text-slate-700">{node.desc || ""}</p>
                 </div>
               </div>
 

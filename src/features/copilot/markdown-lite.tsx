@@ -106,34 +106,41 @@ export function MarkdownLite({ text }: { text: string }) {
     }
 
     // Auto-detect numeric column in tables to proactively render accessible VisualBarChart
-    if (rows.length >= 2 && rows.length <= 15 && headers.length >= 2) {
-      for (let col = 1; col < Math.min(headers.length, 4); col++) {
-        const parsedVals = rows.map((r) => {
-          const raw = r[col] || "";
-          const cleaned = raw.replace(/[₹$,]/g, "").replace(/\b(kg|qtl|boxes|box|pcs|bags|mt|quintal|%)\b/gi, "").trim();
-          const match = cleaned.match(/-?\d+(?:\.\d+)?/);
-          return match ? parseFloat(match[0]) : null;
-        });
+    try {
+      if (rows.length >= 2 && rows.length <= 15 && headers.length >= 2) {
+        for (let col = 1; col < Math.min(headers.length, 4); col++) {
+          const parsedVals = rows.map((r) => {
+            const raw = r && r[col] != null ? String(r[col]) : "";
+            const cleaned = raw.replace(/[₹$,]/g, "").replace(/\b(kg|qtl|boxes|box|pcs|bags|mt|quintal|%)\b/gi, "").trim();
+            const match = cleaned.match(/-?\d+(?:\.\d+)?/);
+            return match ? parseFloat(match[0]) : null;
+          });
 
-        const validCount = parsedVals.filter((v) => v !== null && !isNaN(v) && v > 0).length;
-        if (validCount >= rows.length * 0.7) {
-          const items: ChartItem[] = rows.map((r, rIdx) => ({
-            label: r[0].replace(/\*\*/g, "").replace(/`/g, "").trim(),
-            value: parsedVals[rIdx] ?? 0,
-            formattedValue: r[col].replace(/\*\*/g, "").replace(/`/g, "").trim(),
-            sublabel: headers[col].replace(/\*\*/g, "").replace(/`/g, "").trim(),
-          }));
+          const validCount = parsedVals.filter((v) => v !== null && !isNaN(v) && v > 0).length;
+          if (validCount >= rows.length * 0.7) {
+            const items: ChartItem[] = rows.map((r, rIdx) => ({
+              label: (r && r[0] != null ? String(r[0]) : `Item ${rIdx + 1}`).replace(/\*\*/g, "").replace(/`/g, "").trim(),
+              value: parsedVals[rIdx] ?? 0,
+              formattedValue: (r && r[col] != null ? String(r[col]) : "").replace(/\*\*/g, "").replace(/`/g, "").trim(),
+              sublabel: (headers && headers[col] != null ? String(headers[col]) : "").replace(/\*\*/g, "").replace(/`/g, "").trim(),
+            }));
 
-          blocks.push(
-            <VisualBarChart
-              key={`autochart-${blocks.length}`}
-              title={`📊 Visual Comparison: ${headers[0].replace(/\*\*/g, "")} (${headers[col].replace(/\*\*/g, "")})`}
-              items={items}
-            />,
-          );
-          break;
+            const h0 = headers && headers[0] != null ? String(headers[0]).replace(/\*\*/g, "").trim() : "Items";
+            const hCol = headers && headers[col] != null ? String(headers[col]).replace(/\*\*/g, "").trim() : "Values";
+
+            blocks.push(
+              <VisualBarChart
+                key={`autochart-${blocks.length}`}
+                title={`📊 Visual Comparison: ${h0} (${hCol})`}
+                items={items}
+              />,
+            );
+            break;
+          }
         }
       }
+    } catch {
+      // Safe fallback: table renders normally
     }
 
     blocks.push(

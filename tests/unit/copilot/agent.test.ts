@@ -495,6 +495,21 @@ describe("AutonomousAgentService", () => {
       expect(result.actions.some((a) => a.route === "/ledger")).toBe(true);
       expect(result.actions.some((a) => a.route === "/stock")).toBe(true);
     });
+
+    it("plans and executes rice price across India with visual chart preparation", async () => {
+      const prompt = "get rice price across india and prepare chart for that";
+      const plan = AutonomousAgentService.planIntent(prompt, context);
+      expect(plan.intent).toBe("execute_web_research");
+      expect(plan.steps.length).toBe(4);
+      expect(plan.steps[0].arguments.query).toContain("rice");
+
+      const result = await AutonomousAgentService.executePlan(prompt, context);
+      expect(result.markdownAnswer).toContain("State-Wise Mandi Price Intelligence");
+      expect(result.markdownAnswer).toContain("chart:bar");
+      expect(result.markdownAnswer).toContain("Plain Language Summary");
+      expect(result.markdownAnswer).toContain("Punjab");
+      expect(result.markdownAnswer).toContain("Haryana");
+    });
   });
 });
 

@@ -22,7 +22,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { Component, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { apiRequest } from "@/lib/api-client";
@@ -31,6 +31,29 @@ import type { AgentExecutionStep } from "@/lib/copilot/types";
 import { useCopilot } from "./copilot-provider";
 import { MarkdownLite } from "./markdown-lite";
 import { MilestoneIconView } from "./milestone-icon";
+
+class MessageErrorBoundary extends Component<{ children: ReactNode; fallbackText?: string }, { hasError: boolean }> {
+  constructor(props: { children: ReactNode; fallbackText?: string }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error: unknown) {
+    console.error("[Copilot Message Error Caught]", error);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-800">
+          <p className="whitespace-pre-wrap leading-relaxed">{this.props.fallbackText ?? "Unable to display formatted message."}</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 interface SpeechRecognitionResultLike {
   results: { [index: number]: { [index: number]: { transcript: string } }; length: number };
@@ -554,7 +577,9 @@ export function CopilotDrawer() {
                     )}
                     {message.content ? (
                       <>
-                        <MarkdownLite text={message.content} />
+                        <MessageErrorBoundary fallbackText={message.content}>
+                          <MarkdownLite text={message.content} />
+                        </MessageErrorBoundary>
                         <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-1.5">
                           <button
                             type="button"
