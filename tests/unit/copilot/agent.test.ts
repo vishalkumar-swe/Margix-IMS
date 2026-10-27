@@ -271,6 +271,67 @@ describe("AutonomousAgentService", () => {
       expect(hsnAllPlan.intent).toBe("list_hsn_codes");
       expect(hsnAllPlan.steps[0].arguments).not.toHaveProperty("query");
     });
+
+    it("plans product registration progressive slot-filling and consultative questions", () => {
+      const addQueries = [
+        "add a product",
+        "add a rice",
+        "add rice",
+        "chawal add karo",
+        "create a product",
+        "register item",
+        "add sugar",
+      ];
+      for (const q of addQueries) {
+        const plan = AutonomousAgentService.planIntent(q, context);
+        expect(plan.intent).toBe("propose_add_product");
+        expect(AutonomousAgentService.isOperationalOrConfirmation(q)).toBe(true);
+      }
+
+      // Check commodity-specific step for rice
+      const ricePlan = AutonomousAgentService.planIntent("add a rice", context);
+      expect(ricePlan.steps.some((s) => s.toolName === "list_hsn_codes")).toBe(true);
+      expect(ricePlan.steps.find((s) => s.toolName === "list_hsn_codes")?.arguments).toMatchObject({ query: "rice" });
+    });
+
+    it("plans actionable deep web research when user requests internet search", () => {
+      const researchPlan = AutonomousAgentService.planIntent("search the web for basmati rice prices in mandi", context);
+      expect(researchPlan.intent).toBe("execute_web_research");
+      expect(researchPlan.steps[0].toolName).toBe("web_research");
+      expect(researchPlan.steps[0].arguments).toMatchObject({ maxResults: 5 });
+      expect(AutonomousAgentService.isOperationalOrConfirmation("search the web for basmati rice prices")).toBe(true);
+    });
+
+    it("consults on missing slots for 'add a rice' with realistic business questions and chips", async () => {
+      const result = await AutonomousAgentService.executePlan("add a rice", context);
+      expect(result.markdownAnswer).toContain("Product Variety & Exact Trade Name");
+      expect(result.markdownAnswer).toContain("Base Unit of Measure (UOM)");
+      expect(result.markdownAnswer).toContain("HSN Code 100630");
+      expect(result.markdownAnswer).toContain("Commercial Workflow Purpose");
+      expect(result.actions.some((a) => a.label.includes("Basmati Rice 1121"))).toBe(true);
+      expect(result.actions.some((a) => a.label.includes("Base Unit: KG"))).toBe(true);
+      expect(result.actions.some((a) => a.label.includes("HSN 100630"))).toBe(true);
+      expect(result.actions.some((a) => a.label.includes("New Purchase Order"))).toBe(true);
+      expect(result.actions.some((a) => a.label.includes("New Sales Invoice"))).toBe(true);
+    });
+
+    it("generates CREATE_SKU confirmation card when specifications are supplied", async () => {
+      const result = await AutonomousAgentService.executePlan(
+        "add Basmati Rice 1121, unit KG, HSN 100630, 5% GST",
+        context,
+      );
+      expect(result.confirmation).toBeDefined();
+      expect(result.confirmation?.actionType).toBe("CREATE_SKU");
+      expect(result.confirmation?.payload).toMatchObject({
+        name: "Basmati Rice 1121",
+        baseUomCode: "KG",
+        hsnCode: "100630",
+        gstRate: "5",
+        isBatchTracked: true,
+      });
+      expect(result.markdownAnswer).toContain("Ready to Register Product");
+      expect(result.markdownAnswer).toContain("Basmati Rice 1121");
+    });
   });
 });
 

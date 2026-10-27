@@ -355,6 +355,141 @@ const tallyJobDetailArgs = z
   })
   .strict();
 
+const webResearchArgs = z
+  .object({
+    query: z.string().trim().min(2, "Search query must be at least 2 characters").max(200),
+    maxResults: z.coerce.number().int().min(1).max(10).default(5),
+  })
+  .strict();
+
+export interface WebSearchResultItem {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+export interface WebSearchResult {
+  query: string;
+  provider: string;
+  count: number;
+  results: WebSearchResultItem[];
+  error?: string;
+}
+
+export async function executeWebSearch(query: string, maxResults = 5): Promise<WebSearchResult> {
+  const cleanQuery = query.trim();
+  const cappedMax = Math.min(Math.max(1, maxResults), 10);
+
+  // 1. If self-hosted SearXNG URL is provided, query it first
+  if (process.env.SEARXNG_URL) {
+    try {
+      const searxngBase = process.env.SEARXNG_URL.replace(/\/+$/, "");
+      const searxngUrl = `${searxngBase}/search?q=${encodeURIComponent(cleanQuery)}&format=json`;
+      const res = await fetch(searxngUrl, { signal: AbortSignal.timeout(6000) });
+      if (res.ok) {
+        const data = (await res.json()) as { results?: Array<{ title?: string; url?: string; content?: string }> };
+        if (Array.isArray(data.results) && data.results.length > 0) {
+          const items: WebSearchResultItem[] = data.results.slice(0, cappedMax).map((r) => ({
+            title: r.title ?? "Search Result",
+            url: r.url ?? "",
+            snippet: r.content ?? "",
+          }));
+          return { query: cleanQuery, provider: "SearXNG (Self-Hosted)", count: items.length, results: items };
+        }
+      }
+    } catch (err) {
+      logger.warn("SearXNG search failed, falling back to DuckDuckGo", { err: String(err) });
+    }
+  }
+
+  // 2. Query DuckDuckGo HTML endpoint
+  try {
+    const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(cleanQuery)}`;
+    const res = await fetch(ddgUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+      signal: AbortSignal.timeout(6500),
+    });
+
+    if (res.ok) {
+      const html = await res.text();
+      const results: WebSearchResultItem[] = [];
+      const linkMatches = [...html.matchAll(/<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)];
+      const snippetMatches = [...html.matchAll(/<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g)];
+
+      for (let i = 0; i < Math.min(linkMatches.length, cappedMax); i++) {
+        let rawUrl = linkMatches[i][1];
+        if (rawUrl.includes("uddg=")) {
+          const u = rawUrl.match(/uddg=([^&]+)/);
+          if (u) rawUrl = decodeURIComponent(u[1]);
+        }
+        const title = linkMatches[i][2].replace(/<[^>]+>/g, "").trim();
+        const snippet = snippetMatches[i] ? snippetMatches[i][1].replace(/<[^>]+>/g, "").trim() : "";
+        if (title && rawUrl) {
+          results.push({ title, url: rawUrl, snippet });
+        }
+      }
+
+      if (results.length > 0) {
+        return { query: cleanQuery, provider: "DuckDuckGo Web (Free)", count: results.length, results };
+      }
+    }
+  } catch (err) {
+    logger.warn("DuckDuckGo HTML search error, attempting API fallback", { err: String(err) });
+  }
+
+  // 3. Fallback to DuckDuckGo Instant Answer API
+  try {
+    const apiRes = await fetch(
+      `https://api.duckduckgo.com/?q=${encodeURIComponent(cleanQuery)}&format=json&no_html=1&skip_disambig=1`,
+      { signal: AbortSignal.timeout(4000) },
+    );
+    if (apiRes.ok) {
+      const data = (await apiRes.json()) as {
+        Heading?: string;
+        AbstractText?: string;
+        AbstractURL?: string;
+        RelatedTopics?: Array<{ Text?: string; FirstURL?: string }>;
+      };
+      const fallbackResults: WebSearchResultItem[] = [];
+      if (data.AbstractText && data.AbstractURL) {
+        fallbackResults.push({
+          title: data.Heading || cleanQuery,
+          url: data.AbstractURL,
+          snippet: data.AbstractText,
+        });
+      }
+      if (Array.isArray(data.RelatedTopics)) {
+        for (const topic of data.RelatedTopics.slice(0, cappedMax - fallbackResults.length)) {
+          if (topic.Text && topic.FirstURL) {
+            fallbackResults.push({
+              title: topic.Text.slice(0, 60),
+              url: topic.FirstURL,
+              snippet: topic.Text,
+            });
+          }
+        }
+      }
+      if (fallbackResults.length > 0) {
+        return { query: cleanQuery, provider: "DuckDuckGo API (Free)", count: fallbackResults.length, results: fallbackResults };
+      }
+    }
+  } catch {
+    // Ignore and proceed to empty response
+  }
+
+  return {
+    query: cleanQuery,
+    provider: "DuckDuckGo Web (Free)",
+    count: 0,
+    results: [],
+    error: `No live web search results found for "${cleanQuery}".`,
+  };
+}
+
 const PO_STATUSES = ["DRAFT", "OPEN", "PARTIALLY_RECEIVED", "FULLY_RECEIVED", "SHORT_CLOSED", "CANCELLED"] as const;
 const INVOICE_STATUSES = ["OPEN", "PARTIALLY_DISPATCHED", "COMPLETE", "CANCELLED"] as const;
 const DISPATCH_STATUSES = ["POSTED", "PARTIALLY_REVERSED", "REVERSED"] as const;
@@ -3618,6 +3753,23 @@ const TOOLS: CopilotTool[] = [
         oldData: log.oldData,
         newData: log.newData,
       };
+    },
+  },
+  {
+    name: "web_research",
+    description: "Search the web for GST HSN/SAC codes, tax rates, APMC Mandi commodity prices, product specifications, or vendor details.",
+    permission: "stock.view",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query, e.g. 'HSN code for Basmati Rice 1121' or 'current mandi price wheat quintal'" },
+        maxResults: { type: "number", description: "Number of search results to return (1-10)", default: 5 },
+      },
+      required: ["query"],
+    },
+    async execute(args) {
+      const { query, maxResults } = webResearchArgs.parse(args);
+      return executeWebSearch(query, maxResults);
     },
   },
 ];

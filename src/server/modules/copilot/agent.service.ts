@@ -2,16 +2,17 @@ import { randomUUID } from "node:crypto";
 import type { RoleCode } from "@prisma/client";
 import type { Actor } from "@/server/actor";
 import { prisma } from "@/server/db/client";
-import { toDecimal } from "@/server/db/decimal";
+import { Decimal, toDecimal } from "@/server/db/decimal";
 import { can } from "@/lib/permissions";
 import type {
   CopilotAction,
   CopilotConfirmation,
   CopilotActionType,
 } from "@/lib/copilot/types";
-import { executeCopilotToolData } from "./tools";
+import { executeCopilotToolData, type WebSearchResult } from "./tools";
 import { getWorkspaceCounts } from "./copilot.queries";
 import { answerFromKnowledge } from "./knowledge";
+import { createSku } from "@/server/modules/masters/masters.service";
 import { cancelInvoice } from "@/server/modules/invoices/invoice.service";
 import {
   cancelPurchaseOrder,
@@ -353,6 +354,32 @@ export class AutonomousAgentService {
       };
     }
 
+    // 0c2. Actionable Web Deep Research (e.g. "search the web for ...", "web research for ...", "find online ...")
+    const isActionableWebResearch =
+      /\b(search\s*(the\s*)?web\s*(for|about)|web\s*search\s*(for|about)|do\s*(a\s*)?web\s*search\s*(for|about)|google\s*(for|about)|look\s*up\s*online\s*(for|about)?|find\s*(online|on\s*the\s*web))\b/i.test(text) ||
+      (/\b(search|research|find|check|look\s*up)\b/i.test(text) && /\b(from\s*(the\s*)?web|on\s*(the\s*)?web|online|internet)\b/i.test(text) && !/\b(can\s*you|will\s*you|how\s*do\s*you|are\s*you\s*able)\b/i.test(text));
+
+    if (isActionableWebResearch) {
+      const cleanSearchQuery = tidyTerm(
+        message.replace(
+          /\b(?:search\s*(?:the\s*)?web\s*(?:for|about)?|web\s*search\s*(?:for|about)?|do\s*(?:a\s*)?web\s*search\s*(?:for|about)?|google\s*(?:for|about)?|look\s*up\s*online\s*(?:for|about)?|find\s*(?:online|on\s*(?:the\s*)?web)|from\s*(?:the\s*)?web|on\s*(?:the\s*)?web|online|internet|please|can\s*you)\b/gi,
+          " ",
+        ),
+      ) || "Rice commodity GST HSN rates India";
+
+      return {
+        intent: "execute_web_research",
+        steps: [
+          {
+            name: "Deep Web Research",
+            toolName: "web_research",
+            arguments: { query: cleanSearchQuery, maxResults: 5 },
+            description: `Searching the web for "${cleanSearchQuery}"`,
+          },
+        ],
+      };
+    }
+
     // 0d. Copilot Capabilities, Web Research & Feature Inquiries
     const isWebResearchQuery =
       /\b(web\s*research|search\s*(the\s*)?web|internet|browse\s*(the\s*)?web|online\s*search|google|surf\s*(the\s*)?net|web\s*search)\b/i.test(text);
@@ -415,6 +442,42 @@ export class AutonomousAgentService {
             toolName: "list_hsn_codes",
             arguments: { limit: 5 },
             description: "Checking availability of official GST HSN / SAC directory entries",
+          },
+        ],
+      };
+    }
+
+    // 0g. Masters & Commodity Creation / Registration (Product, SKU, Rice, etc.)
+    const isAddProductQuery =
+      /\b(add|create|new|register|insert|entry|banao|dalo|jodo|darj)\b.*(product|item|sku|commodity|rice|chawal|grain|wheat|sugar|oil|atta|dal|pulses)/i.test(text) ||
+      /\b(product|item|sku|commodity|rice|chawal|grain|wheat|sugar|oil|atta|dal|pulses)\b.*(add|create|new|register|banao|dalo|jodo|karo)/i.test(text) ||
+      /^(add|create|register|new)\s+(a\s+)?(product|item|sku|rice|chawal|grain|wheat|sugar|oil|atta|dal|pulses)\b/i.test(text);
+
+    const isSimpleStockLookup =
+      /\b(how\s*much|how\s*many|check\s*stock|stock\s*of|available|availabe|balance|kitna|kya\s*stock)\b/i.test(text);
+
+    if (isAddProductQuery && !isSimpleStockLookup) {
+      const commodityMatch = text.match(/\b(rice|chawal|basmati|sugar|wheat|grain|oil|atta|dal|pulses)\b/i);
+      const commodity = commodityMatch ? commodityMatch[1] : undefined;
+
+      return {
+        intent: "propose_add_product",
+        steps: [
+          ...(commodity
+            ? [
+                {
+                  name: "Lookup Commodity HSN",
+                  toolName: "list_hsn_codes",
+                  arguments: { query: commodity, limit: 3 },
+                  description: `Querying official GST HSN codes for ${commodity}`,
+                },
+              ]
+            : []),
+          {
+            name: "Catalog Readiness",
+            toolName: "get_workspace_summary",
+            arguments: {},
+            description: "Evaluating master categories and units of measurement",
           },
         ],
       };
@@ -1448,6 +1511,73 @@ export class AutonomousAgentService {
           };
         }
 
+        case "CREATE_SKU": {
+          if (!can(actor.role, "master.manage")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot create or modify SKUs.`,
+              },
+            };
+          }
+          const name = (params.payload.name as string) || "New Product";
+          const baseUomCode = ((params.payload.baseUomCode as string) || "KG").toUpperCase();
+          const hsnCode = params.payload.hsnCode ? String(params.payload.hsnCode).trim() : null;
+          const gstRate = params.payload.gstRate ? String(params.payload.gstRate).trim() : null;
+          const isBatchTracked = params.payload.isBatchTracked !== false;
+
+          // 1. Resolve or ensure UOM exists
+          let uom = await prisma.uom.findFirst({
+            where: { code: { equals: baseUomCode, mode: "insensitive" } },
+          });
+          if (!uom) {
+            uom = await prisma.uom.findFirst({ orderBy: { code: "asc" } });
+          }
+          if (!uom) {
+            uom = await prisma.uom.create({
+              data: { code: baseUomCode, name: baseUomCode, decimalPlaces: baseUomCode === "KG" ? 3 : 0 },
+            });
+          }
+
+          // 2. Ensure HSN code exists in hsn_code master if provided
+          if (hsnCode) {
+            const existingHsn = await prisma.hsnCode.findUnique({ where: { code: hsnCode } });
+            if (!existingHsn) {
+              await prisma.hsnCode.create({
+                data: {
+                  code: hsnCode,
+                  description: `${name} (HSN ${hsnCode})`,
+                  gstRate: gstRate ? new Decimal(gstRate) : new Decimal("5.00"),
+                  isActive: true,
+                },
+              });
+            }
+          }
+
+          // 3. Create the SKU via createSku
+          const created = await createSku(actor, {
+            name,
+            baseUomId: uom.id,
+            hsnCode: hsnCode || undefined,
+            gstRate: gstRate || undefined,
+            isBatchTracked,
+          });
+
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `SKU ${created.code} ("${created.name}") created successfully in your product catalog.`,
+              actions: [
+                { label: "Create Purchase Order", route: "/purchase-orders/new", permission: "po.manage" },
+                { label: "View Products", route: "/masters/skus", permission: "master.view" },
+                { label: "Add Opening Stock", route: "/opening-stock", permission: "opening.post" },
+              ],
+            },
+          };
+        }
+
         default:
           return {
             success: false,
@@ -2287,6 +2417,177 @@ export class AutonomousAgentService {
         actions.push({ label: "Browse Products (SKUs)", route: "/masters/skus", permission: "master.view" });
         actions.push({ label: "Create Product (SKU)", route: "/masters/skus", permission: "master.manage" });
         sources.push("Central GST HSN / SAC Master");
+        break;
+      }
+
+      case "propose_add_product": {
+        if (!can(context.role, "master.manage")) {
+          markdown = `⚠️ **Permission Denied**\n\nYour current role (**${context.role}**) does not have permission to register products in the master catalog (\`master.manage\`). Please ask a Store Manager or Administrator.\n`;
+          actions.push({ label: "View Products", route: "/masters/skus", permission: "master.view" });
+          sources.push("RBAC Enforcement Matrix");
+          break;
+        }
+
+        const allUserText = [
+          ...(history?.filter((h) => h.role === "user").map((h) => h.content) ?? []),
+          message,
+        ].join(" ");
+
+        // Specific varieties: e.g. "Basmati Rice 1121", "Sona Masoori", "Brown Rice", "Kolam", etc.
+        const basmatiMatch = allUserText.match(/\b(basmati(?:\s+rice)?(?:\s+(?:1121|1509|pusa|steam|sella))?)\b/i);
+        const sonaMatch = allUserText.match(/\b(sona\s+masoori(?:\s+rice)?)\b/i);
+        const kolamMatch = allUserText.match(/\b(kolam(?:\s+rice)?)\b/i);
+        const genericRice = allUserText.match(/\b(rice|chawal)\b/i);
+        const sugarMatch = allUserText.match(/\b(sugar|chini|m-?30|s-?30)\b/i);
+        const wheatMatch = allUserText.match(/\b(wheat|gehu|atta|flour)\b/i);
+        const oilMatch = allUserText.match(/\b(oil|tel|sunflower|mustard)\b/i);
+
+        // Detect Unit of Measure
+        const uomMatch = allUserText.match(/\b(kg|kgs|kilogram|kilograms|bag|bags|quintal|quintals|pcs|piece|pieces|box|boxes|tin|tins|ltr|liter|litres)\b/i);
+        let baseUomCode = uomMatch ? uomMatch[1].toUpperCase() : undefined;
+        if (baseUomCode === "KGS" || baseUomCode === "KILOGRAM" || baseUomCode === "KILOGRAMS") baseUomCode = "KG";
+        if (baseUomCode === "PIECE" || baseUomCode === "PIECES") baseUomCode = "PCS";
+        if (baseUomCode === "BAGS") baseUomCode = "BAG";
+        if (baseUomCode === "BOXES") baseUomCode = "BOX";
+        if (baseUomCode === "QUINTALS") baseUomCode = "QUINTAL";
+
+        // Detect HSN Code
+        const explicitHsnMatch = allUserText.match(/\bhsn(?:\s*code)?:?\s*(\d{4,8})\b/i);
+        const fallbackHsnMatch = allUserText.match(/\b(\d{6,8})\b/);
+        const explicitHsn = explicitHsnMatch ? explicitHsnMatch[1] : (fallbackHsnMatch ? fallbackHsnMatch[1] : undefined);
+
+        // Detect GST Rate
+        const gstMatch = allUserText.match(/\b(\d+(?:\.\d+)?)\s*%\s*(?:gst)?\b/i) || allUserText.match(/\bgst(?:\s*rate)?:?\s*(\d+(?:\.\d+)?)\b/i);
+        const explicitGst = gstMatch ? gstMatch[1] : undefined;
+
+        // Determine resolved SKU Name
+        let resolvedName: string | undefined;
+        if (basmatiMatch) resolvedName = basmatiMatch[1].trim();
+        else if (sonaMatch) resolvedName = sonaMatch[1].trim();
+        else if (kolamMatch) resolvedName = kolamMatch[1].trim();
+        else if (sugarMatch) resolvedName = sugarMatch[0].trim();
+        else if (wheatMatch) resolvedName = wheatMatch[0].trim();
+        else if (oilMatch) resolvedName = oilMatch[0].trim();
+
+        if (resolvedName) {
+          resolvedName = resolvedName
+            .split(/\s+/)
+            .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+            .join(" ");
+        }
+
+        const hasSpecificName = Boolean(resolvedName && !/^(rice|product|item|sku|chawal)$/i.test(resolvedName));
+        const isReadyForConfirmation = hasSpecificName && (Boolean(baseUomCode) || Boolean(explicitHsn));
+
+        if (isReadyForConfirmation && resolvedName) {
+          const finalUom = baseUomCode || "KG";
+          const finalHsn = explicitHsn || "100630";
+          const finalGst = explicitGst || "5.00";
+
+          const confirmationId = randomUUID();
+          confirmation = {
+            id: confirmationId,
+            title: `Register SKU: ${resolvedName}`,
+            description: `Confirm registering "${resolvedName}" in master catalog with Base Unit ${finalUom} and GST HSN ${finalHsn} (${finalGst}%).`,
+            actionType: "CREATE_SKU",
+            payload: {
+              name: resolvedName,
+              baseUomCode: finalUom,
+              hsnCode: finalHsn,
+              gstRate: finalGst,
+              isBatchTracked: true,
+            },
+            destructive: false,
+            confirmLabel: "Confirm & Register SKU",
+            cancelLabel: "Cancel",
+            status: "pending",
+          };
+
+          markdown = `### 📋 Ready to Register Product in Catalog\n\n`;
+          markdown += `I have prepared the catalog registration specifications for **${resolvedName}**:\n\n`;
+          markdown += `| Specification | Configured Value | Commercial Rule |\n`;
+          markdown += `| :--- | :--- | :--- |\n`;
+          markdown += `| **Product Name** | **${resolvedName}** | Display & Billing Name |\n`;
+          markdown += `| **Base Unit (UOM)** | **${finalUom}** | Warehouse inventory unit |\n`;
+          markdown += `| **GST HSN Code** | **\`${finalHsn}\`** | CBIC Central Classification |\n`;
+          markdown += `| **GST Rate** | **${finalGst}%** | Applied to Purchases & Invoices |\n`;
+          markdown += `| **Batch Tracking** | **Enabled (FEFO)** | Expiry & Mfg Date tracked |\n\n`;
+          markdown += `Click **"Confirm & Register SKU"** below or reply *"Yes / Proceed"* to register this product directly into your inventory database.\n`;
+
+          actions.push({ label: "Confirm & Register SKU", route: "/masters/skus", permission: "master.manage" });
+          actions.push({ label: "Create Purchase Order", route: "/purchase-orders/new", permission: "po.manage" });
+          actions.push({ label: "Browse Product Master", route: "/masters/skus", permission: "master.view" });
+          sources.push("Margix Master Data Protocol", "Indian GST HSN Classification");
+          break;
+        }
+
+        const commodityName = genericRice ? "Rice (चावल)" : "New Product";
+        markdown = `### 🌾 Register ${commodityName} in Catalog\n\n`;
+        markdown += `I can help you add and set up this product in your inventory! In order to prepare the product for **compliant GST billing**, **purchase receipts (GRN)**, and **warehouse batch dispatching (FEFO)**, let's establish the key specifications:\n\n`;
+
+        markdown += `#### 1. 🍚 Product Variety & Exact Trade Name\n`;
+        markdown += `What specific variety or brand would you like to register?\n`;
+        markdown += `- *Popular Options:* **Basmati Rice 1121 (Steam / Sella)**, **Sona Masoori Rice**, **Kolam Rice**, **Brown Rice**, **Broken Rice (Tibar/Dubar)**\n\n`;
+
+        markdown += `#### 2. 📦 Base Unit of Measure (UOM)\n`;
+        markdown += `How do you measure base inventory in the godown?\n`;
+        markdown += `- **KG (Kilogram)** — Recommended for bulk weight tracking and precision decimal billing\n`;
+        markdown += `- **BAG** or **QUINTAL** — For wholesale sack trading\n\n`;
+
+        markdown += `#### 3. 🎒 Packaging & Alternate Unit Conversion\n`;
+        markdown += `Does it come in standard pre-packaged bags?\n`;
+        markdown += `- *e.g.* **1 Bag = 25 KG** (or 50 KG). Margix automatically converts bag counts to base kilograms during billing and dispatch!\n\n`;
+
+        markdown += `#### 4. 🏷️ GST HSN Classification & Tax Rate\n`;
+        markdown += `- **HSN Code 100630**: *Semi-milled or wholly milled rice, whether or not polished or glazed*\n`;
+        markdown += `- **Applicable GST Rate**: **5%** (pre-packaged/branded) or **0%** (loose/unbranded)\n\n`;
+
+        markdown += `#### 5. 🔄 Commercial Workflow Purpose\n`;
+        markdown += `Once registered, what is your immediate goal?\n`;
+        markdown += `- **Catalog Only**: Save the SKU master for future orders\n`;
+        markdown += `- **Purchase Order (Procurement)**: Buy stock from a supplier (e.g. 50 Bags @ ₹1,800/bag)\n`;
+        markdown += `- **Sales Invoice & Receipt**: Bill and dispatch to a customer right away\n\n`;
+
+        markdown += `💬 _Reply with your preferred details, for example:_ **"Basmati Rice 1121 in KG with 5% GST HSN 100630"**\n`;
+
+        actions.push({ label: "🍚 Basmati Rice 1121", route: "/masters/skus", permission: "master.manage" });
+        actions.push({ label: "🌾 Sona Masoori Rice", route: "/masters/skus", permission: "master.manage" });
+        actions.push({ label: "📦 Base Unit: KG", route: "/masters/uoms", permission: "master.view" });
+        actions.push({ label: "🏷️ HSN 100630 (5% GST)", route: "/masters/hsn", permission: "master.view" });
+        actions.push({ label: "🛒 New Purchase Order", route: "/purchase-orders/new", permission: "po.manage" });
+        actions.push({ label: "🧾 New Sales Invoice", route: "/invoices/new", permission: "invoice.manage" });
+        sources.push("Margix Master Data Protocol", "Indian GST HSN Classification");
+        break;
+      }
+
+      case "execute_web_research": {
+        const webData = executed.find((e) => e.toolName === "web_research")?.output as WebSearchResult | undefined;
+        const query = webData?.query || message;
+        const results = webData?.results || [];
+        const provider = webData?.provider || "DuckDuckGo Web (Free)";
+
+        markdown = `## 🌐 Web Deep Research: "${query}"\n\n`;
+
+        if (results.length === 0) {
+          markdown += `Could not retrieve live web search results at this moment.\n\n`;
+          markdown += `However, Margix IMS includes a comprehensive, built-in **Indian GST HSN & SAC Master Directory** with preloaded rates and classifications.\n`;
+          actions.push({ label: "Open HSN Directory", route: "/masters/hsn", permission: "master.view" });
+        } else {
+          markdown += `Synthesized **${results.length} verified web sources** via **${provider}**:\n\n`;
+          results.forEach((res, i) => {
+            markdown += `### ${i + 1}. [${res.title}](${res.url})\n`;
+            markdown += `> ${res.snippet}\n\n`;
+          });
+
+          markdown += `### 💡 Operational Application in Margix IMS:\n`;
+          markdown += `- **Add as Master SKU:** Say *"add Basmati Rice 1121 with HSN 100630 and 5% GST"*\n`;
+          markdown += `- **Update HSN Master:** Navigate to Masters → HSN & GST to maintain rates\n`;
+
+          actions.push({ label: "Register New Product", route: "/masters/skus", permission: "master.manage" });
+          actions.push({ label: "Browse HSN Directory", route: "/masters/hsn", permission: "master.view" });
+        }
+
+        sources.push(`Live Web Deep Research (${provider})`);
         break;
       }
 
