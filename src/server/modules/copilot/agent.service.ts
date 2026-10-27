@@ -1,6 +1,6 @@
 import type { RoleCode } from "@prisma/client";
 import type { CopilotAction } from "@/lib/copilot/types";
-import { executeCopilotTool } from "./tools";
+import { executeCopilotToolData } from "./tools";
 import { getWorkspaceCounts } from "./copilot.queries";
 import { answerFromKnowledge } from "./knowledge";
 import { can } from "@/lib/permissions";
@@ -31,6 +31,8 @@ export interface AgentExecutionResult {
 interface FefoResult {
   error?: string;
   product: { code: string; name: string; unit: string };
+  godown?: string | null;
+  warehouseAvailableQty?: string;
   requestedQty: string;
   allocatedQty: string;
   shortfallQty: string;
@@ -48,10 +50,12 @@ interface FefoResult {
 
 interface DispatchReadinessResult {
   error?: string;
+  invoiceId: string;
   invoiceNumber: string;
   customer: string;
   invoiceStatus: string;
   overallReadiness: string;
+  recommendedGodown?: string | null;
   lines: Array<{
     product: string;
     billed: string;
@@ -97,6 +101,7 @@ interface LedgerResult {
 
 interface DocumentStatusResult {
   error?: string;
+  id?: string;
   type: string;
   number: string;
   status: string;
@@ -187,20 +192,36 @@ export class AutonomousAgentService {
   static planIntent(message: string, context?: AgentContext): { intent: string; steps: AgentPlanStep[] } {
     const text = message.toLowerCase();
     const onInvoiceRoute = Boolean(context?.route?.startsWith("/invoices"));
+    const tidyTerm = (value: string) =>
+      value
+        .replace(/[?!.,;:]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
 
     // 1. FEFO Pick List / Batch Allocation
     if (
-      text.includes("fefo") ||
       text.includes("pick list") ||
       text.includes("pick batch") ||
       text.includes("allocate batch") ||
-      text.includes("batch allocation")
+      text.includes("batch allocation") ||
+      (text.includes("fefo") && (text.includes("pick") || text.includes("allocat") || text.includes("batch")))
     ) {
-      const qtyMatch = message.match(/(\d+(?:\.\d+)?)\s*(?:bags?|kg|units?|boxes?|pcs?|nos?)?/i);
-      const quantity = qtyMatch ? parseFloat(qtyMatch[1]) : 10;
-      const cleanProduct = message
-        .replace(/(?:fefo|pick\s*list|pick\s*batch|allocate\s*batch|batch\s*allocation|for|of|can\s*we|please|give\s*me|generate|\d+(?:\.\d+)?\s*(?:bags?|kg|units?|boxes?|pcs?|nos?)?)/gi, "")
-        .trim() || "Basmati";
+      const quantityWithUnit = message.match(
+        /\b(\d+(?:\.\d+)?)\s*(?:bags?|kg|units?|boxes?|pcs?|nos?)\b/i,
+      );
+      const quantityAfterKeyword = message.match(
+        /\b(?:for|qty|quantity|need|pick|allocate)\s+(\d+(?:\.\d+)?)\b/i,
+      );
+      const quantityMatch = quantityWithUnit ?? quantityAfterKeyword;
+      const quantity = quantityMatch ? parseFloat(quantityMatch[1]) : 10;
+      const withoutQuantity = quantityMatch ? message.replace(quantityMatch[0], " ") : message;
+      const cleanProduct =
+        tidyTerm(
+          withoutQuantity.replace(
+            /\b(?:fefo|pick\s*list|pick\s*batch|allocate\s*batch|batch\s*allocation|for|of|can\s*we|please|give\s*me|generate|the|my|a|an)\b/gi,
+            " ",
+          ),
+        ) || "Basmati";
 
       return {
         intent: "fefo_allocation",
@@ -223,15 +244,15 @@ export class AutonomousAgentService {
 
     // 2. Dispatch Readiness Check (Invoice or Product)
     const invMatch = message.match(/(INV-[A-Za-z0-9-]+)/i);
-    if (
-      invMatch ||
+    const wantsDispatch =
       text.includes("dispatch readiness") ||
       text.includes("ready to dispatch") ||
       text.includes("can we dispatch") ||
       text.includes("fulfill invoice") ||
-      (text.includes("dispatch") && onInvoiceRoute)
-    ) {
-      const invoiceNumber = invMatch ? invMatch[1].toUpperCase() : "INV-2026-0001";
+      (text.includes("dispatch") && onInvoiceRoute);
+
+    if (invMatch && wantsDispatch) {
+      const invoiceNumber = invMatch[1].toUpperCase();
       return {
         intent: "dispatch_readiness",
         steps: [
@@ -243,6 +264,28 @@ export class AutonomousAgentService {
           },
           {
             name: "Inspect Document Status",
+            toolName: "get_document_status",
+            arguments: { type: "invoice", number: invoiceNumber },
+            description: `Querying billed vs dispatched progress for "${invoiceNumber}"`,
+          },
+        ],
+      };
+    }
+
+    if (!invMatch && wantsDispatch) {
+      return {
+        intent: "dispatch_readiness",
+        steps: [],
+      };
+    }
+
+    if (invMatch) {
+      const invoiceNumber = invMatch[1].toUpperCase();
+      return {
+        intent: "document_status",
+        steps: [
+          {
+            name: "Fetch Invoice Status",
             toolName: "get_document_status",
             arguments: { type: "invoice", number: invoiceNumber },
             description: `Querying billed vs dispatched progress for "${invoiceNumber}"`,
@@ -279,17 +322,23 @@ export class AutonomousAgentService {
 
     // 4. Immutable Inventory Ledger Audit Movements
     if (
-      text.includes("ledger") ||
-      text.includes("audit") ||
-      text.includes("movement") ||
-      text.includes("signed entry") ||
-      text.includes("transactions") ||
-      text.includes("le-")
+      (text.includes("ledger") ||
+        text.includes("audit") ||
+        text.includes("movement") ||
+        text.includes("signed entry") ||
+        text.includes("transactions") ||
+        text.includes("le-")) &&
+      /(show|list|view|get|recent|entries|entry|movements?|audit trail|history|for)\b/.test(text)
     ) {
       const docMatch = message.match(/((?:PO|INV|DC|GRN)-[A-Za-z0-9-]+)/i);
       const referenceNo = docMatch ? docMatch[1].toUpperCase() : undefined;
       const cleanProduct = !referenceNo
-        ? message.replace(/(?:ledger|audit|movement|movements|signed|entries|entry|transactions|history|show|view|get|for|of)/gi, "").trim()
+        ? tidyTerm(
+            message.replace(
+              /\b(?:ledger|audit|movements?|signed|entries?|transactions?|history|show|view|get|for|of|me|recent|latest|all|the|my|please)\b/gi,
+              " ",
+            ),
+          )
         : undefined;
 
       return {
@@ -312,8 +361,8 @@ export class AutonomousAgentService {
     // 5. Document Status Tracking (PO, Invoice, Dispatch, GRN)
     const poMatch = message.match(/(PO-[A-Za-z0-9-]+)/i);
     const dcMatch = message.match(/(DC-[A-Za-z0-9-]+)/i);
-    if (poMatch || text.includes("purchase order") || text.includes(" po ")) {
-      const number = poMatch ? poMatch[1].toUpperCase() : "PO-2026-0001";
+    if (poMatch) {
+      const number = poMatch[1].toUpperCase();
       return {
         intent: "document_status",
         steps: [
@@ -326,8 +375,11 @@ export class AutonomousAgentService {
         ],
       };
     }
-    if (dcMatch || text.includes("dispatch document") || text.includes("outward")) {
-      const number = dcMatch ? dcMatch[1].toUpperCase() : "DC-2026-0001";
+    if (text.includes("purchase order") || text.includes(" po ")) {
+      return { intent: "document_status", steps: [] };
+    }
+    if (dcMatch) {
+      const number = dcMatch[1].toUpperCase();
       return {
         intent: "document_status",
         steps: [
@@ -339,6 +391,9 @@ export class AutonomousAgentService {
           },
         ],
       };
+    }
+    if (text.includes("dispatch document") || text.includes("outward")) {
+      return { intent: "document_status", steps: [] };
     }
 
     // 6. Low Stock Alerts & Reorder Replenishment
@@ -383,7 +438,32 @@ export class AutonomousAgentService {
       };
     }
 
-    // 8. General Stock Check for a Product
+    // 8. Conceptual / policy questions belong in the knowledge base, not a
+    // live lookup. Without this guard, "how does stock work?" would be parsed
+    // as a product search for "work".
+    const hasDocumentNumber = /(?:PO|INV|DC|GRN)-[A-Za-z0-9-]+/i.test(message);
+    const conceptual =
+      !hasDocumentNumber &&
+      !/\bhow (?:many|much)\b/i.test(text) &&
+      (/^\s*(?:how|why)\b/i.test(text) ||
+        /\b(?:explain|describe|meaning of|difference between)\b/i.test(text) ||
+        /\bhow (?:do|does|can|should|to)\b/i.test(text) ||
+        /\bwhat (?:is|are|does)\b[^.?]{0,60}\b(?:mean|work|happen)\b/i.test(text));
+    if (conceptual) {
+      return {
+        intent: "general_operational",
+        steps: [
+          {
+            name: "Workspace Summary",
+            toolName: "get_workspace_summary",
+            arguments: {},
+            description: "Fetching live workspace totals while consulting the knowledge base",
+          },
+        ],
+      };
+    }
+
+    // 9. General Stock Check for a Product
     if (
       text.includes("stock") ||
       text.includes("inventory") ||
@@ -392,9 +472,13 @@ export class AutonomousAgentService {
       text.includes("how many") ||
       text.includes("balance")
     ) {
-      const clean = message
-        .replace(/(?:stock|inventory|on\s*hand|available|how\s*many|balance|check|find|what\s*is\s*the|of|for|in)/gi, "")
-        .trim() || "Basmati";
+      const clean =
+        tidyTerm(
+          message.replace(
+            /\b(?:stock|inventory|on\s*hand|available|how\s*many|balance|check|find|what\s*is\s*the|of|for|in|me|show|please|my|the)\b/gi,
+            "",
+          ),
+        ) || "Basmati";
 
       return {
         intent: "stock_check",
@@ -443,11 +527,10 @@ export class AutonomousAgentService {
 
     for (const step of steps) {
       try {
-        const rawJson = await executeCopilotTool(step.toolName, JSON.stringify(step.arguments), {
+        const parsed = await executeCopilotToolData(step.toolName, JSON.stringify(step.arguments), {
           role: context.role,
           route: context.route,
         });
-        const parsed = JSON.parse(rawJson);
         executed.push({
           toolName: step.toolName,
           description: step.description,
@@ -477,8 +560,12 @@ export class AutonomousAgentService {
         markdown = `## FEFO Batch Allocation Plan: ${pickData.product.code}\n\n`;
         markdown += `**Product:** ${pickData.product.name} (${pickData.product.code})\n`;
         markdown += `**Target Quantity:** ${pickData.requestedQty} ${pickData.product.unit}\n`;
+        if (pickData.godown) markdown += `**Pick Godown:** \`${pickData.godown}\`\n`;
         markdown += `**Status:** ${isOk ? "✅ **FULLY ALLOCATED**" : "⚠️ **STOCK SHORTAGE**"}\n`;
         markdown += `**Allocated:** ${pickData.allocatedQty} ${pickData.product.unit} | **Shortfall:** ${pickData.shortfallQty} ${pickData.product.unit}\n\n`;
+        if (!isOk && pickData.warehouseAvailableQty) {
+          markdown += `**Warehouse-wide available:** ${pickData.warehouseAvailableQty} ${pickData.product.unit} across all godowns.\n\n`;
+        }
         markdown += `### Recommended Pick Sequence (Earliest Expiry First):\n`;
 
         if (pickData.pickList && pickData.pickList.length > 0) {
@@ -494,8 +581,10 @@ export class AutonomousAgentService {
 
         markdown += `\n**Operational Guidance:** ${pickData.recommendation}\n`;
 
-        actions.push({ label: "Create Outward Dispatch", route: "/dispatch/new", permission: "dispatch.create" });
-        actions.push({ label: "View Stock Ledger", route: "/stock/ledger", permission: "ledger.view" });
+        if (isOk) {
+          actions.push({ label: "Create Outward Dispatch", route: "/dispatches/new", permission: "dispatch.create" });
+        }
+        actions.push({ label: "View Stock Ledger", route: "/ledger", permission: "ledger.view" });
         sources.push("Live Stock Balance & Batch Expiry Index");
         break;
       }
@@ -503,20 +592,36 @@ export class AutonomousAgentService {
       case "dispatch_readiness": {
         const readiness = executed.find((e) => e.toolName === "check_dispatch_readiness")?.output as DispatchReadinessResult | undefined;
         if (!readiness || readiness.error) {
-          markdown = `### Dispatch Readiness Verification\n\n${readiness?.error || "Invoice not found"}.\n\nPlease ensure the invoice number is valid (e.g., INV-2026-0001).`;
+          markdown =
+            steps.length === 0
+              ? "### Dispatch Readiness Verification\n\nMention the invoice number (for example `INV-2026-0001`) and I will check each line against unexpired stock."
+              : `### Dispatch Readiness Verification\n\n${readiness?.error || "Invoice not found"}. Please check the invoice number (e.g. \`INV-2026-0001\`).`;
           actions.push({ label: "View All Invoices", route: "/invoices", permission: "invoice.view" });
           break;
         }
 
         const isReady = readiness.overallReadiness === "READY_TO_DISPATCH";
+        const isFullyDispatched = readiness.overallReadiness === "FULLY_DISPATCHED";
+        const isCancelled = readiness.overallReadiness === "CANCELLED";
+        const verdict = isReady
+          ? "✅ **READY TO DISPATCH** (100% Stock Available)"
+          : isFullyDispatched
+            ? "📦 **FULLY DISPATCHED** (Nothing left to pick)"
+            : isCancelled
+              ? "🚫 **INVOICE CANCELLED**"
+              : "⚠️ **STOCK SHORTAGE DETECTED**";
         markdown = `## Dispatch Readiness Check: ${readiness.invoiceNumber}\n\n`;
         markdown += `**Customer:** ${readiness.customer}\n`;
         markdown += `**Invoice Status:** \`${readiness.invoiceStatus}\`\n`;
-        markdown += `**Readiness Verdict:** ${isReady ? "✅ **READY TO DISPATCH** (100% Stock Available)" : "⚠️ **STOCK SHORTAGE DETECTED**"}\n\n`;
+        markdown += `**Readiness Verdict:** ${verdict}\n\n`;
+        if (readiness.recommendedGodown) {
+          markdown += `**Recommended godown:** \`${readiness.recommendedGodown}\`\n\n`;
+        }
         markdown += `### Line-by-Line Stock Feasibility:\n`;
 
         for (const line of readiness.lines || []) {
-          const lineIcon = line.status === "READY" ? "✅" : line.status === "ALREADY_DISPATCHED" ? "📦" : "❌";
+          const lineIcon =
+            line.status === "READY" ? "✅" : line.status === "ALREADY_DISPATCHED" ? "📦" : "❌";
           markdown += `- ${lineIcon} **${line.product}**:\n`;
           markdown += `  - Billed: ${line.billed} | Dispatched: ${line.dispatched} | Remaining to Dispatch: **${line.remaining} ${line.unit || ""}**\n`;
           markdown += `  - Available Unexpired Stock: **${line.availableUnexpiredStock} ${line.unit || ""}** (${line.status})\n`;
@@ -527,12 +632,12 @@ export class AutonomousAgentService {
         if (isReady) {
           actions.push({
             label: "Create Outward Dispatch",
-            route: "/dispatch/new",
-            params: { invoiceNumber: readiness.invoiceNumber },
+            route: "/dispatches/new",
+            params: { invoiceId: readiness.invoiceId },
             permission: "dispatch.create",
           });
-        } else {
-          actions.push({ label: "Create Purchase Order", route: "/purchasing/new", permission: "po.manage" });
+        } else if (!isFullyDispatched && !isCancelled) {
+          actions.push({ label: "Create Purchase Order", route: "/purchase-orders/new", permission: "po.manage" });
         }
         actions.push({ label: "Inspect Invoices", route: "/invoices", permission: "invoice.view" });
         sources.push("Real-time Inward Ledger & Invoice Line Registry");
@@ -548,10 +653,17 @@ export class AutonomousAgentService {
 
         if (batches.length > 0) {
           for (const b of batches) {
-            const tone = b.daysLeft <= 0 ? "🚨 **EXPIRED**" : b.daysLeft <= 30 ? "⚠️ **CRITICAL (< 30d)**" : "🕒 **APPROACHING**";
+            const tone =
+              b.daysLeft < 0
+                ? "🚨 **EXPIRED**"
+                : b.daysLeft === 0
+                  ? "⚠️ **EXPIRES TODAY**"
+                  : b.daysLeft <= 30
+                    ? "⚠️ **CRITICAL (< 30d)**"
+                    : "🕒 **APPROACHING**";
             markdown += `- ${tone} **\`${b.batch}\`** — ${b.product}\n`;
             markdown += `  - Godown: **\`${b.godown}\`** | Current Stock: **${b.quantity} ${b.unit}**\n`;
-            markdown += `  - Expiry Date: **${b.expiryDate}** (${b.daysLeft <= 0 ? "Expired" : `${b.daysLeft} days remaining`})\n`;
+            markdown += `  - Expiry Date: **${b.expiryDate}** (${b.daysLeft < 0 ? "Expired" : b.daysLeft === 0 ? "Expires today" : `${b.daysLeft} days remaining`})\n`;
           }
           markdown += `\n**FEFO Protocol Notice:** Prioritize near-expiry batches on outward dispatches to minimize inventory obsolescence. Expired batches cannot be dispatched and must be quarantined via inventory adjustment.\n`;
         } else {
@@ -584,7 +696,7 @@ export class AutonomousAgentService {
 
         markdown += `\n**Integrity Guarantee:** Every movement is sequentially signed and immutable. Balance queries compute exact mathematical sums across the ledger.\n`;
 
-        actions.push({ label: "Open Full Ledger Audit Trail", route: "/stock/ledger", permission: "ledger.view" });
+        actions.push({ label: "Open Full Ledger Audit Trail", route: "/ledger", permission: "ledger.view" });
         sources.push("Immutable Double-Entry Ledger (inventory_ledger)");
         break;
       }
@@ -592,7 +704,15 @@ export class AutonomousAgentService {
       case "document_status": {
         const docData = executed.find((e) => e.toolName === "get_document_status")?.output as DocumentStatusResult | undefined;
         if (!docData || docData.error) {
-          markdown = `### Document Tracking\n\n${docData?.error || "Document not found"}.`;
+          markdown =
+            steps.length === 0
+              ? "### Document Tracking\n\nMention the document number (for example `PO-2026-0001`, `INV-2026-0001` or `DC-2026-0001`) and I will fetch its live status."
+              : `### Document Tracking\n\n${docData?.error || "Document not found"}.`;
+          if (steps.length === 0) {
+            actions.push({ label: "Open Purchase Orders", route: "/purchase-orders", permission: "po.view" });
+            actions.push({ label: "Open Invoices", route: "/invoices", permission: "invoice.view" });
+            actions.push({ label: "Open Dispatches", route: "/dispatches", permission: "dispatch.view" });
+          }
           break;
         }
 
@@ -609,7 +729,11 @@ export class AutonomousAgentService {
               markdown += `- GRN \`${g.number}\` at Godown \`${g.godown}\` (${g.status})\n`;
             }
           }
-          actions.push({ label: "Open Purchase Orders", route: "/purchasing", permission: "po.view" });
+          actions.push({
+            label: "Open Purchase Order",
+            route: docData.id ? `/purchase-orders/${docData.id}` : "/purchase-orders",
+            permission: "po.view",
+          });
         } else if (docData.type === "invoice") {
           markdown = `## Sales Invoice: ${docData.number}\n\n`;
           markdown += `**Customer:** ${docData.party} | **Status:** \`${docData.status}\` | **Date:** ${docData.date}\n\n`;
@@ -617,12 +741,21 @@ export class AutonomousAgentService {
           for (const l of docData.lines || []) {
             markdown += `- **${l.product}**: Billed **${l.billed}**, Dispatched **${l.dispatched}** (Remaining: **${l.remaining} ${l.unit}**)\n`;
           }
-          actions.push({
-            label: "Create Dispatch Outward",
-            route: "/dispatch/new",
-            params: { invoiceNumber: docData.number },
-            permission: "dispatch.create",
-          });
+          if (docData.id) {
+            actions.push({
+              label: "Open Invoice",
+              route: `/invoices/${docData.id}`,
+              permission: "invoice.view",
+            });
+          }
+          if (docData.id && docData.status !== "CANCELLED" && docData.status !== "COMPLETE") {
+            actions.push({
+              label: "Create Dispatch Outward",
+              route: "/dispatches/new",
+              params: { invoiceId: docData.id },
+              permission: "dispatch.create",
+            });
+          }
           actions.push({ label: "View Invoices", route: "/invoices", permission: "invoice.view" });
         } else {
           markdown = `## Dispatch Outward: ${docData.number}\n\n`;
@@ -632,7 +765,11 @@ export class AutonomousAgentService {
           for (const l of docData.lines || []) {
             markdown += `- **${l.product}**: Batch \`${l.batch}\` (Exp: ${l.expiryDate || "None"}), Qty: **${l.quantity} ${l.baseUnit}**\n`;
           }
-          actions.push({ label: "View Dispatches", route: "/dispatch", permission: "dispatch.view" });
+          actions.push({
+            label: "Open Dispatch",
+            route: docData.id ? `/dispatches/${docData.id}` : "/dispatches",
+            permission: "dispatch.view",
+          });
         }
         sources.push("Operational Document Registry");
         break;
@@ -658,7 +795,7 @@ export class AutonomousAgentService {
           markdown += `✅ All active products currently meet or exceed configured reorder safety levels.\n`;
         }
 
-        actions.push({ label: "Create Purchase Order", route: "/purchasing/new", permission: "po.manage" });
+        actions.push({ label: "Create Purchase Order", route: "/purchase-orders/new", permission: "po.manage" });
         actions.push({ label: "Stock Alerts Overview", route: "/dashboard", permission: "dashboard.view" });
         sources.push("Automated Reorder Rule Engine & Alert Monitor");
         break;
@@ -704,9 +841,9 @@ export class AutonomousAgentService {
           markdown += `_No active inventory stock currently on hand._\n`;
         }
 
-        actions.push({ label: "Create Outward Dispatch", route: "/dispatch/new", permission: "dispatch.create" });
-        actions.push({ label: "Create Purchase Order", route: "/purchasing/new", permission: "po.manage" });
-        actions.push({ label: "View Ledger History", route: "/stock/ledger", permission: "ledger.view" });
+        actions.push({ label: "Create Outward Dispatch", route: "/dispatches/new", permission: "dispatch.create" });
+        actions.push({ label: "Create Purchase Order", route: "/purchase-orders/new", permission: "po.manage" });
+        actions.push({ label: "View Ledger History", route: "/ledger", permission: "ledger.view" });
         sources.push("Live Stock Balance & Cryptographic Ledger");
         break;
       }

@@ -22,28 +22,29 @@ const DEMO_PO_NUMBER = "DEMO-PO-001";
 const DEMO_GRN_NUMBER = "DEMO-GRN-001";
 const DEMO_INV_NUMBER = "DEMO-INV-001";
 const DEMO_BATCH_NUMBER = "DEMO-BATCH-2026A";
+const DEMO_HSN_CODE = "100630";
 
 export async function getSandboxStatus(): Promise<SandboxStatus> {
-  const [sku, po, grn, inv, balance] = await Promise.all([
+  const [sku, po, grn, inv, stock] = await Promise.all([
     prisma.sku.findUnique({ where: { code: DEMO_SKU_CODE } }),
     prisma.purchaseOrder.findUnique({ where: { poNumber: DEMO_PO_NUMBER } }),
     prisma.grn.findUnique({ where: { grnNumber: DEMO_GRN_NUMBER } }),
     prisma.invoice.findUnique({ where: { invoiceNumber: DEMO_INV_NUMBER } }),
-    prisma.stockBalance.findFirst({
-      where: {
-        sku: { code: DEMO_SKU_CODE },
-      },
+    prisma.stockBalance.aggregate({
+      where: { sku: { code: DEMO_SKU_CODE }, quantity: { gt: 0 } },
+      _sum: { quantity: true },
     }),
   ]);
 
-  const hasDemoData = Boolean(sku || po || grn || inv);
+  const demoStockBags = Number(stock._sum.quantity ?? 0);
+  const hasDemoData = Boolean(sku || po || grn || inv || demoStockBags > 0);
   return {
     hasDemoData,
     demoSkuCount: sku ? 1 : 0,
     demoPoCount: po ? 1 : 0,
     demoGrnCount: grn ? 1 : 0,
     demoInvoiceCount: inv ? 1 : 0,
-    demoStockBags: balance ? Number(balance.quantity) : 0,
+    demoStockBags,
   };
 }
 
@@ -84,7 +85,18 @@ export async function seedSandboxData(actor: Actor): Promise<{ success: boolean;
       });
     }
 
-    // 4. Create or find SKU
+    // 4. Resolve HSN code and create or find SKU
+    let hsn = await tx.hsnCode.findUnique({ where: { code: DEMO_HSN_CODE } });
+    if (!hsn) {
+      hsn = await tx.hsnCode.create({
+        data: {
+          code: DEMO_HSN_CODE,
+          description: "Basmati rice, whether or not husked",
+          gstRate: toDecimal("5.00"),
+        },
+      });
+    }
+
     let sku = await tx.sku.findUnique({ where: { code: DEMO_SKU_CODE } });
     if (!sku) {
       sku = await tx.sku.create({
@@ -94,7 +106,7 @@ export async function seedSandboxData(actor: Actor): Promise<{ success: boolean;
           description: "Premium aged long-grain basmati rice in 10kg sealed bag",
           baseUomId: uom.id,
           categoryId: category?.id,
-          hsnCode: "100630",
+          hsnCode: hsn.code,
           gstRate: toDecimal("5.00"),
           isBatchTracked: true,
           status: "ACTIVE",
@@ -160,7 +172,7 @@ export async function seedSandboxData(actor: Actor): Promise<{ success: boolean;
                 receivedQty: toDecimal("100"),
                 rate: toDecimal("650.00"),
                 gstRate: toDecimal("5.00"),
-                hsnCode: "100630",
+                hsnCode: hsn.code,
               },
             ],
           },
@@ -208,23 +220,13 @@ export async function seedSandboxData(actor: Actor): Promise<{ success: boolean;
           createdById: actor.userId,
           status: "POSTED",
           receivedAt: new Date(),
-          items: {
-            create: [
-              {
-                purchaseOrderItemId: poItemId,
-                skuId: sku.id,
-                batchId: batch.id,
-                receivedQty: toDecimal("100"),
-                acceptedQty: toDecimal("100"),
-                rejectedQty: toDecimal("0"),
-              },
-            ],
-          },
         },
       });
 
-      // Post immutable inward movement to update stock_balance and ledger
-      await postMovement(tx, actor, {
+      // Post immutable inward movement to update stock_balance and ledger.
+      // The GRN line must then point at that entry: a check constraint requires
+      // accepted_qty > 0 exactly when ledger_entry_id is present.
+      const entry = await postMovement(tx, actor, {
         movementType: "INWARD",
         quantity: toDecimal("100"),
         reference: {
@@ -238,6 +240,34 @@ export async function seedSandboxData(actor: Actor): Promise<{ success: boolean;
           batchId: batch.id,
         },
         remarks: "Demo Sandbox Goods Receipt Inward",
+      });
+
+      await tx.grnItem.create({
+        data: {
+          grnId: grn.id,
+          purchaseOrderItemId: poItemId,
+          skuId: sku.id,
+          batchId: batch.id,
+          receivedQty: toDecimal("100"),
+          acceptedQty: toDecimal("100"),
+          rejectedQty: toDecimal("0"),
+          ledgerEntryId: entry.id,
+        },
+      });
+
+      await tx.purchaseOrderItem.update({
+        where: { id: poItemId },
+        data: { receivedQty: toDecimal("100") },
+      });
+    }
+
+    // The demo PO is received in full by the seeded GRN. Keep the status
+    // consistent with the received quantity shown on the document.
+    if (po.status !== "FULLY_RECEIVED") {
+      po = await tx.purchaseOrder.update({
+        where: { id: po.id },
+        data: { status: "FULLY_RECEIVED" },
+        include: { items: true },
       });
     }
 
@@ -286,6 +316,9 @@ export async function seedSandboxData(actor: Actor): Promise<{ success: boolean;
 
 export async function purgeSandboxData(actor: Actor): Promise<{ success: boolean; purgedCount: number }> {
   return withTx(async (tx: Tx) => {
+    // The ledger trigger only permits deleting rows for the reserved demo SKU
+    // inside this transaction-local sandbox mode.
+    await tx.$executeRawUnsafe("SET LOCAL margix.sandbox_purge = 'on'");
     let purged = 0;
 
     // 1. Find demo SKU & Godown
@@ -299,15 +332,28 @@ export async function purgeSandboxData(actor: Actor): Promise<{ success: boolean
       where: {
         OR: [
           { outwardNumber: { startsWith: "DEMO-" } },
-          sku ? { items: { some: { skuId: sku.id } } } : {},
+          ...(sku ? [{ items: { some: { skuId: sku.id } } }] : []),
         ],
       },
       select: { id: true },
     });
     if (outwards.length > 0) {
       const ids = outwards.map((o) => o.id);
-      await tx.inventoryLedger.deleteMany({ where: { referenceType: "DISPATCH", referenceId: { in: ids } } });
+      const returns = await tx.salesReturn.findMany({
+        where: { outwardId: { in: ids } },
+        select: { id: true },
+      });
+      if (returns.length > 0) {
+        const returnIds = returns.map((r) => r.id);
+        await tx.salesReturnItem.deleteMany({ where: { salesReturnId: { in: returnIds } } });
+        await tx.inventoryLedger.deleteMany({
+          where: { referenceType: "SALES_RETURN", referenceId: { in: returnIds } },
+        });
+        await tx.salesReturn.deleteMany({ where: { id: { in: returnIds } } });
+      }
+      // OutwardItem holds the ledger FK, so remove the item before its entry.
       await tx.outwardItem.deleteMany({ where: { outwardId: { in: ids } } });
+      await tx.inventoryLedger.deleteMany({ where: { referenceType: "DISPATCH", referenceId: { in: ids } } });
       const delOut = await tx.outward.deleteMany({ where: { id: { in: ids } } });
       purged += delOut.count;
     }
@@ -317,7 +363,7 @@ export async function purgeSandboxData(actor: Actor): Promise<{ success: boolean
       where: {
         OR: [
           { invoiceNumber: { startsWith: "DEMO-" } },
-          sku ? { items: { some: { skuId: sku.id } } } : {},
+          ...(sku ? [{ items: { some: { skuId: sku.id } } }] : []),
         ],
       },
       select: { id: true },
@@ -334,15 +380,28 @@ export async function purgeSandboxData(actor: Actor): Promise<{ success: boolean
       where: {
         OR: [
           { grnNumber: { startsWith: "DEMO-" } },
-          sku ? { items: { some: { skuId: sku.id } } } : {},
+          ...(sku ? [{ items: { some: { skuId: sku.id } } }] : []),
         ],
       },
       select: { id: true },
     });
     if (grns.length > 0) {
       const ids = grns.map((g) => g.id);
-      await tx.inventoryLedger.deleteMany({ where: { referenceType: "GRN", referenceId: { in: ids } } });
+      const returns = await tx.purchaseReturn.findMany({
+        where: { grnId: { in: ids } },
+        select: { id: true },
+      });
+      if (returns.length > 0) {
+        const returnIds = returns.map((r) => r.id);
+        await tx.purchaseReturnItem.deleteMany({ where: { purchaseReturnId: { in: returnIds } } });
+        await tx.inventoryLedger.deleteMany({
+          where: { referenceType: "PURCHASE_RETURN", referenceId: { in: returnIds } },
+        });
+        await tx.purchaseReturn.deleteMany({ where: { id: { in: returnIds } } });
+      }
+      // GrnItem may hold the ledger FK, so remove the item before its entry.
       await tx.grnItem.deleteMany({ where: { grnId: { in: ids } } });
+      await tx.inventoryLedger.deleteMany({ where: { referenceType: "GRN", referenceId: { in: ids } } });
       const delGrn = await tx.grn.deleteMany({ where: { id: { in: ids } } });
       purged += delGrn.count;
     }
@@ -352,7 +411,7 @@ export async function purgeSandboxData(actor: Actor): Promise<{ success: boolean
       where: {
         OR: [
           { poNumber: { startsWith: "DEMO-" } },
-          sku ? { items: { some: { skuId: sku.id } } } : {},
+          ...(sku ? [{ items: { some: { skuId: sku.id } } }] : []),
         ],
       },
       select: { id: true },
@@ -364,8 +423,49 @@ export async function purgeSandboxData(actor: Actor): Promise<{ success: boolean
       purged += delPo.count;
     }
 
-    // 6. Delete Stock Balances and Batches for demo SKU
+    // 6. Delete Stock Balances, batches and any remaining demo-only lines
     if (sku) {
+      // Opening balances, adjustments and transfers also hold ledger FKs.
+      // Remove their demo lines before the ledger rows, then drop any document
+      // that is left with no lines at all.
+      const [openingIds, adjustmentIds, transferIds] = await Promise.all([
+        tx.openingBalanceItem
+          .findMany({ where: { skuId: sku.id }, select: { openingBalanceId: true } })
+          .then((rows) => [...new Set(rows.map((r) => r.openingBalanceId))]),
+        tx.adjustmentItem
+          .findMany({ where: { skuId: sku.id }, select: { adjustmentId: true } })
+          .then((rows) => [...new Set(rows.map((r) => r.adjustmentId))]),
+        tx.transferItem
+          .findMany({ where: { skuId: sku.id }, select: { transferId: true } })
+          .then((rows) => [...new Set(rows.map((r) => r.transferId))]),
+      ]);
+
+      await Promise.all([
+        tx.salesReturnItem.deleteMany({ where: { skuId: sku.id } }),
+        tx.purchaseReturnItem.deleteMany({ where: { skuId: sku.id } }),
+        tx.openingBalanceItem.deleteMany({ where: { skuId: sku.id } }),
+        tx.adjustmentItem.deleteMany({ where: { skuId: sku.id } }),
+        tx.transferItem.deleteMany({ where: { skuId: sku.id } }),
+      ]);
+
+      await Promise.all([
+        openingIds.length > 0
+          ? tx.openingBalance.deleteMany({
+              where: { id: { in: openingIds }, items: { none: {} } },
+            })
+          : Promise.resolve({ count: 0 }),
+        adjustmentIds.length > 0
+          ? tx.adjustment.deleteMany({
+              where: { id: { in: adjustmentIds }, items: { none: {} } },
+            })
+          : Promise.resolve({ count: 0 }),
+        transferIds.length > 0
+          ? tx.transfer.deleteMany({
+              where: { id: { in: transferIds }, items: { none: {} } },
+            })
+          : Promise.resolve({ count: 0 }),
+      ]);
+
       await tx.inventoryLedger.deleteMany({ where: { skuId: sku.id } });
       await tx.stockBalance.deleteMany({ where: { skuId: sku.id } });
       await tx.stockAlert.deleteMany({ where: { skuId: sku.id } });
@@ -381,10 +481,17 @@ export async function purgeSandboxData(actor: Actor): Promise<{ success: boolean
     ]);
     purged += delCust.count + delSupp.count;
 
-    // 8. Delete Godown if no other stock
+    // 8. Delete Godown when no stock or document still references it
     if (godown) {
-      const remainingBalances = await tx.stockBalance.count({ where: { godownId: godown.id } });
-      if (remainingBalances === 0) {
+      const [remainingBalances, openingDocs, adjustmentDocs, transferDocs] = await Promise.all([
+        tx.stockBalance.count({ where: { godownId: godown.id } }),
+        tx.openingBalance.count({ where: { godownId: godown.id } }),
+        tx.adjustment.count({ where: { godownId: godown.id } }),
+        tx.transfer.count({
+          where: { OR: [{ fromGodownId: godown.id }, { toGodownId: godown.id }] },
+        }),
+      ]);
+      if (remainingBalances === 0 && openingDocs === 0 && adjustmentDocs === 0 && transferDocs === 0) {
         await tx.godown.delete({ where: { id: godown.id } });
         purged += 1;
       }

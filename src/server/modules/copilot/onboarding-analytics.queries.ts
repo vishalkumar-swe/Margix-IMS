@@ -103,18 +103,20 @@ export async function getOnboardingAnalytics(): Promise<OnboardingAnalyticsSumma
     const roleCode = u.role.code;
     const requiredMilestones = visibleMilestones(roleCode);
     const completedSet = userMilestoneMap.get(u.id) ?? new Set<string>();
-    
-    // Fallback: If user completed the tour or is ADMIN who performed primary operations, mark base milestones
+    const tourCompleted = userCompletedDates.has(u.id);
+
+    // Finishing the guided tour certifies every milestone the role can see;
+    // otherwise count the milestone events recorded by the progress route.
     const completedList = requiredMilestones
       .map((m) => m.id)
-      .filter((id) => completedSet.has(id));
+      .filter((id) => tourCompleted || completedSet.has(id));
 
     const total = requiredMilestones.length || 1;
     const count = completedList.length;
     const percentage = Math.round((count / total) * 100);
 
     let status: "COMPLETED" | "IN_PROGRESS" | "NOT_STARTED" = "NOT_STARTED";
-    if (percentage === 100 || userCompletedDates.has(u.id)) {
+    if (percentage === 100 || tourCompleted) {
       status = "COMPLETED";
     } else if (percentage > 0) {
       status = "IN_PROGRESS";
@@ -186,12 +188,21 @@ export async function getOnboardingAnalytics(): Promise<OnboardingAnalyticsSumma
   const totalUsers = teamMembers.length;
   const completedUsers = teamMembers.filter((m) => m.status === "COMPLETED").length;
   const overallCompletionRate = totalUsers > 0 ? Math.round((completedUsers / totalUsers) * 100) : 0;
+  const completionDays = users.flatMap((user) => {
+    const completedAt = userCompletedDates.get(user.id);
+    if (!completedAt) return [];
+    return [Math.max(0, (completedAt.getTime() - user.createdAt.getTime()) / 86_400_000)];
+  });
+  const averageDaysToComplete =
+    completionDays.length > 0
+      ? Math.round((completionDays.reduce((sum, days) => sum + days, 0) / completionDays.length) * 10) / 10
+      : 0;
 
   return {
     totalUsers,
     completedUsers,
     overallCompletionRate,
-    averageDaysToComplete: 1.4, // Industry standard TTFS metric for Margix
+    averageDaysToComplete,
     roles,
     funnel,
     teamMembers,

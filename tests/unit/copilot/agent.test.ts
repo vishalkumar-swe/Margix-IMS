@@ -47,4 +47,40 @@ describe("AutonomousAgentService", () => {
     expect(plan.intent).toBe("stock_check");
     expect(plan.steps[1].toolName).toBe("check_stock");
   });
+
+  it("does not invent an invoice number when the user did not provide one", () => {
+    const plan = AutonomousAgentService.planIntent("can we dispatch right now?", context);
+    expect(plan.intent).toBe("dispatch_readiness");
+    expect(plan.steps).toHaveLength(0);
+  });
+
+  it("sends conceptual stock questions to the knowledge base", () => {
+    const plan = AutonomousAgentService.planIntent("how does stock work?", context);
+    expect(plan.intent).toBe("general_operational");
+    expect(plan.steps[0].toolName).toBe("get_workspace_summary");
+  });
+
+  it("keeps a product code intact in a FEFO request", () => {
+    const plan = AutonomousAgentService.planIntent("fefo pick list for BASMATI-01", context);
+    expect(plan.intent).toBe("fefo_allocation");
+    expect(plan.steps[1].arguments).toMatchObject({ product: "BASMATI-01", quantity: 10 });
+  });
+
+  it("does not mangle a product name or trailing punctuation", () => {
+    const plan = AutonomousAgentService.planIntent("show me stock of Coffee?", context);
+    expect(plan.intent).toBe("stock_check");
+    expect(plan.steps[1].arguments).toMatchObject({ product: "Coffee" });
+  });
+
+  it("checks invoice status without treating it as a dispatch request", () => {
+    const plan = AutonomousAgentService.planIntent("what is the status of invoice INV-2026-0001?", context);
+    expect(plan.intent).toBe("document_status");
+    expect(plan.steps[0].arguments).toMatchObject({ type: "invoice", number: "INV-2026-0001" });
+  });
+
+  it("does not invent a purchase order number", () => {
+    const plan = AutonomousAgentService.planIntent("show me my purchase order", context);
+    expect(plan.intent).toBe("document_status");
+    expect(plan.steps).toHaveLength(0);
+  });
 });

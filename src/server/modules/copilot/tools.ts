@@ -142,14 +142,15 @@ interface ProductRef {
   baseUom: { code: string };
 }
 
-function toolError(message: string): string {
-  return JSON.stringify({ error: message });
-}
-
-/** Keeps a tool result inside the prompt budget without losing the JSON shape. */
+/** Keeps a tool result inside the prompt budget without emitting invalid JSON. */
 export function serializeToolResult(value: unknown): string {
   const text = JSON.stringify(value ?? null);
-  return text.length > MAX_TOOL_RESULT_LENGTH ? `${text.slice(0, MAX_TOOL_RESULT_LENGTH)}…` : text;
+  if (text.length <= MAX_TOOL_RESULT_LENGTH) return text;
+  return JSON.stringify({
+    truncated: true,
+    note: "Result too large for the prompt. Narrow the query or ask for a specific document/product.",
+    preview: text.slice(0, MAX_TOOL_RESULT_LENGTH),
+  });
 }
 
 function productLabel(product: { code: string; name: string }): string {
@@ -316,7 +317,11 @@ const TOOLS: CopilotTool[] = [
           batch: { select: { batchNumber: true, expiryDate: true } },
         },
       });
-      const total = rows.reduce((sum, row) => sum.plus(row.quantity), ZERO);
+      const totalRow = await prisma.stockBalance.aggregate({
+        where: { skuId: product.id, godownId: godown?.id, quantity: { gt: 0 } },
+        _sum: { quantity: true },
+      });
+      const total = totalRow._sum.quantity ?? ZERO;
 
       return {
         product: { code: product.code, name: product.name, baseUnit: product.baseUom.code },
@@ -534,7 +539,7 @@ const TOOLS: CopilotTool[] = [
       if (godownQuery && !godown) return { error: `No godown matched "${godownQuery}".` };
 
       const now = dateOnlyToUtc(todayIst());
-      const rows = await prisma.stockBalance.findMany({
+      const allRows = await prisma.stockBalance.findMany({
         where: {
           skuId: product.id,
           godownId: godown?.id,
@@ -542,13 +547,47 @@ const TOOLS: CopilotTool[] = [
           OR: [{ batch: { expiryDate: null } }, { batch: { expiryDate: { gte: now } } }],
         },
         orderBy: [{ batch: { expiryDate: { sort: "asc", nulls: "last" } } }, { quantity: "desc" }],
-        take: 30,
+        take: 200,
         select: {
           quantity: true,
-          godown: { select: { code: true, name: true } },
+          godown: { select: { id: true, code: true, name: true } },
           batch: { select: { batchNumber: true, expiryDate: true } },
         },
       });
+
+      // A dispatch is posted from one godown. When no godown is named, choose
+      // the earliest-expiring godown that can cover the whole request, or the
+      // largest one so the shortfall is measured against a real pick face.
+      const groups = new Map<
+        string,
+        { code: string; name: string; quantity: Decimal; rows: typeof allRows }
+      >();
+      for (const row of allRows) {
+        const group = groups.get(row.godown.id) ?? {
+          code: row.godown.code,
+          name: row.godown.name,
+          quantity: ZERO,
+          rows: [],
+        };
+        group.quantity = group.quantity.plus(row.quantity);
+        group.rows.push(row);
+        groups.set(row.godown.id, group);
+      }
+      const requested = new Decimal(quantity);
+      const orderedGroups = [...groups.values()].sort((a, b) => {
+        if (a.quantity.gte(requested) !== b.quantity.gte(requested)) {
+          return a.quantity.gte(requested) ? -1 : 1;
+        }
+        if (a.quantity.gte(requested)) {
+          const aExpiry = a.rows[0]?.batch.expiryDate?.getTime() ?? Number.MAX_SAFE_INTEGER;
+          const bExpiry = b.rows[0]?.batch.expiryDate?.getTime() ?? Number.MAX_SAFE_INTEGER;
+          return aExpiry - bExpiry;
+        }
+        return b.quantity.comparedTo(a.quantity);
+      });
+      const selected = orderedGroups[0];
+      const rows = (selected?.rows ?? []).slice(0, 30);
+      const warehouseTotal = allRows.reduce((sum, row) => sum.plus(row.quantity), ZERO);
 
       let needed = new Decimal(quantity);
       const allocations: Array<{
@@ -580,14 +619,19 @@ const TOOLS: CopilotTool[] = [
 
       return {
         product: { code: product.code, name: product.name, unit: product.baseUom.code },
+        godown: selected ? `${selected.code} — ${selected.name}` : null,
+        godownAvailableQty: selected?.quantity.toString() ?? "0",
+        warehouseAvailableQty: warehouseTotal.toString(),
         requestedQty: quantity.toString(),
         allocatedQty: totalAllocated.toString(),
         shortfallQty: needed.toString(),
         status: isFulfilled ? "FULLY_ALLOCATED" : "INSUFFICIENT_STOCK",
         pickList: allocations,
         recommendation: isFulfilled
-          ? `Allocate ${totalAllocated.toString()} ${product.baseUom.code} across ${allocations.length} FEFO batch(es). Earliest expiring batch picked first.`
-          : `Shortfall of ${needed.toString()} ${product.baseUom.code}. Only ${totalAllocated.toString()} available in unexpired batches.`,
+          ? `Pick ${totalAllocated.toString()} ${product.baseUom.code} from godown ${selected?.code} across ${allocations.length} FEFO batch(es). Earliest expiring batch picked first.`
+          : groups.size > 1
+            ? `No single godown covers ${quantity} ${product.baseUom.code}. The best godown (${selected?.code}) has ${selected?.quantity.toString()}; transfer or inward stock before dispatching.`
+            : `Shortfall of ${needed.toString()} ${product.baseUom.code}. Only ${totalAllocated.toString()} available in unexpired batches.`,
       };
     },
   },
@@ -648,7 +692,7 @@ const TOOLS: CopilotTool[] = [
             quantity: r.quantity.toString(),
             unit: r.sku.baseUom.code,
             daysLeft,
-            status: daysLeft <= 0 ? "EXPIRED" : daysLeft <= 30 ? "CRITICAL_NEAR_EXPIRY" : "APPROACHING_EXPIRY",
+            status: daysLeft < 0 ? "EXPIRED" : daysLeft === 0 ? "EXPIRES_TODAY" : daysLeft <= 30 ? "CRITICAL_NEAR_EXPIRY" : "APPROACHING_EXPIRY",
           };
         }),
       };
@@ -678,7 +722,7 @@ const TOOLS: CopilotTool[] = [
           name: true,
           address: true,
           tallySyncEnabled: true,
-          _count: { select: { stockBalances: true } },
+          _count: { select: { stockBalances: { where: { quantity: { gt: 0 } } } } },
         },
       });
 
@@ -784,7 +828,65 @@ const TOOLS: CopilotTool[] = [
 
       const now = dateOnlyToUtc(todayIst());
       const lineChecks = [];
-      let overallReady = true;
+      let hasRemaining = false;
+
+      // Lines share stock when the same SKU appears twice, so compare total
+      // required quantity per SKU. A dispatch is posted from one godown, so a
+      // SKU is only ready if a single godown can cover all its lines.
+      const requiredBySku = new Map<string, Decimal>();
+      for (const item of detail.items) {
+        const remaining = item.quantity.minus(item.dispatchedQty);
+        if (remaining.lte(0)) continue;
+        requiredBySku.set(item.skuId, (requiredBySku.get(item.skuId) ?? ZERO).plus(remaining));
+      }
+
+      const stockBySku = new Map<
+        string,
+        Map<string, { quantity: Decimal; code: string; name: string }>
+      >();
+      for (const [skuId] of requiredBySku) {
+        const stockRows = await prisma.stockBalance.findMany({
+          where: {
+            skuId,
+            quantity: { gt: 0 },
+            OR: [{ batch: { expiryDate: null } }, { batch: { expiryDate: { gte: now } } }],
+          },
+          select: {
+            quantity: true,
+            godown: { select: { id: true, code: true, name: true } },
+          },
+        });
+        const byGodown = new Map<string, { quantity: Decimal; code: string; name: string }>();
+        for (const row of stockRows) {
+          const entry = byGodown.get(row.godown.id) ?? {
+            quantity: ZERO,
+            code: row.godown.code,
+            name: row.godown.name,
+          };
+          entry.quantity = entry.quantity.plus(row.quantity);
+          byGodown.set(row.godown.id, entry);
+        }
+        stockBySku.set(skuId, byGodown);
+      }
+
+      // Intersect godowns that can cover every required SKU.
+      let eligibleGodowns: Map<string, { code: string; name: string }> | null = null;
+      for (const [skuId, required] of requiredBySku) {
+        const byGodown = stockBySku.get(skuId) ?? new Map();
+        const eligible = new Map(
+          [...byGodown.entries()]
+            .filter(([, entry]) => entry.quantity.gte(required))
+            .map(([id, entry]) => [id, { code: entry.code, name: entry.name }]),
+        );
+        if (eligibleGodowns === null) {
+          eligibleGodowns = eligible;
+        } else {
+          for (const id of [...eligibleGodowns.keys()]) {
+            if (!eligible.has(id)) eligibleGodowns.delete(id);
+          }
+        }
+      }
+      const recommendedGodown = eligibleGodowns?.values().next().value ?? null;
 
       for (const item of detail.items) {
         const remaining = item.quantity.minus(item.dispatchedQty);
@@ -794,46 +896,61 @@ const TOOLS: CopilotTool[] = [
             billed: item.quantity.toString(),
             dispatched: item.dispatchedQty.toString(),
             remaining: "0",
-            availableStock: "0",
+            availableUnexpiredStock: "0",
+            unit: item.sku.baseUom.code,
             status: "ALREADY_DISPATCHED",
           });
           continue;
         }
 
-        const stockRows = await prisma.stockBalance.findMany({
-          where: {
-            skuId: item.skuId,
-            quantity: { gt: 0 },
-            OR: [{ batch: { expiryDate: null } }, { batch: { expiryDate: { gte: now } } }],
-          },
-          select: { quantity: true },
-        });
-
-        const totalStock = stockRows.reduce((sum, r) => sum.plus(r.quantity), ZERO);
-        const canFulfill = totalStock.gte(remaining);
-        if (!canFulfill) overallReady = false;
+        hasRemaining = true;
+        const byGodown = stockBySku.get(item.skuId) ?? new Map();
+        const totalRequired = requiredBySku.get(item.skuId) ?? remaining;
+        let bestGodownQty = ZERO;
+        for (const entry of byGodown.values()) {
+          if (entry.quantity.gt(bestGodownQty)) bestGodownQty = entry.quantity;
+        }
+        const canFulfill = bestGodownQty.gte(totalRequired);
 
         lineChecks.push({
           product: productLabel(item.sku),
           billed: item.quantity.toString(),
           dispatched: item.dispatchedQty.toString(),
           remaining: remaining.toString(),
-          availableUnexpiredStock: totalStock.toString(),
-          unit: item.entryUom?.code ?? item.sku.baseUom.code,
+          availableUnexpiredStock: bestGodownQty.toString(),
+          unit: item.sku.baseUom.code,
           canFulfill,
           status: canFulfill ? "READY" : "SHORTAGE",
         });
       }
 
+      const cancelled = detail.status === "CANCELLED";
+      const canDispatch = (eligibleGodowns?.size ?? 0) > 0;
+      const overallReadiness = cancelled
+        ? "CANCELLED"
+        : !hasRemaining
+          ? "FULLY_DISPATCHED"
+          : canDispatch
+            ? "READY_TO_DISPATCH"
+            : "STOCK_SHORTAGE";
+
       return {
+        invoiceId: detail.id,
         invoiceNumber: detail.invoiceNumber,
         customer: detail.customer.name,
         invoiceStatus: detail.status,
-        overallReadiness: overallReady ? "READY_TO_DISPATCH" : "STOCK_SHORTAGE",
+        overallReadiness,
+        recommendedGodown: recommendedGodown
+          ? `${recommendedGodown.code} — ${recommendedGodown.name}`
+          : null,
         lines: lineChecks,
-        recommendedAction: overallReady
-          ? `Proceed to create dispatch outward for invoice ${detail.invoiceNumber}. Unexpired stock is available.`
-          : `Stock shortage detected. Procure or inward remaining quantities before dispatching.`,
+        recommendedAction: cancelled
+          ? `Invoice ${detail.invoiceNumber} is cancelled. Do not dispatch against it.`
+          : !hasRemaining
+            ? `Invoice ${detail.invoiceNumber} is already fully dispatched. There is nothing left to pick.`
+            : canDispatch && recommendedGodown
+              ? `Proceed to create dispatch outward for invoice ${detail.invoiceNumber} from godown ${recommendedGodown.code}. Unexpired stock covers every line.`
+              : `No single godown currently covers all remaining lines. Transfer or inward stock before dispatching.`,
       };
     },
   },
@@ -878,7 +995,7 @@ const TOOLS: CopilotTool[] = [
             godown: a.godown.code,
             currentStock: a.currentQty.toString(),
             reorderLevel: a.thresholdQty.toString(),
-            recommendedMinimumOrder: Decimal.max(deficit, new Decimal(10)).toString(),
+            recommendedMinimumOrder: (deficit.gt(0) ? deficit : a.thresholdQty).toString(),
             unit: a.sku.baseUom.code,
           };
         }),
@@ -900,35 +1017,52 @@ export function copilotToolsForRole(role: RoleCode): OpenAiTool[] {
   }));
 }
 
-/** Runs one tool call. Every failure becomes data for the model, never a 500. */
-export async function executeCopilotTool(
+/**
+ * Runs one tool call and returns its raw result. Failures become `{ error }`
+ * data, never a 500. Internal callers use this so long results are not cut by
+ * the prompt-size serialiser.
+ */
+export async function executeCopilotToolData(
   name: string,
   rawArguments: string,
   context: CopilotToolContext,
-): Promise<string> {
+): Promise<unknown> {
   const tool = TOOL_BY_NAME.get(name);
-  if (!tool) return toolError(`Unknown tool "${name}".`);
-  if (!can(context.role, tool.permission)) return toolError("Your role cannot access that data.");
+  if (!tool) return { error: `Unknown tool "${name}".` };
+  if (!can(context.role, tool.permission)) return { error: "Your role cannot access that data." };
 
   let args: unknown;
   try {
     args = rawArguments.trim() ? JSON.parse(rawArguments) : {};
   } catch {
-    return toolError("Arguments were not valid JSON.");
+    return { error: "Arguments were not valid JSON." };
   }
 
   try {
-    return serializeToolResult(await tool.execute(args, context));
+    return await tool.execute(args, context);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return toolError(error.issues.map((issue) => `${issue.path.join(".") || "arguments"}: ${issue.message}`).join("; "));
+      return {
+        error: error.issues
+          .map((issue) => `${issue.path.join(".") || "arguments"}: ${issue.message}`)
+          .join("; "),
+      };
     }
     logger.warn("copilot tool failed", {
       tool: name,
       err: error instanceof Error ? error.message : String(error),
     });
-    return toolError("The lookup failed. Answer from general Margix guidance and suggest the relevant screen.");
+    return { error: "The lookup failed. Answer from general Margix guidance and suggest the relevant screen." };
   }
+}
+
+/** Runs one tool call and serialises the result for the model. */
+export async function executeCopilotTool(
+  name: string,
+  rawArguments: string,
+  context: CopilotToolContext,
+): Promise<string> {
+  return serializeToolResult(await executeCopilotToolData(name, rawArguments, context));
 }
 
 async function documentStatus(type: DocumentType, number: string): Promise<unknown> {
@@ -942,6 +1076,7 @@ async function documentStatus(type: DocumentType, number: string): Promise<unkno
     if (!order) return { error: `No purchase order found with number "${number}".` };
     return {
       type,
+      id: order.id,
       number: order.poNumber,
       status: order.status,
       party: order.supplier.name,
@@ -952,7 +1087,7 @@ async function documentStatus(type: DocumentType, number: string): Promise<unkno
         ordered: item.orderedQty.toString(),
         received: item.receivedQty.toString(),
         pending: item.orderedQty.minus(item.receivedQty).toString(),
-        unit: item.entryUom?.code ?? item.sku.baseUom.code,
+        unit: item.sku.baseUom.code,
       })),
       receipts: order.grns.map((grn) => ({
         number: grn.grnNumber,
@@ -973,6 +1108,7 @@ async function documentStatus(type: DocumentType, number: string): Promise<unkno
     if (!invoice) return { error: `No invoice found with number "${number}".` };
     return {
       type,
+      id: invoice.id,
       number: invoice.invoiceNumber,
       status: invoice.status,
       party: invoice.customer.name,
@@ -982,7 +1118,7 @@ async function documentStatus(type: DocumentType, number: string): Promise<unkno
         billed: item.quantity.toString(),
         dispatched: item.dispatchedQty.toString(),
         remaining: item.quantity.minus(item.dispatchedQty).toString(),
-        unit: item.entryUom?.code ?? item.sku.baseUom.code,
+        unit: item.sku.baseUom.code,
       })),
       dispatches: invoice.outwards.map((dispatch) => ({
         number: dispatch.outwardNumber,
@@ -1002,6 +1138,7 @@ async function documentStatus(type: DocumentType, number: string): Promise<unkno
   if (!dispatch) return { error: `No dispatch found with number "${number}".` };
   return {
     type,
+    id: dispatch.id,
     number: dispatch.outwardNumber,
     status: dispatch.status,
     party: dispatch.customer?.name ?? null,

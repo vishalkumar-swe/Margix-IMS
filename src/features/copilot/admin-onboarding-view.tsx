@@ -15,7 +15,7 @@ import {
   Users,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
 import { useToast } from "@/components/ui/toast";
@@ -41,7 +41,9 @@ export function AdminOnboardingView({
       await apiRequest("/copilot/sandbox", { method: "POST" });
       const updated = await apiRequest<SandboxStatus>("/copilot/sandbox");
       setSandbox(updated);
-      toast.success("Sandbox demo environment seeded successfully! 100 bags Basmati Rice inwarded & invoice ready.");
+      toast.success(
+        `Sandbox ready: ${updated.demoStockBags} bags of demo stock and an open invoice are available.`,
+      );
     } catch {
       toast.error("Failed to seed sandbox environment");
     } finally {
@@ -66,10 +68,6 @@ export function AdminOnboardingView({
     }
   }
 
-  function handleSendReminder(userName: string) {
-    toast.info(`Onboarding walkthrough reminder sent to ${userName}.`);
-  }
-
   return (
     <div className="space-y-6">
       {/* KPI Stats */}
@@ -81,23 +79,23 @@ export function AdminOnboardingView({
           hint={`${analytics.completedUsers} of ${analytics.totalUsers} certified team members`}
         />
         <StatCard
-          label="Avg Time to First Success"
+          label="Avg Time to Completion"
           value={`${analytics.averageDaysToComplete} Days`}
           icon={Clock}
-          hint="From initial invite to first successful dispatch"
+          hint="From account creation to finishing the guided walkthrough"
         />
         <StatCard
           label="Certified Staff"
           value={analytics.completedUsers}
           icon={Award}
-          hint="Completed all 6 core lifecycle milestones"
+          hint="Completed every visible lifecycle milestone for their role"
         />
         <StatCard
           label="Sandbox Test Environment"
-          value={sandbox.hasDemoData ? "Active (100 Bags)" : "Clean"}
+          value={sandbox.hasDemoData ? `Active (${sandbox.demoStockBags} Bags)` : "Clean"}
           icon={Database}
           tone={sandbox.hasDemoData ? "warning" : "neutral"}
-          hint={sandbox.hasDemoData ? "Demo SKU, PO & Invoice loaded" : "No demo records in database"}
+          hint={sandbox.hasDemoData ? "Demo SKU, PO, GRN & Invoice loaded" : "No demo records in database"}
         />
       </div>
 
@@ -279,13 +277,16 @@ export function AdminOnboardingView({
                   </td>
                   <td className="py-3 px-4 text-right">
                     {member.status !== "COMPLETED" ? (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => handleSendReminder(member.name)}
+                      <a
+                        className={buttonVariants({ variant: "secondary", size: "sm" })}
+                        href={`mailto:${member.email}?subject=${encodeURIComponent(
+                          "Margix walkthrough reminder",
+                        )}&body=${encodeURIComponent(
+                          `Hi ${member.name}, please continue the Margix onboarding walkthrough when you have a moment.`,
+                        )}`}
                       >
-                        Remind
-                      </Button>
+                        Email
+                      </a>
                     ) : (
                       <span className="text-xs text-emerald-600 font-medium">Complete</span>
                     )}

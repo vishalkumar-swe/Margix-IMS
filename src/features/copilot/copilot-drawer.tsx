@@ -97,12 +97,12 @@ export function CopilotDrawer() {
   }
 
   useEffect(() => {
-    if (!floorMode || !voiceSpoken) return;
+    if (!floorMode || !voiceSpoken || pending) return;
     const last = messages[messages.length - 1];
     if (last && last.role === "assistant" && last.content) {
       speakText(last.content);
     }
-  }, [messages, floorMode, voiceSpoken]);
+  }, [messages, floorMode, voiceSpoken, pending]);
 
   useEffect(() => {
     if (!drawerOpen) return;
@@ -196,8 +196,14 @@ export function CopilotDrawer() {
     recognition.onerror = () => setListening(false);
     recognition.onend = () => setListening(false);
     recognitionRef.current = recognition;
-    setListening(true);
-    recognition.start();
+    try {
+      recognition.start();
+      setListening(true);
+    } catch {
+      recognitionRef.current = null;
+      setListening(false);
+      toast.error("Microphone could not start. Check browser permissions.");
+    }
   }
 
   async function handleQuickSeedDemo() {
