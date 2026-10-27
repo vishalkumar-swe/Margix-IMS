@@ -323,6 +323,42 @@ describe("AutonomousAgentService", () => {
       expect(AutonomousAgentService.isOperationalOrConfirmation("can you do a websearch?")).toBe(true);
     });
 
+    it("plans and executes commercial buy/sell deep research with market rates and 1-click actions", async () => {
+      const tradeQueries = [
+        "what is the market price of basmati 1121 and should we buy or sell?",
+        "should we buy or sell basmati rice?",
+        "should i buy or sell wheat today?",
+        "what are the mandi rates for mustard oil?",
+        "check market rates for sugar 50kg bag to buy or sell",
+      ];
+
+      for (const q of tradeQueries) {
+        const plan = AutonomousAgentService.planIntent(q, context);
+        expect(plan.intent).toBe("execute_web_research");
+        expect(plan.steps[0].toolName).toBe("web_research");
+        expect(AutonomousAgentService.isOperationalOrConfirmation(q)).toBe(true);
+      }
+
+      // Execute full plan for Basmati 1121 buy/sell advice
+      const result = await AutonomousAgentService.executePlan(
+        "what is the market price of basmati 1121 and should we buy or sell?",
+        context,
+      );
+
+      expect(result.markdownAnswer).toContain("Market Price Discovery & Trade Recommendation");
+      expect(result.markdownAnswer).toContain("APMC Mandi Rates & Price Discovery");
+      expect(result.markdownAnswer).toContain("Procurement Strategy (BUY Decision)");
+      expect(result.markdownAnswer).toContain("Invoicing & Sales Strategy (SELL Decision)");
+      expect(result.markdownAnswer).toContain("HSN Classification");
+      expect(result.markdownAnswer).toContain("1006 30");
+
+      // Verify 1-click trade action buttons
+      expect(result.actions.some((a) => a.label.includes("Buy: New Purchase Order"))).toBe(true);
+      expect(result.actions.some((a) => a.label.includes("Sell: New Sales Invoice"))).toBe(true);
+      expect(result.actions.some((a) => a.label.includes("Register Master SKU"))).toBe(true);
+      expect(result.actions.some((a) => a.label.includes("Browse HSN Directory"))).toBe(true);
+    });
+
     it("consults on missing slots for 'add a rice' with realistic business questions and chips", async () => {
       const result = await AutonomousAgentService.executePlan("add a rice", context);
       expect(result.markdownAnswer).toContain("Product Variety & Exact Trade Name");
@@ -352,6 +388,51 @@ describe("AutonomousAgentService", () => {
       });
       expect(result.markdownAnswer).toContain("Ready to Register Product");
       expect(result.markdownAnswer).toContain("Basmati Rice 1121");
+    });
+
+    it("plans and executes multi-stage deep research for state-wise basmati rice prices across India", async () => {
+      const prompt =
+        "Do web search to get the prices of basmati rice across india and prepare a list of all the state and put their avg price of basmati rice on that";
+
+      const plan = AutonomousAgentService.planIntent(prompt, context);
+      expect(plan.intent).toBe("execute_web_research");
+      // Multi-stage verification: 3 targeted web_research stages + 1 catalog cross-reference
+      expect(plan.steps.length).toBe(4);
+      expect(plan.steps[0].name).toContain("National Mandi Benchmark");
+      expect(plan.steps[1].name).toContain("Origin Producing Mandis");
+      expect(plan.steps[2].name).toContain("Consumption & Terminal Hubs");
+      expect(plan.steps[3].toolName).toBe("search_products");
+
+      const result = await AutonomousAgentService.executePlan(prompt, context);
+
+      // Verify header and dynamic date
+      expect(result.markdownAnswer).toContain("State-Wise Mandi Price Intelligence");
+      expect(result.markdownAnswer).toContain("Research Date & Timestamp");
+      expect(result.markdownAnswer).toContain("2026");
+
+      // Verify states are present with both Qtl and Kg rates
+      expect(result.markdownAnswer).toContain("Punjab");
+      expect(result.markdownAnswer).toContain("Haryana");
+      expect(result.markdownAnswer).toContain("Uttar Pradesh");
+      expect(result.markdownAnswer).toContain("Rajasthan");
+      expect(result.markdownAnswer).toContain("Madhya Pradesh");
+      expect(result.markdownAnswer).toContain("Delhi NCR");
+      expect(result.markdownAnswer).toContain("Maharashtra");
+      expect(result.markdownAnswer).toContain("West Bengal");
+      expect(result.markdownAnswer).toContain("Karnataka");
+
+      expect(result.markdownAnswer).toContain("/ Qtl");
+      expect(result.markdownAnswer).toContain("/ KG");
+
+      // Verify BUY and SELL strategic decisions
+      expect(result.markdownAnswer).toContain("Procurement Strategy (BUY Decision)");
+      expect(result.markdownAnswer).toContain("Invoicing & Sales Strategy (SELL Decision)");
+
+      // Verify 1-click action buttons
+      expect(result.actions.some((a) => a.label.includes("Buy: New Purchase Order"))).toBe(true);
+      expect(result.actions.some((a) => a.label.includes("Sell: New Sales Invoice"))).toBe(true);
+      expect(result.actions.some((a) => a.label.includes("Register Master SKU"))).toBe(true);
+      expect(result.actions.some((a) => a.label.includes("Browse HSN Directory"))).toBe(true);
     });
   });
 });

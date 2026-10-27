@@ -8,7 +8,7 @@ import { matchesPath } from "@/lib/copilot/tour";
 import { useCopilot } from "./copilot-provider";
 import { MilestoneIconView } from "./milestone-icon";
 
-/** Unobtrusive dock while a walkthrough is active or paused (PRD §7.3). */
+/** Unobtrusive top banner while a walkthrough is active or paused (PRD §7.3). Never blocks controls. */
 export function WalkthroughBar() {
   const pathname = usePathname();
   const {
@@ -31,16 +31,16 @@ export function WalkthroughBar() {
   const onStep = currentStep ? matchesPath(currentStep.path, pathname) : true;
 
   return (
-    <div className="fixed bottom-4 left-4 z-30 w-[calc(100%-2rem)] max-w-md sm:max-w-lg lg:left-72">
-      <div className="glass-strong flex items-center gap-3 rounded-xl border px-3 py-2 shadow-lg">
-        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-700">
+    <div className="border-b border-brand-200 bg-brand-50/95 px-4 py-2 text-slate-800 shadow-xs backdrop-blur-sm transition-all">
+      <div className="mx-auto flex max-w-7xl items-center gap-3">
+        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-brand-100 text-brand-700">
           <MilestoneIconView icon={currentMilestone.icon} className="size-4" />
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs font-semibold text-slate-900">
             {tour.paused ? "Walkthrough paused" : currentMilestone.title}
           </p>
-          <div className="mt-1 flex items-center gap-2">
+          <div className="mt-0.5 flex items-center gap-2">
             <div className="flex items-center gap-1" aria-label={`Step ${tour.stepIndex + 1} of ${currentSteps.length}`}>
               {currentSteps.map((step, index) => (
                 <button
@@ -63,30 +63,31 @@ export function WalkthroughBar() {
           </div>
         </div>
         {!onStep && (
-          <Button variant="secondary" size="sm" onClick={() => moveToStep(tour.stepIndex)} title="Open the step's screen">
+          <Button variant="secondary" size="sm" className="h-7 text-xs" onClick={() => moveToStep(tour.stepIndex)} title="Open the step's screen">
             Go <ArrowRight aria-hidden />
           </Button>
         )}
         <Button
           variant="ghost"
           size="icon"
+          className="size-7"
           onClick={() => openDrawer()}
           aria-label="Ask Copilot or Voice Mode"
           title="Ask Copilot or Voice Mode"
         >
-          <Sparkles className="size-4 text-brand-600" aria-hidden />
+          <Sparkles className="size-3.5 text-brand-600" aria-hidden />
         </Button>
         {tour.paused ? (
-          <Button size="sm" onClick={resumeTour}>
-            <Play aria-hidden /> Resume
+          <Button size="sm" className="h-7 text-xs" onClick={resumeTour}>
+            <Play aria-hidden className="size-3" /> Resume
           </Button>
         ) : (
-          <Button variant="ghost" size="icon" onClick={pauseTour} aria-label="Pause walkthrough">
-            <Pause aria-hidden />
+          <Button variant="ghost" size="icon" className="size-7" onClick={pauseTour} aria-label="Pause walkthrough">
+            <Pause aria-hidden className="size-3.5" />
           </Button>
         )}
-        <Button variant="ghost" size="icon" onClick={stopTour} aria-label="Exit walkthrough">
-          <X aria-hidden />
+        <Button variant="ghost" size="icon" className="size-7" onClick={stopTour} aria-label="Exit walkthrough">
+          <X aria-hidden className="size-3.5" />
         </Button>
       </div>
     </div>

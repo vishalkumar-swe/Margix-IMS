@@ -94,10 +94,15 @@ export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSc
     });
     return sse(withFinalEvent(upstream, actions, curated.sources));
   } catch (error) {
+    const errText = error instanceof Error ? error.message : String(error);
     logger.warn("copilot llm unavailable; engaging autonomous database agent", {
-      err: error instanceof Error ? error.message : String(error),
+      err: errText,
     });
+    const isFundsIssue = /insufficient.*funds|402|quota/i.test(errText);
+    const llmNotice = isFundsIssue
+      ? "AI provider account (opencode.ai) has insufficient funds. Running Margix Autonomous Deep Research & DB Engine directly with live data."
+      : undefined;
     // Seamlessly execute via Autonomous Multi-Step Agent using live database tools
-    return sse(AutonomousAgentService.executeAutonomousAgentStream(body.message, context, actor, body.history));
+    return sse(AutonomousAgentService.executeAutonomousAgentStream(body.message, context, actor, body.history, llmNotice));
   }
 });

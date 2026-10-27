@@ -235,7 +235,7 @@ export function CopilotDrawer() {
         role="dialog"
         aria-modal="true"
         aria-label="AI Copilot"
-        className="glass-strong fixed inset-y-0 right-0 z-[100] flex w-full max-w-md flex-col border-l shadow-2xl"
+        className="glass-strong fixed inset-y-0 right-0 z-[100] flex w-full max-w-lg lg:max-w-xl flex-col border-l shadow-2xl transition-all"
       >
         <header className="shrink-0 border-b border-slate-200 px-4 py-3">
           <div className="flex items-start justify-between gap-2">

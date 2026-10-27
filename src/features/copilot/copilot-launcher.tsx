@@ -4,8 +4,8 @@ import { Sparkles, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useCopilot } from "./copilot-provider";
 
-/** Floating launcher pill with milestone progress (PRD §7.1). */
-export function CopilotLauncher() {
+/** Top navbar launcher button with milestone progress badge (PRD §7.1). */
+export function CopilotLauncher({ className }: { className?: string }) {
   const { drawerOpen, toggleDrawer, progress, diagnostic } = useCopilot();
 
   return (
@@ -15,23 +15,25 @@ export function CopilotLauncher() {
       aria-expanded={drawerOpen}
       aria-controls="copilot-drawer"
       className={cn(
-        "fixed right-4 bottom-20 z-40 flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl lg:bottom-4",
-        drawerOpen && "pointer-events-none opacity-0",
+        "flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-2.5 py-1.5 text-xs font-semibold text-brand-950 shadow-xs transition-all hover:bg-brand-100 hover:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-500",
+        drawerOpen && "bg-brand-100 border-brand-400 ring-2 ring-brand-500",
+        className,
       )}
+      title="Open AI Copilot & Market Research (Ctrl + J)"
     >
-      <span className="relative grid size-7 place-items-center rounded-full bg-brand-500 text-black">
-        <Sparkles className="size-4" aria-hidden />
+      <span className="relative grid size-5 place-items-center rounded-md bg-brand-500 text-slate-950">
+        <Sparkles className="size-3" aria-hidden />
         {diagnostic && (
-          <span className="absolute -top-0.5 -right-0.5 grid size-4 place-items-center rounded-full bg-red-600 text-white">
-            <TriangleAlert className="size-2.5" aria-hidden />
+          <span className="absolute -top-1 -right-1 grid size-3 place-items-center rounded-full bg-red-600 text-[8px] font-bold text-white">
+            !
           </span>
         )}
       </span>
-      <span className="hidden sm:inline">AI Copilot</span>
-      <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600 tabular-nums">
+      <span className="hidden sm:inline font-semibold">AI Copilot</span>
+      <span className="rounded bg-brand-200/80 px-1 py-0.2 text-[10px] font-bold text-brand-900 tabular-nums">
         {progress.done}/{progress.total}
       </span>
-      <kbd className="hidden rounded border border-slate-200 bg-slate-50 px-1 font-mono text-[10px] text-slate-500 sm:inline">
+      <kbd className="hidden lg:inline text-[9px] text-brand-700/80 font-mono bg-white/70 px-1 rounded border border-brand-200">
         Ctrl J
       </kbd>
     </button>

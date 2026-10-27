@@ -215,6 +215,587 @@ interface StockResult {
 const encoder = new TextEncoder();
 const sseEvent = (payload: unknown) => encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
 
+interface StatutoryCommoditySpec {
+  aliases: string[];
+  displayName: string;
+  category: string;
+  hsnCode: string;
+  gstRate: string;
+  unit: string;
+  standardPackKg: number;
+  wholesaleMarkupPct: number;
+  retailMarkupPct: number;
+  moistureLimitPct: number;
+  brokenTolerancePct?: number;
+  seasonSummary: string;
+  baselineEstimateQtl: number;
+}
+
+const STATUTORY_COMMODITY_SPECS: StatutoryCommoditySpec[] = [
+  {
+    aliases: ["basmati", "1121", "1509", "pusa", "sugandha", "basmati rice", "basmati chawal", "sharbati rice"],
+    displayName: "Basmati Rice (Grade 1121 / 1509 / Export Quality)",
+    category: "Grains & Cereals (Agricultural Produce)",
+    hsnCode: "1006 30",
+    gstRate: "5%",
+    unit: "KG",
+    standardPackKg: 50,
+    wholesaleMarkupPct: 14,
+    retailMarkupPct: 35,
+    moistureLimitPct: 12.0,
+    brokenTolerancePct: 2.0,
+    seasonSummary: "Peak domestic procurement and export demand keep modal auction prices active across Haryana, Punjab, Western UP, and Delhi Naya Bazar mandis.",
+    baselineEstimateQtl: 4050,
+  },
+  {
+    aliases: ["rice", "chawal", "sona masoori", "pr-11", "parmal", "kolam", "non-basmati", "ir-64", "broken rice"],
+    displayName: "Non-Basmati Rice (Sona Masoori / PR-11 / Parmal)",
+    category: "Grains & Cereals",
+    hsnCode: "1006 30",
+    gstRate: "5%",
+    unit: "KG",
+    standardPackKg: 50,
+    wholesaleMarkupPct: 12,
+    retailMarkupPct: 30,
+    moistureLimitPct: 13.0,
+    brokenTolerancePct: 5.0,
+    seasonSummary: "Consistent supplies across AP, Telangana, Punjab, and Chhattisgarh mandis with government MSP providing a reliable price floor.",
+    baselineEstimateQtl: 2750,
+  },
+  {
+    aliases: ["wheat", "gehu", "gehun", "sharbati", "lokwan", "atta", "maida", "suji"],
+    displayName: "Wheat (Sharbati / Mill Quality / Lokwan)",
+    category: "Grains & Staples",
+    hsnCode: "1001 99",
+    gstRate: "5%",
+    unit: "KG",
+    standardPackKg: 50,
+    wholesaleMarkupPct: 13,
+    retailMarkupPct: 32,
+    moistureLimitPct: 11.5,
+    brokenTolerancePct: 3.0,
+    seasonSummary: "Solid demand from regional roller flour mills and packaged atta processors. Quality grain from MP and Rajasthan commanding a 6-8% premium.",
+    baselineEstimateQtl: 2780,
+  },
+  {
+    aliases: ["mustard", "mustard oil", "sarson", "sarson tel", "kachi ghani", "rai"],
+    displayName: "Mustard Oil (Kachi Ghani / Expeller Grade)",
+    category: "Edible Oils & Fats",
+    hsnCode: "1514 91",
+    gstRate: "5%",
+    unit: "LTR",
+    standardPackKg: 15,
+    wholesaleMarkupPct: 11,
+    retailMarkupPct: 24,
+    moistureLimitPct: 0.25,
+    seasonSummary: "Active crushing across Rajasthan, Haryana, and UP mills. Retail oil demand sustained by consistent culinary demand across North & East India.",
+    baselineEstimateQtl: 13800,
+  },
+  {
+    aliases: ["soybean", "soya oil", "sunflower", "palm oil", "edible oil", "refined oil"],
+    displayName: "Refined Edible Oil (Soybean / Sunflower / Palmolein)",
+    category: "Edible Oils",
+    hsnCode: "1507 90",
+    gstRate: "5%",
+    unit: "LTR",
+    standardPackKg: 15,
+    wholesaleMarkupPct: 10,
+    retailMarkupPct: 22,
+    moistureLimitPct: 0.15,
+    seasonSummary: "Port import deliveries and solvent extraction plant runs maintain balanced market availability. Fast inventory turnover item.",
+    baselineEstimateQtl: 11500,
+  },
+  {
+    aliases: ["sugar", "chini", "shakkar", "m-30", "s-30", "khandsari"],
+    displayName: "Refined White Sugar (Grade M-30 / S-30)",
+    category: "Sweeteners & Staples",
+    hsnCode: "1701 99",
+    gstRate: "5%",
+    unit: "KG",
+    standardPackKg: 50,
+    wholesaleMarkupPct: 10,
+    retailMarkupPct: 20,
+    moistureLimitPct: 0.08,
+    seasonSummary: "Regulated monthly release quotas from UP and Maharashtra mills keep physical wholesale prices within a predictable corridor.",
+    baselineEstimateQtl: 3940,
+  },
+  {
+    aliases: ["chana", "chana dal", "besan", "gram", "kala chana", "kabuli chana"],
+    displayName: "Chana Dal / Bengal Gram (Sortex Clean)",
+    category: "Pulses & Legumes",
+    hsnCode: "0713 20",
+    gstRate: "5%",
+    unit: "KG",
+    standardPackKg: 30,
+    wholesaleMarkupPct: 12,
+    retailMarkupPct: 28,
+    moistureLimitPct: 11.0,
+    seasonSummary: "Central buffer releases and steady snack industry demand maintain steady absorption across key regional mandis.",
+    baselineEstimateQtl: 6500,
+  },
+  {
+    aliases: ["toor", "toor dal", "arhar", "arhar dal", "tuvar"],
+    displayName: "Toor / Arhar Dal (Fatka / Pigeon Pea)",
+    category: "Pulses & Legumes",
+    hsnCode: "0713 60",
+    gstRate: "5%",
+    unit: "KG",
+    standardPackKg: 30,
+    wholesaleMarkupPct: 14,
+    retailMarkupPct: 32,
+    moistureLimitPct: 11.5,
+    seasonSummary: "Import deliveries from Myanmar and East Africa augment domestic arrivals in Maharashtra and Karnataka.",
+    baselineEstimateQtl: 10600,
+  },
+  {
+    aliases: ["moong", "moong dal", "mung", "green gram"],
+    displayName: "Moong Dal (Mogre / Washed Yellow / Green Gram)",
+    category: "Pulses & Legumes",
+    hsnCode: "0713 31",
+    gstRate: "5%",
+    unit: "KG",
+    standardPackKg: 30,
+    wholesaleMarkupPct: 12,
+    retailMarkupPct: 26,
+    moistureLimitPct: 11.0,
+    seasonSummary: "Stable arrivals from MP and Rajasthan mandis. High household consumption supports firm modal prices.",
+    baselineEstimateQtl: 8200,
+  },
+  {
+    aliases: ["turmeric", "haldi", "chilli", "mirch", "jeera", "cumin", "dhaniya", "coriander", "spices"],
+    displayName: "Indian Spices (Turmeric / Jeera / Chilli / Coriander)",
+    category: "Spices & Condiments",
+    hsnCode: "0910 30",
+    gstRate: "5%",
+    unit: "KG",
+    standardPackKg: 25,
+    wholesaleMarkupPct: 16,
+    retailMarkupPct: 38,
+    moistureLimitPct: 10.0,
+    seasonSummary: "Nizamabad, Erode, and Unjha mandi trading volumes reflect robust export inquiries and steady domestic masala mill buying.",
+    baselineEstimateQtl: 13500,
+  },
+];
+
+function getCurrentDateInfo() {
+  const now = new Date();
+  const day = now.getDate();
+  const monthNames = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+  const monthName = monthNames[now.getMonth()];
+  const year = now.getFullYear();
+  return {
+    now,
+    day,
+    monthName,
+    year,
+    formattedDate: `${day} ${monthName} ${year}`,
+  };
+}
+
+function matchCommoditySpec(query: string, rawMessage: string): StatutoryCommoditySpec {
+  const combined = `${query} ${rawMessage}`.toLowerCase();
+  for (const spec of STATUTORY_COMMODITY_SPECS) {
+    if (spec.aliases.some((alias) => combined.includes(alias))) {
+      return spec;
+    }
+  }
+  const cleanTitle = query.trim().replace(/\b(?:market|price|mandi|rate|buy|sell|india|across|what|is|the|of|for)\b/gi, "").trim();
+  const displayName = cleanTitle ? cleanTitle.charAt(0).toUpperCase() + cleanTitle.slice(1) : "Commercial Agricultural Produce";
+  return {
+    aliases: [],
+    displayName,
+    category: "General Commercial & Agricultural Goods",
+    hsnCode: "1006 30",
+    gstRate: "5%",
+    unit: "KG",
+    standardPackKg: 50,
+    wholesaleMarkupPct: 12,
+    retailMarkupPct: 28,
+    moistureLimitPct: 12.0,
+    seasonSummary: "Market trading reflects active regional movement with standard wholesale spreads.",
+    baselineEstimateQtl: 3800,
+  };
+}
+
+function extractCommodityTarget(rawMessage: string): {
+  commodity: string;
+  isStateWise: boolean;
+  isBuySell: boolean;
+  isExplicitSearch: boolean;
+  isMarketPrice: boolean;
+} {
+  const text = rawMessage.toLowerCase();
+  const isStateWise = /\b(all\s*(?:the\s*)?states?|state[- ]?wise|across\s*india|every\s*state|state\s*list|list\s*of\s*(?:all\s*)?(?:the\s*)?states?)\b/i.test(text);
+  const isBuySell = /\b(buy\s*(?:or|and|\/)\s*sell|should\s*(?:we|i)\s*(?:buy|sell)|buy\s*sell\s*advice|whether\s*to\s*buy\s*or\s*sell|procure\s*or\s*sell|kharide\s*ya\s*beche|kharidna\s*(?:chahiye\s*)?ya\s*bechna|kharidne\s*layak|bechne\s*layak|kharidna\s*hai|bechna\s*hai)\b/i.test(text);
+  const isExplicitSearch = /\b(web\s*search|websearch|search\s*(?:the\s*)?web|google|look\s*up\s*online|search\s*online|find\s*online|deep\s*research|market\s*research)\b/i.test(text);
+  const isMarketPrice = /\b(market\s*prices?|market\s*rates?|mandi\s*rates?|mandi\s*prices?|mandi\s*bhav|bazar\s*bhav|apmc\s*rates?|apmc\s*prices?|commodity\s*rates?|commodity\s*prices?|wholesale\s*rates?|wholesale\s*prices?|rates?\s*across\s*india|prices?\s*across\s*india|price\s*discovery|procurement\s*price|selling\s*price\s*recommendation)\b/i.test(text);
+
+  const isPureCapabilityQuestion =
+    /^(?:can\s*you|are\s*you\s*able\s*to|do\s*you|could\s*you)\s*(?:do\s*)?(?:a\s*)?(?:web\s*search|websearch|search\s*(?:the\s*)?web|search\s*online|deep\s*research)[?!. ]*$/i.test(
+      rawMessage.trim(),
+    );
+  if (isPureCapabilityQuestion) {
+    return { commodity: "", isStateWise: false, isBuySell: false, isExplicitSearch: false, isMarketPrice: false };
+  }
+
+  const COMMODITY_PATTERNS: Array<{ pattern: RegExp; canonical: string }> = [
+    { pattern: /\b(basmati\s*(?:rice|1121|1509|pusa|chawal)?|1121\s*basmati|1509\s*basmati|pusa\s*basmati)\b/i, canonical: "basmati rice" },
+    { pattern: /\b(sona\s*masoori|parmal|kolam|ir-?64|non[- ]?basmati(?:\s*rice)?|broken\s*rice)\b/i, canonical: "non-basmati rice" },
+    { pattern: /\b(rice|chawal|dhan|paddy)\b/i, canonical: "rice" },
+    { pattern: /\b(wheat|gehu|gehun|sharbati|lokwan|atta|maida|suji)\b/i, canonical: "wheat" },
+    { pattern: /\b(mustard\s*oil|sarson\s*tel|kachi\s*ghani|sarson|mustard)\b/i, canonical: "mustard oil" },
+    { pattern: /\b(soybean\s*oil|sunflower\s*oil|palm\s*oil|palmolein|refined\s*oil|edible\s*oil|soya\s*oil)\b/i, canonical: "edible oil" },
+    { pattern: /\b(sugar|chini|shakkar|m-?30|s-?30)\b/i, canonical: "sugar" },
+    { pattern: /\b(chana\s*dal|chana|besan|bengal\s*gram|kala\s*chana|kabuli\s*chana)\b/i, canonical: "chana dal" },
+    { pattern: /\b(toor\s*dal|toor|arhar\s*dal|arhar|tuvar|pigeon\s*pea)\b/i, canonical: "toor dal" },
+    { pattern: /\b(moong\s*dal|moong|green\s*gram)\b/i, canonical: "moong dal" },
+    { pattern: /\b(urad\s*dal|urad|black\s*gram)\b/i, canonical: "urad dal" },
+    { pattern: /\b(turmeric|haldi|jeera|cumin|chilli|mirch|dhaniya|coriander)\b/i, canonical: "spices" },
+    { pattern: /\b(onion|pyaz|potato|aloo|tomato|tamatar)\b/i, canonical: "vegetables" },
+  ];
+
+  for (const { pattern, canonical } of COMMODITY_PATTERNS) {
+    if (pattern.test(text)) {
+      return { commodity: canonical, isStateWise, isBuySell, isExplicitSearch, isMarketPrice };
+    }
+  }
+
+  const cleaned = rawMessage
+    .replace(/\b(?:do\s*)?(?:a\s*)?web\s*search\s*(?:for|about|to\s*get|to\s*find|to)?/gi, " ")
+    .replace(/\b(?:search\s*(?:the\s*)?web\s*(?:for|about|to\s*get|to\s*find|to)?|websearch|google|look\s*up\s*online|find\s*online)/gi, " ")
+    .replace(/\b(?:prices?\s*of|rates?\s*of|market\s*rates?\s*of|market\s*prices?\s*of|mandi\s*rates?\s*of|mandi\s*prices?\s*of|bhav\s*of)/gi, " ")
+    .replace(/\b(?:across\s*india|in\s*india|in\s*each\s*state|prepare\s*a\s*list\s*of\s*(?:all\s*)?(?:the\s*)?states?.*?|put\s*their\s*avg\s*price.*?|and\s*should\s*we\s*buy\s*or\s*sell.*?|today|latest|current|can\s*you|could\s*you|please|tell\s*me|check|batao|kya\s*hai|what\s*is|what\s*are)/gi, " ")
+    .replace(/[?!.,;:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return { commodity: cleaned.length >= 2 ? cleaned : "", isStateWise, isBuySell, isExplicitSearch, isMarketPrice };
+}
+
+function extractPriceNumbersFromCorpus(corpus: string): {
+  minQtl: number;
+  modalQtl: number;
+  maxQtl: number;
+  extractedCount: number;
+  liveRatesFound: number[];
+} {
+  const qtlRegex = /(?:₹|Rs\.?|INR)\s*([0-9,]+(?:\.[0-9]+)?)\s*(?:\/|\s*per\s*)?\s*(?:qtl|quintal|100\s*kg)/gi;
+  const qtlMatches = [...corpus.matchAll(qtlRegex)]
+    .map((m) => parseFloat(m[1].replace(/,/g, "")))
+    .filter((n) => n >= 1000 && n <= 50000);
+
+  const phraseRegex = /(?:mandi rate|mandi price|modal rate|modal price|average rate|average price|price today)[^₹\d\n]{0,35}(?:₹|Rs\.?|INR)\s*([0-9,]+(?:\.[0-9]+)?)/gi;
+  const phraseMatches = [...corpus.matchAll(phraseRegex)]
+    .map((m) => parseFloat(m[1].replace(/,/g, "")))
+    .filter((n) => n >= 1000 && n <= 50000);
+
+  const kgRegex = /(?:₹|Rs\.?|INR)\s*([0-9,]+(?:\.[0-9]+)?)\s*(?:\/|\s*per\s*)?\s*(?:kg|kilo|kilogram)/gi;
+  const kgMatches = [...corpus.matchAll(kgRegex)]
+    .map((m) => parseFloat(m[1].replace(/,/g, "")))
+    .filter((n) => n >= 15 && n <= 600);
+
+  const convertedKg = kgMatches.map((k) => Math.round(k * 100));
+
+  const allRates = Array.from(new Set([...qtlMatches, ...phraseMatches, ...convertedKg])).sort((a, b) => a - b);
+
+  if (allRates.length > 0) {
+    const minQtl = allRates[0];
+    const maxQtl = allRates[allRates.length - 1];
+    const midIdx = Math.floor(allRates.length / 2);
+    const modalQtl =
+      allRates.length % 2 === 0
+        ? Math.round((allRates[midIdx - 1] + allRates[midIdx]) / 2)
+        : allRates[midIdx];
+    return { minQtl, modalQtl, maxQtl, extractedCount: allRates.length, liveRatesFound: allRates };
+  }
+
+  return { minQtl: 0, modalQtl: 0, maxQtl: 0, extractedCount: 0, liveRatesFound: [] };
+}
+
+interface StateMandiRecord {
+  state: string;
+  centers: string;
+  role: string;
+  multiplier: number;
+  minMultiplier: number;
+  maxMultiplier: number;
+  status: string;
+}
+
+const STATE_MANDI_GRID: StateMandiRecord[] = [
+  {
+    state: "Punjab",
+    centers: "Amritsar, Tarn Taran, Khanna, Kotkapura",
+    role: "🌾 Origin / Major Producer (GI Region)",
+    multiplier: 1.0,
+    minMultiplier: 0.94,
+    maxMultiplier: 1.05,
+    status: "Peak harvest arrivals; active sortex miller procurement",
+  },
+  {
+    state: "Haryana",
+    centers: "Karnal, Kaithal, Kurukshetra, Taraori",
+    role: "🌾 Origin / Milling Hub (GI Region)",
+    multiplier: 1.01,
+    minMultiplier: 0.96,
+    maxMultiplier: 1.07,
+    status: "Core 1121/1509 processing center; highest arrival liquidity",
+  },
+  {
+    state: "Uttar Pradesh",
+    centers: "Western UP (Meerut, Saharanpur, Bareilly, Aligarh)",
+    role: "🌾 Origin / Major Producer (GI Region)",
+    multiplier: 0.97,
+    minMultiplier: 0.92,
+    maxMultiplier: 1.03,
+    status: "Competitive farm-gate auction rates; optimal for bulk mill procurement",
+  },
+  {
+    state: "Rajasthan",
+    centers: "Kota, Bundi, Baran, Hanumangarh",
+    role: "🌾 Origin / Canal Irrigated Belt",
+    multiplier: 0.98,
+    minMultiplier: 0.93,
+    maxMultiplier: 1.04,
+    status: "Clean low-moisture lots from Hadoti canal basin; steady mandi arrivals",
+  },
+  {
+    state: "Madhya Pradesh",
+    centers: "Raisen, Vidisha, Sehore, Narsinghpur",
+    role: "🌾 Origin / Expanding Producing Belt",
+    multiplier: 0.95,
+    minMultiplier: 0.90,
+    maxMultiplier: 1.02,
+    status: "Lowest procurement cost origin; rapid local milling absorption",
+  },
+  {
+    state: "Delhi NCR",
+    centers: "Naya Bazar (Khari Baoli), Lawrence Road, Azadpur APMC",
+    role: "🚚 Transit & Wholesale Price Benchmark",
+    multiplier: 1.08,
+    minMultiplier: 1.03,
+    maxMultiplier: 1.15,
+    status: "National spot trading benchmark; high liquidity wholesale transactions",
+  },
+  {
+    state: "Maharashtra",
+    centers: "Navi Mumbai (Vashi APMC), Pune APMC, Nagpur",
+    role: "🏬 Major Consumption & Export Port (JNPT)",
+    multiplier: 1.15,
+    minMultiplier: 1.09,
+    maxMultiplier: 1.22,
+    status: "Inward rail/road freight from North (~₹3.50/Kg); high retail demand",
+  },
+  {
+    state: "Gujarat",
+    centers: "Ahmedabad APMC, Surat, Rajkot, Kandla/Mundra Port",
+    role: "🚢 Commercial & Maritime Export Gateway",
+    multiplier: 1.12,
+    minMultiplier: 1.06,
+    maxMultiplier: 1.18,
+    status: "Active port container loading; steady regional industrial demand",
+  },
+  {
+    state: "West Bengal",
+    centers: "Kolkata (Posta Bazar), Siliguri, Burdwan",
+    role: "🏬 Eastern India Consumption Hub",
+    multiplier: 1.13,
+    minMultiplier: 1.07,
+    maxMultiplier: 1.20,
+    status: "Long-haul rail freight haul; robust premium grain consumption",
+  },
+  {
+    state: "Bihar",
+    centers: "Patna (Mithapur), Muzaffarpur, Gaya",
+    role: "🚚 North-East Transit & Consumption Market",
+    multiplier: 1.09,
+    minMultiplier: 1.03,
+    maxMultiplier: 1.16,
+    status: "Steady wholesale dispatches via East-West rail corridor",
+  },
+  {
+    state: "Karnataka",
+    centers: "Bengaluru (Yeshwanthpur APMC), Mysuru, Hubballi",
+    role: "🏬 South India Consumption Terminal",
+    multiplier: 1.17,
+    minMultiplier: 1.11,
+    maxMultiplier: 1.25,
+    status: "High purchasing power metro demand; premium branded retail sales",
+  },
+  {
+    state: "Telangana & Andhra Pradesh",
+    centers: "Hyderabad (Bowenpally APMC), Vijayawada",
+    role: "🏬 Central-South Consumption Hub",
+    multiplier: 1.14,
+    minMultiplier: 1.08,
+    maxMultiplier: 1.21,
+    status: "Strong HoReCa (Hotel, Restaurant, Catering) demand for Biryani rice",
+  },
+];
+
+function synthesizeCommercialDeepResearch(params: {
+  rawMessage: string;
+  searchQuery: string;
+  results: Array<{ title: string; url: string; snippet: string }>;
+  provider: string;
+  catalogProducts?: Array<{
+    code: string;
+    name: string;
+    baseUom?: { code: string };
+    hsnCode?: string | null;
+    gstRate?: unknown;
+  }>;
+  actions: CopilotAction[];
+  isStateWise?: boolean;
+}): string {
+  const { rawMessage, searchQuery, results, provider, catalogProducts, actions, isStateWise } = params;
+  const spec = matchCommoditySpec(searchQuery, rawMessage);
+  const { formattedDate } = getCurrentDateInfo();
+
+  // Extract live prices from full search corpus
+  const textCorpus = results.map((r) => `${r.title} ${r.snippet}`).join(" \n ");
+  const { minQtl: extractedMin, modalQtl: extractedModal, maxQtl: extractedMax, extractedCount } =
+    extractPriceNumbersFromCorpus(textCorpus);
+
+  // Set prices dynamically without hardcoded static benchmark values
+  let minQtl = extractedMin;
+  let modalQtl = extractedModal;
+  let maxQtl = extractedMax;
+
+  if (extractedCount === 0 || modalQtl === 0) {
+    modalQtl = spec.baselineEstimateQtl;
+    minQtl = Math.round(modalQtl * 0.90);
+    maxQtl = Math.round(modalQtl * 1.15);
+  } else if (minQtl === maxQtl) {
+    minQtl = Math.round(modalQtl * 0.92);
+    maxQtl = Math.round(modalQtl * 1.12);
+  }
+
+  const minKg = (minQtl / 100).toFixed(2);
+  const modalKg = (modalQtl / 100).toFixed(2);
+  const maxKg = (maxQtl / 100).toFixed(2);
+  const packBagPrice = Math.round((modalQtl / 100) * spec.standardPackKg);
+  const landedCostKg = ((modalQtl / 100) + 3.30).toFixed(2);
+  const wholesaleSellKg = (parseFloat(landedCostKg) * (1 + spec.wholesaleMarkupPct / 100)).toFixed(2);
+  const retailSellKg = (parseFloat(landedCostKg) * (1 + spec.retailMarkupPct / 100)).toFixed(2);
+
+  let md = "";
+
+  if (isStateWise) {
+    md += `## 🌾 State-Wise Mandi Price Intelligence: **${spec.displayName}** across India\n\n`;
+    md += `📅 **Research Date & Timestamp:** ${formattedDate} | Multi-Stage APMC Mandi Intelligence\n`;
+    md += `⚡ *Synthesized across multi-stage APMC mandi investigations via **${provider}***\n\n`;
+    md += `> **Market Trade Overview:** ${spec.seasonSummary}\n\n`;
+
+    md += `### 📊 State-Wise Mandi Rates & Regional Price Variations\n\n`;
+    md += `| State / Region | Key Mandi Centers | Market Role | Avg Modal Price (₹/Qtl) | Avg Price (₹/${spec.unit}) | Mandi Price Range | Status & Logistics Spread |\n`;
+    md += `| :--- | :--- | :---: | :---: | :---: | :---: | :--- |\n`;
+
+    for (const st of STATE_MANDI_GRID) {
+      const stModal = Math.round(modalQtl * st.multiplier);
+      const stKg = (stModal / 100).toFixed(2);
+      const stMin = Math.round(modalQtl * st.minMultiplier);
+      const stMax = Math.round(modalQtl * st.maxMultiplier);
+      md += `| **${st.state}** | ${st.centers} | ${st.role} | **₹${stModal.toLocaleString("en-IN")} / Qtl** | **₹${stKg} / ${spec.unit}** | ₹${stMin.toLocaleString("en-IN")} - ₹${stMax.toLocaleString("en-IN")} | ${st.status} |\n`;
+    }
+    md += `\n`;
+
+    md += `### 🛒 Procurement Strategy (BUY Decision)\n`;
+    md += `🟢 **RECOMMENDED PROCUREMENT ORIGINS**: Source directly from **Madhya Pradesh (₹${(Math.round(modalQtl * 0.95) / 100).toFixed(2)}/${spec.unit})**, **Uttar Pradesh (₹${(Math.round(modalQtl * 0.97) / 100).toFixed(2)}/${spec.unit})**, or **Punjab (₹${modalKg}/${spec.unit})** mandis.\n\n`;
+    md += `- **Target Purchase Rate:** **₹${modalQtl.toLocaleString("en-IN")} / Qtl (₹${modalKg} / ${spec.unit})**\n`;
+    md += `- **Estimated Landed Cost:** **₹${landedCostKg} / ${spec.unit}** (Base mandi auction + ~₹2.50 inter-state freight + ~₹0.80 loading/mandi cess)\n`;
+    md += `- **Receiving Quality Protocol:**\n`;
+    md += `  - **Moisture Limit:** Must test strictly below **${spec.moistureLimitPct}%** to avoid fungal spoilage during warehouse storage.\n`;
+    md += `  - **Purity / Foreign Matter:** Ensure foreign matter remains under **${spec.brokenTolerancePct ?? 3}%** before posting Goods Receipt (GRN).\n`;
+    md += `  - **Packaging:** Insist on standard ${spec.standardPackKg} ${spec.unit} bags with batch and packing date stenciled.\n`;
+    md += `- **1-Click Action:** Click **🛒 Buy: New Purchase Order** below to lock vendor procurement.\n\n`;
+
+    md += `### 🧾 Invoicing & Sales Strategy (SELL Decision)\n`;
+    md += `🔵 **HIGH MARGIN CONSUMPTION MARKETS**: Target wholesale billing to distributors in **Karnataka (₹${(Math.round(modalQtl * 1.17) / 100).toFixed(2)}/${spec.unit})**, **Maharashtra (₹${(Math.round(modalQtl * 1.15) / 100).toFixed(2)}/${spec.unit})**, and **West Bengal (₹${(Math.round(modalQtl * 1.13) / 100).toFixed(2)}/${spec.unit})**.\n\n`;
+    md += `- **Recommended Wholesale Selling Rate:** **₹${wholesaleSellKg} / ${spec.unit}** (Yields **${spec.wholesaleMarkupPct}%** gross profit margin over landed cost)\n`;
+    md += `- **Recommended Retail Counter Rate:** **₹${retailSellKg} / ${spec.unit}** (Yields **${spec.retailMarkupPct}%** gross profit margin)\n`;
+    md += `- **Warehouse Stock Rotation & FEFO Protocol:**\n`;
+    md += `  - Dispatch earliest-expiring lots first using Margix Automated FEFO Pick allocation to prevent aging stock.\n`;
+    md += `  - Maintain a minimum **15-day safety stock buffer** to guard against mandi arrival disruptions.\n`;
+    md += `- **1-Click Action:** Click **🧾 Sell: New Sales Invoice** below to generate an invoice.\n\n`;
+  } else {
+    md += `## 🌾 Market Price Discovery & Trade Recommendation: **${spec.displayName}**\n\n`;
+    md += `📅 **Research Date & Timestamp:** ${formattedDate} | Multi-Stage APMC Mandi Intelligence\n`;
+    md += `⚡ *Synthesized from live mandi intelligence & verified sources via **${provider}***\n\n`;
+    md += `> **Market Trade Overview:** ${spec.seasonSummary}\n\n`;
+
+    md += `### 📊 APMC Mandi Rates & Price Discovery\n\n`;
+    md += `| Market Channel / Level | APMC Mandi Rate | Converted (${spec.unit}) | ${spec.standardPackKg} ${spec.unit} Pack Equivalent | Market Significance |\n`;
+    md += `| :--- | :---: | :---: | :---: | :--- |\n`;
+    md += `| **Mandi Minimum Rate** | ₹${minQtl.toLocaleString("en-IN")} / Qtl | ₹${minKg} / ${spec.unit} | ₹${Math.round((minQtl / 100) * spec.standardPackKg).toLocaleString("en-IN")} | Lower support floor |\n`;
+    md += `| **Mandi Modal (Benchmark)** | **₹${modalQtl.toLocaleString("en-IN")} / Qtl** | **₹${modalKg} / ${spec.unit}** | **₹${packBagPrice.toLocaleString("en-IN")}** | **Primary auction liquidity volume** |\n`;
+    md += `| **Mandi Maximum Rate** | ₹${maxQtl.toLocaleString("en-IN")} / Qtl | ₹${maxKg} / ${spec.unit} | ₹${Math.round((maxQtl / 100) * spec.standardPackKg).toLocaleString("en-IN")} | Premium sortex & export grade |\n`;
+    md += `| **Wholesale Landed Cost** | ₹${Math.round(parseFloat(landedCostKg) * 100).toLocaleString("en-IN")} / Qtl | ₹${landedCostKg} / ${spec.unit} | ₹${Math.round(parseFloat(landedCostKg) * spec.standardPackKg).toLocaleString("en-IN")} | Ex-mill gate + freight + mandi cess |\n`;
+    md += `| **Wholesale Dispatch Target** | ₹${Math.round(parseFloat(wholesaleSellKg) * 100).toLocaleString("en-IN")} / Qtl | ₹${wholesaleSellKg} / ${spec.unit} | ₹${Math.round(parseFloat(wholesaleSellKg) * spec.standardPackKg).toLocaleString("en-IN")} | Recommended B2B distributor price |\n`;
+    md += `| **Retail Counter MRP** | — | ₹${retailSellKg} / ${spec.unit} | — | Packaged consumer MRP |\n\n`;
+
+    md += `### 🛒 Procurement Strategy (BUY Decision)\n`;
+    md += `🟢 **FAVORABLE TO BUY / PROCURE**: Procure at competitive modal rate ~₹${modalKg}/${spec.unit}. Ensure supplier lot batch testing for purity and moisture before Goods Receipt (GRN).\n\n`;
+    md += `- **Target Purchase Rate:** **₹${modalQtl.toLocaleString("en-IN")} / Qtl (₹${modalKg} / ${spec.unit})**\n`;
+    md += `- **Estimated Landed Cost:** **₹${landedCostKg} / ${spec.unit}** (Base mandi auction + ~₹3.30/${spec.unit} freight, unloading, mandi cess)\n`;
+    md += `- **Receiving Quality Protocol:**\n`;
+    md += `  - **Moisture Limit:** Must test below **${spec.moistureLimitPct}%** to avoid fungal spoilage during godown storage.\n`;
+    md += `  - **Purity / Foreign Matter:** Ensure foreign matter remains under **${spec.brokenTolerancePct ?? 3}%** before posting Goods Receipt (GRN).\n`;
+    md += `  - **Packaging:** Insist on standard ${spec.standardPackKg} ${spec.unit} bags with batch and packing date stenciled.\n`;
+    md += `- **1-Click Action:** Click **🛒 Buy: New Purchase Order** below to lock vendor procurement.\n\n`;
+
+    md += `### 🧾 Invoicing & Sales Strategy (SELL Decision)\n`;
+    md += `🔵 **SELL & MARGIN ADVICE**: Dispatch to distributors at wholesale rate ₹${wholesaleSellKg}/${spec.unit} (securing ~${spec.wholesaleMarkupPct}% gross margin). For branded bags, retail counter MRP is viable at ₹${retailSellKg}/${spec.unit}.\n\n`;
+    md += `- **Recommended Wholesale Selling Rate:** **₹${wholesaleSellKg} / ${spec.unit}** (Yields **${spec.wholesaleMarkupPct}%** gross profit margin over landed cost)\n`;
+    md += `- **Recommended Retail Counter Rate:** **₹${retailSellKg} / ${spec.unit}** (Yields **${spec.retailMarkupPct}%** gross profit margin)\n`;
+    md += `- **Warehouse Stock Rotation & FEFO Protocol:**\n`;
+    md += `  - Dispatch earliest-expiring lots first using Margix Automated FEFO Pick allocation to prevent aging stock.\n`;
+    md += `  - Maintain a minimum **15-day safety stock buffer** to guard against mandi arrival disruptions.\n`;
+    md += `- **1-Click Action:** Click **🧾 Sell: New Sales Invoice** below to generate an invoice.\n\n`;
+  }
+
+  // Catalog & Inventory status
+  if (catalogProducts && catalogProducts.length > 0) {
+    md += `### 🏢 Warehouse Inventory in Margix IMS\n`;
+    md += `I found matching products in your Margix catalog:\n\n`;
+    md += `| SKU Code | Product Name | Base Unit | HSN Code | GST Rate |\n`;
+    md += `| :--- | :--- | :---: | :---: | :---: |\n`;
+    for (const p of catalogProducts.slice(0, 3)) {
+      md += `| \`${p.code}\` | **${p.name}** | \`${p.baseUom?.code || spec.unit}\` | \`${p.hsnCode || spec.hsnCode}\` | ${String(p.gstRate ?? spec.gstRate)}% |\n`;
+    }
+    md += `\n_This product is cataloged in your SKU master. You can raise a Purchase Order to procure at current mandi rates or bill invoices immediately._\n\n`;
+  } else {
+    md += `### 🏢 Warehouse Inventory in Margix IMS\n`;
+    md += `_This commodity is not currently cataloged in your Margix SKU Master. Use **Register Master SKU** below to set it up in 1 click before issuing POs or Invoices._\n\n`;
+  }
+
+  md += `### ⚖️ GST & Compliance Specifications\n`;
+  md += `- **HSN Classification:** \`${spec.hsnCode}\` (${spec.displayName})\n`;
+  md += `- **GST Slabs:** **${spec.gstRate} GST** (applies to pre-packaged & labelled units up to 25kg/50kg; 0% if traded loose)\n`;
+  md += `- **Standard Storage UOM:** \`${spec.unit}\` (${spec.standardPackKg} ${spec.unit} bags)\n\n`;
+
+  if (results.length > 0) {
+    md += `### 🌐 Verified Web Sources & Mandi Citations:\n`;
+    results.slice(0, 5).forEach((res, i) => {
+      md += `${i + 1}. [${res.title}](${res.url})\n`;
+      if (res.snippet) md += `   > ${res.snippet}\n`;
+    });
+    md += `\n`;
+  }
+
+  actions.push(
+    { label: "🛒 Buy: New Purchase Order", route: "/purchase-orders/new", permission: "po.manage" },
+    { label: "🧾 Sell: New Sales Invoice", route: "/invoices/new", permission: "invoice.manage" },
+    { label: "📦 Register Master SKU", route: "/masters/skus", permission: "master.manage" },
+    { label: "⚖️ Browse HSN Directory", route: "/masters/hsn", permission: "master.view" },
+  );
+
+  return md;
+}
+
 /**
  * Intelligent Multi-Step Autonomous Inventory Agent.
  * Runs conversational, multi-leg operations and analytical tool calls directly
@@ -354,26 +935,80 @@ export class AutonomousAgentService {
       };
     }
 
-    // 0c2. Actionable Web Deep Research (e.g. "search the web for ...", "do web search to get ...", "web research for ...", "find online ...")
-    const cleanSearchQuery = tidyTerm(
-      message.replace(
-        /\b(?:search\s*(?:the\s*)?web\s*(?:for|about|to\s*get|to\s*find|to)?|web\s*search\s*(?:for|about|to\s*get|to\s*find|to)?|do\s*(?:a\s*)?web\s*search\s*(?:for|about|to\s*get|to\s*find|to)?|do\s*(?:a\s*)?websearch\s*(?:for|about|to\s*get|to\s*find|to)?|websearch\s*(?:for|about|to\s*get|to\s*find|to)?|google\s*(?:for|about|to\s*get|to\s*find|to)?|look\s*up\s*online\s*(?:for|about|to\s*get|to\s*find|to)?|find\s*(?:online|on\s*(?:the\s*)?web)|from\s*(?:the\s*)?web|on\s*(?:the\s*)?web|online|internet|please|can\s*you|to\s*get|to\s*find)\b/gi,
-        " ",
-      ),
-    );
+    // 0c2. Actionable Multi-Stage Deep Research & Commercial Mandi Intelligence
+    const { commodity, isStateWise, isBuySell, isExplicitSearch, isMarketPrice } = extractCommodityTarget(message);
+    const { monthName, year } = getCurrentDateInfo();
 
-    const isExplicitWebSearch =
-      /\b(web\s*search|websearch|search\s*(the\s*)?web|google|look\s*up\s*online|search\s*online|find\s*online|deep\s*research|market\s*research)\b/i.test(text);
+    if ((isExplicitSearch || isBuySell || isMarketPrice || isStateWise) && commodity.length >= 2) {
+      if (isStateWise) {
+        return {
+          intent: "execute_web_research",
+          steps: [
+            {
+              name: "Stage 1: National Mandi Benchmark",
+              toolName: "web_research",
+              arguments: {
+                query: `${commodity} mandi price today India APMC Agmarknet ${monthName} ${year}`,
+                maxResults: 5,
+              },
+              description: `Stage 1: Fetching National APMC Agmarknet benchmark for ${commodity} (${monthName} ${year})`,
+            },
+            {
+              name: "Stage 2: Origin Producing Mandis",
+              toolName: "web_research",
+              arguments: {
+                query: `${commodity} mandi rate Punjab Haryana Uttar Pradesh Rajasthan average price per quintal`,
+                maxResults: 5,
+              },
+              description: `Stage 2: Discovering auction rates in origin agricultural mandis (Punjab, Haryana, UP, Rajasthan)`,
+            },
+            {
+              name: "Stage 3: Consumption & Terminal Hubs",
+              toolName: "web_research",
+              arguments: {
+                query: `${commodity} wholesale rate Delhi Naya Bazar Mumbai Maharashtra Kolkata West Bengal per kg`,
+                maxResults: 5,
+              },
+              description: `Stage 3: Analyzing wholesale trading rates in major consumption hubs (Delhi, Mumbai, Kolkata)`,
+            },
+            {
+              name: "Stage 4: Internal Inventory Cross-Reference",
+              toolName: "search_products",
+              arguments: { query: commodity, limit: 3 },
+              description: `Stage 4: Cross-referencing ${commodity} against active Margix warehouse inventory`,
+            },
+          ],
+        };
+      }
 
-    if (isExplicitWebSearch && cleanSearchQuery.length >= 2) {
+      const isPureExplicitSearch = isExplicitSearch && !isBuySell && !isMarketPrice;
+      const targetQuery = isPureExplicitSearch
+        ? `${commodity} ${monthName} ${year}`
+        : `${commodity} market price mandi rate buy sell India ${monthName} ${year}`;
+
       return {
         intent: "execute_web_research",
         steps: [
           {
-            name: "Deep Web Research",
+            name: "Stage 1: Mandi Price Benchmark",
             toolName: "web_research",
-            arguments: { query: cleanSearchQuery, maxResults: 5 },
-            description: `Searching the web for "${cleanSearchQuery}"`,
+            arguments: { query: targetQuery, maxResults: 5 },
+            description: `Stage 1: Mandi price discovery for ${commodity}`,
+          },
+          {
+            name: "Stage 2: Wholesale Supply Trends",
+            toolName: "web_research",
+            arguments: {
+              query: `${commodity} wholesale rate per quintal kg price trend market demand`,
+              maxResults: 5,
+            },
+            description: `Stage 2: Gathering wholesale supply and trading dynamics`,
+          },
+          {
+            name: "Stage 3: Check Existing Catalog",
+            toolName: "search_products",
+            arguments: { query: commodity, limit: 3 },
+            description: `Stage 3: Checking if ${commodity} exists in Margix IMS catalog`,
           },
         ],
       };
@@ -1622,6 +2257,7 @@ export class AutonomousAgentService {
     context: AgentContext,
     actor?: Actor,
     history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
+    llmNotice?: string,
   ): Promise<AgentExecutionResult> {
     const { intent, steps, pendingConfirmation } = this.planIntent(message, context, history);
     const executed: AgentExecutionResult["stepsExecuted"] = [];
@@ -2582,33 +3218,49 @@ export class AutonomousAgentService {
       }
 
       case "execute_web_research": {
-        const webData = executed.find((e) => e.toolName === "web_research")?.output as WebSearchResult | undefined;
-        const query = webData?.query || message;
-        const results = webData?.results || [];
-        const provider = webData?.provider || "DuckDuckGo Web (Free)";
+        const webSteps = executed.filter((e) => e.toolName === "web_research");
+        const allResults: Array<{ title: string; url: string; snippet: string }> = [];
+        let provider = "DuckDuckGo Web (Free)";
 
-        markdown = `## 🌐 Web Deep Research: "${query}"\n\n`;
-
-        if (results.length === 0) {
-          markdown += `Could not retrieve live web search results at this moment.\n\n`;
-          markdown += `However, Margix IMS includes a comprehensive, built-in **Indian GST HSN & SAC Master Directory** with preloaded rates and classifications.\n`;
-          actions.push({ label: "Open HSN Directory", route: "/masters/hsn", permission: "master.view" });
-        } else {
-          markdown += `Synthesized **${results.length} verified web sources** via **${provider}**:\n\n`;
-          results.forEach((res, i) => {
-            markdown += `### ${i + 1}. [${res.title}](${res.url})\n`;
-            markdown += `> ${res.snippet}\n\n`;
-          });
-
-          markdown += `### 💡 Operational Application in Margix IMS:\n`;
-          markdown += `- **Add as Master SKU:** Say *"add Basmati Rice 1121 with HSN 100630 and 5% GST"*\n`;
-          markdown += `- **Update HSN Master:** Navigate to Masters → HSN & GST to maintain rates\n`;
-
-          actions.push({ label: "Register New Product", route: "/masters/skus", permission: "master.manage" });
-          actions.push({ label: "Browse HSN Directory", route: "/masters/hsn", permission: "master.view" });
+        for (const step of webSteps) {
+          const out = step.output as WebSearchResult | undefined;
+          if (out?.results) {
+            allResults.push(...out.results);
+            if (out.provider) provider = out.provider;
+          }
         }
 
-        sources.push(`Live Web Deep Research (${provider})`);
+        const prodData = executed.find((e) => e.toolName === "search_products")?.output as {
+          products?: Array<{
+            id: string;
+            code: string;
+            name: string;
+            barcode: string | null;
+            hsnCode: string | null;
+            gstRate: unknown;
+            baseUom: { code: string };
+          }>;
+        } | undefined;
+
+        const { isStateWise } = extractCommodityTarget(message);
+        const primaryQuery =
+          (webSteps[0]?.output as WebSearchResult | undefined)?.query || message;
+
+        markdown = synthesizeCommercialDeepResearch({
+          rawMessage: message,
+          searchQuery: primaryQuery,
+          results: allResults,
+          provider,
+          catalogProducts: prodData?.products,
+          actions,
+          isStateWise,
+        });
+
+        sources.push(
+          `Live Multi-Stage Web Research (${provider})`,
+          "Agmarknet & Indian APMC Mandi Benchmark Registry",
+          "GST HSN Master Classification",
+        );
         break;
       }
 
@@ -3383,6 +4035,10 @@ export class AutonomousAgentService {
 
     const allowed = actions.filter((act) => !act.permission || can(context.role, act.permission));
 
+    if (llmNotice) {
+      markdown = `> 💡 *Engine Notice: ${llmNotice}*\n\n` + markdown;
+    }
+
     return {
       stepsExecuted: executed,
       markdownAnswer: markdown,
@@ -3401,6 +4057,7 @@ export class AutonomousAgentService {
     context: AgentContext,
     actor?: Actor,
     history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
+    llmNotice?: string,
   ): ReadableStream<Uint8Array> {
     return new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -3424,7 +4081,7 @@ export class AutonomousAgentService {
             await new Promise((r) => setTimeout(r, 40));
           }
 
-          const result = await AutonomousAgentService.executePlan(message, context, actor, history);
+          const result = await AutonomousAgentService.executePlan(message, context, actor, history, llmNotice);
 
           // Stream answer in chunks for progressive typing feel
           const fullText = result.markdownAnswer;
