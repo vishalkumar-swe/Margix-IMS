@@ -2418,8 +2418,8 @@ export class AutonomousAgentService {
           | {
               day: string;
               totalItems: number;
-              summary: { pending: number; inProgress: number; completed: number; critical: number };
-              items: Array<{ title: string; count: number; status: string; detail: string; href?: string }>;
+              summary: Record<string, number>;
+              items: Array<{ title: string; count: number | null; status: string; detail: string | null; href?: string }>;
             }
           | undefined;
 
@@ -2429,9 +2429,13 @@ export class AutonomousAgentService {
           break;
         }
 
+        const completed = cData.summary?.COMPLETED ?? cData.summary?.completed ?? 0;
+        const pending = (cData.summary?.PENDING ?? 0) + (cData.summary?.pending ?? 0);
+        const critical = (cData.summary?.CRITICAL ?? 0) + (cData.summary?.critical ?? 0) + (cData.summary?.OVERDUE ?? 0);
+
         markdown = `## 📋 Daily Operations Checklist (${cData.day})\n\n`;
-        markdown += `Status Overview: **${cData.summary.completed}** completed | **${cData.summary.pending}** pending | **${cData.summary.critical}** critical\n\n`;
-        if (cData.items.length > 0) {
+        markdown += `Status Overview: **${completed}** completed | **${pending}** pending | **${critical}** critical/overdue\n\n`;
+        if (cData.items && cData.items.length > 0) {
           markdown += `| Task | Status | Count | Details |\n`;
           markdown += `| :--- | :---: | :---: | :--- |\n`;
           for (const item of cData.items) {
@@ -2440,10 +2444,12 @@ export class AutonomousAgentService {
                 ? "✅ Completed"
                 : item.status === "CRITICAL"
                   ? "🔴 Critical"
-                  : item.status === "IN_PROGRESS"
-                    ? "⏳ In Progress"
-                    : "🟡 Pending";
-            markdown += `| **${item.title}** | ${badge} | ${item.count} | ${item.detail} |\n`;
+                  : item.status === "OVERDUE"
+                    ? "⚠️ Overdue"
+                    : item.status === "IN_PROGRESS"
+                      ? "⏳ In Progress"
+                      : "🟡 Pending";
+            markdown += `| **${item.title}** | ${badge} | ${item.count ?? 0} | ${item.detail || "All clear"} |\n`;
             if (item.href) {
               actions.push({ label: item.title, route: item.href, permission: "dashboard.view" });
             }
