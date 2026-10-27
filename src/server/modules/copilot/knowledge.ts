@@ -255,7 +255,13 @@ function scoreEntry(entry: KnowledgeEntry, query: string, queryTokens: string[],
     if (entry.keywords.some((keyword) => keyword === token)) score += 2;
     if (entry.body.toLowerCase().includes(token)) score += 0.25;
   }
-  if (entry.routes?.some((pattern) => route === pattern || route.startsWith(`${pattern}/`))) score += 2;
+  for (const pattern of entry.routes ?? []) {
+    if (route === pattern || route.startsWith(`${pattern}/`)) {
+      if ((pattern === "/" || pattern === "/dashboard") && score === 0) continue;
+      score += 2;
+      break;
+    }
+  }
   return score;
 }
 

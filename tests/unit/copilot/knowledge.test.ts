@@ -44,6 +44,10 @@ describe("knowledge retrieval", () => {
   it("returns nothing for an unrelated question on an unrelated screen", () => {
     expect(retrieveKnowledge("zebra", "/nothing-here")).toEqual([]);
   });
+
+  it("does not match entries merely because the user is on /dashboard if no keywords match", () => {
+    expect(retrieveKnowledge("can you do a web research?", "/dashboard")).toEqual([]);
+  });
 });
 
 describe("offline answers", () => {

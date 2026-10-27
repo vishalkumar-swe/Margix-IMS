@@ -236,6 +236,9 @@ export class AutonomousAgentService {
       plan.intent === "cancel_pending_confirmation" ||
       plan.intent === "greeting" ||
       plan.intent === "hindi_conversation" ||
+      plan.intent === "copilot_capabilities" ||
+      plan.intent === "order_creation_guidance" ||
+      plan.intent === "hsn_guidance" ||
       plan.intent === "inventory_overview" ||
       plan.intent === "list_customers" ||
       plan.intent === "list_suppliers" ||
@@ -345,6 +348,73 @@ export class AutonomousAgentService {
             toolName: "get_workspace_summary",
             arguments: {},
             description: "Fetching operational status for Hindi onboarding",
+          },
+        ],
+      };
+    }
+
+    // 0d. Copilot Capabilities, Web Research & Feature Inquiries
+    const isWebResearchQuery =
+      /\b(web\s*research|search\s*(the\s*)?web|internet|browse\s*(the\s*)?web|online\s*search|google|surf\s*(the\s*)?net|web\s*search)\b/i.test(text);
+    const isCapabilityQuery =
+      /\b(what\s*(can|do)\s*you\s*do|what\s*are\s*your\s*(capabilities|features|functions)|how\s*can\s*you\s*help|tum\s*kya\s*kar\s*sakte\s*ho|kya\s*kya\s*kar\s*sakte\s*ho)\b/i.test(text) ||
+      /^(who|what)\s*are\s*you\??$/i.test(text) ||
+      /\b(who\s*are\s*you|what\s*are\s*you|tell\s*me\s*about\s*yourself|tum\s*kaun\s*ho|aap\s*kaun\s*(hai|ho))\b/i.test(text);
+
+    if (isWebResearchQuery || isCapabilityQuery) {
+      return {
+        intent: "copilot_capabilities",
+        steps: [
+          {
+            name: "Workspace Capability Snapshot",
+            toolName: "get_workspace_summary",
+            arguments: {},
+            description: "Assessing active workspace database integrations and intelligence capabilities",
+          },
+        ],
+      };
+    }
+
+    // 0e. Order Creation Guidance (Purchase Order vs Sales Invoice)
+    const isOrderCreationQuery =
+      /\b(will\s*you\s*(be\s*)?able\s*to\s*(create|make|place|raise)\s*(a|an)?\s*order|can\s*you\s*(create|make|place|raise)\s*(a|an)?\s*order|how\s*to\s*(create|make|place|raise)\s*(a|an)?\s*order)\b/i.test(text) ||
+      /\b(create|make|new|place|raise)\s*(an?\s*)?order\b/i.test(text) ||
+      /\border\s*(banana|banao|karna|karo)\b/i.test(text) ||
+      /\b(create|make|new|raise)\s*(a\s*)?(purchase\s*order|\bpo\b)\b/i.test(text) ||
+      /\bpo\s*(banana|banao|karna)\b/i.test(text) ||
+      /\b(create|make|new|raise)\s*(a\s*)?(sales\s*order|sales\s*invoice|\binvoice\b|\bbill\b)\b/i.test(text) ||
+      /\b(bill|invoice)\s*(banana|banao|karna)\b/i.test(text);
+
+    if (isOrderCreationQuery) {
+      return {
+        intent: "order_creation_guidance",
+        steps: [
+          {
+            name: "Order Processing Readiness",
+            toolName: "get_workspace_summary",
+            arguments: {},
+            description: "Evaluating inventory accounts and order creation prerequisites",
+          },
+        ],
+      };
+    }
+
+    // 0f. HSN / GST Directory Guidance & Meta Web Inquiries
+    const isHsnWebOrMetaQuery =
+      /\b(can\s*you|will\s*you\s*(be\s*)?able\s*to|how\s*(do|to)\s*you|do\s*you)\b.*(find|search|get|lookup|look\s*up|fetch|know).*hsn/i.test(text) ||
+      /\bhsn\b.*(from\s*(the\s*)?web|internet|online)/i.test(text) ||
+      /\b(from\s*(the\s*)?web|online|internet)\b.*(hsn|gst\s*rate)/i.test(text) ||
+      /\b(find\s*out\s*(the\s*)?hsn|search\s*hsn\s*online)\b/i.test(text);
+
+    if (isHsnWebOrMetaQuery) {
+      return {
+        intent: "hsn_guidance",
+        steps: [
+          {
+            name: "Verify HSN Master Directory",
+            toolName: "list_hsn_codes",
+            arguments: { limit: 5 },
+            description: "Checking availability of official GST HSN / SAC directory entries",
           },
         ],
       };
@@ -719,16 +789,39 @@ export class AutonomousAgentService {
       };
     }
 
-    // 16f. HSN / SAC Codes & GST Rates
+    // 16f. HSN / SAC Codes & GST Rates Lookup
     if (/\b(hsn|hsn\s*codes?|tax\s*slabs?)\b/i.test(text) || (/\bgst\s*rates?\b/i.test(text) && /\b(show|list|view|all|slabs?)\b/i.test(text))) {
+      const isFullList = /\b(all|directory|every|full\s*list|show\s*all|list\s*all)\b/i.test(text);
+      let queryTerm: string | undefined;
+
+      if (!isFullList) {
+        const productMatch =
+          text.match(/\b(?:hsn|hsn\s*codes?|tax\s*slabs?)\b.*?(?:for|of|on|code|search|find|check)\s+([a-zA-Z0-9\s]+)/i) ||
+          text.match(/\b([a-zA-Z0-9\s]+)\s+(?:ka|ki|ke)?\s*(?:hsn|hsn\s*codes?|tax\s*slabs?)\b/i);
+
+        if (productMatch && productMatch[1]) {
+          const clean = tidyTerm(
+            productMatch[1].replace(
+              /\b(?:what\s*is|what|is|the|please|tell|me|code|details|product|commodity|ka|ki|ke|batao|check|karo)\b/gi,
+              " ",
+            ),
+          );
+          if (clean.length >= 2 && !/^(hsn|gst|code|codes|tax|rate|rates|all)$/i.test(clean)) {
+            queryTerm = clean;
+          }
+        }
+      }
+
       return {
         intent: "list_hsn_codes",
         steps: [
           {
-            name: "Query HSN & GST Directory",
+            name: queryTerm ? `Search HSN for "${queryTerm}"` : "Query HSN & GST Directory",
             toolName: "list_hsn_codes",
-            arguments: {},
-            description: "Fetching HSN / SAC codes and applicable GST rate slabs",
+            arguments: queryTerm ? { query: queryTerm, limit: 5 } : { limit: 20 },
+            description: queryTerm
+              ? `Searching official GST HSN / SAC directory for "${queryTerm}"`
+              : "Fetching registered HSN / SAC codes and applicable GST rate slabs",
           },
         ],
       };
@@ -2132,6 +2225,71 @@ export class AutonomousAgentService {
         break;
       }
 
+      case "copilot_capabilities": {
+        markdown = `## 🤖 Margix IMS Copilot & Research Capabilities\n\n`;
+        markdown += `I do **not** browse the public internet or perform open-ended external web searches. Instead, I am directly integrated into your **live Margix IMS enterprise database** and the official **Indian GST directories**.\n\n`;
+        markdown += `### What I can do for you in real-time:\n`;
+        markdown += `- 📦 **Live Inventory & Batches:** Real-time stock lookup across all godowns with exact batch numbers, expiry dates, and pack units.\n`;
+        markdown += `- 🚚 **Automated FEFO Dispatch:** Recommend and allocate earliest-expiring batches for delivery challans to prevent spoilage.\n`;
+        markdown += `- 🛒 **Purchase Orders & GRN Receiving:** Track open procurement orders, verify supplier receipts, and check pending quantities.\n`;
+        markdown += `- 🧾 **GST Billing & Invoicing:** Check invoice dispatch readiness, intra vs inter-state tax splits, and delivery statuses.\n`;
+        markdown += `- ⚖️ **HSN / SAC Master Directory:** Preloaded with Indian GST classifications, official descriptions, and 0%, 5%, 12%, 18%, 28% tax slabs.\n`;
+        markdown += `- 🛡️ **Autonomous Operations:** Safely cancel open invoices or purchase orders with user confirmation, and audit non-negative ledger constraints.\n`;
+        markdown += `- 🇮🇳 **Multilingual Assistance:** Ask me questions naturally in **English**, **Hindi (हिंदी)**, or **Hinglish**!\n\n`;
+        markdown += `### Examples of what to ask me:\n`;
+        markdown += `- *"What products are currently in stock?"*\n`;
+        markdown += `- *"What is the HSN code and GST rate for Basmati Rice?"*\n`;
+        markdown += `- *"Can we dispatch invoice INV-2026-0001?"*\n`;
+        markdown += `- *"Show my daily operational checklist"*\n`;
+
+        actions.push({ label: "View Stock Balances", route: "/stock", permission: "stock.view" });
+        actions.push({ label: "Purchase Orders", route: "/purchase-orders", permission: "po.view" });
+        actions.push({ label: "Sales Invoices", route: "/invoices", permission: "invoice.view" });
+        actions.push({ label: "HSN & GST Directory", route: "/masters/hsn", permission: "master.view" });
+        sources.push("Margix System Architecture & Copilot Engine");
+        break;
+      }
+
+      case "order_creation_guidance": {
+        markdown = `## 📝 Order Creation in Margix IMS\n\n`;
+        markdown += `**Yes, absolutely!** Margix IMS manages both sides of your business order workflow:\n\n`;
+        markdown += `### 1. 🛒 Purchase Orders (Procurement from Suppliers)\n`;
+        markdown += `Use this when ordering stock from vendors and manufacturers:\n`;
+        markdown += `- Select the supplier, target godown, ordered items, and agreed purchase price.\n`;
+        markdown += `- Once created, you receive goods at the godown with batch numbers and expiry dates via **Goods Receipt (GRN)**.\n`;
+        markdown += `- 👉 Click **New Purchase Order** below to start.\n\n`;
+        markdown += `### 2. 🧾 Sales Invoices (Customer Billing & Dispatch)\n`;
+        markdown += `Use this when selling goods to customers:\n`;
+        markdown += `- Select the customer; Margix automatically applies state-to-state GST split (CGST + SGST or IGST).\n`;
+        markdown += `- Line items support alternate pack units (e.g. Bags, Boxes, Cartons).\n`;
+        markdown += `- Once billed, dispatches use **automated FEFO batch allocation** to pick earliest-expiring stock.\n`;
+        markdown += `- 👉 Click **New Sales Invoice** below to start.\n\n`;
+        markdown += `💡 **Pro Tip:** If you want to test without typing, tell me *"Seed demo data"* to automatically generate sample purchase orders, stock batches, and customer invoices ready for exploring!\n`;
+
+        actions.push({ label: "New Purchase Order", route: "/purchase-orders/new", permission: "po.manage" });
+        actions.push({ label: "New Sales Invoice", route: "/invoices/new", permission: "invoice.manage" });
+        actions.push({ label: "Open Purchase Orders", route: "/purchase-orders", permission: "po.view" });
+        actions.push({ label: "View Invoices", route: "/invoices", permission: "invoice.view" });
+        sources.push("Margix Order & Document Lifecycle");
+        break;
+      }
+
+      case "hsn_guidance": {
+        markdown = `## ⚖️ HSN / SAC Codes & GST Rates\n\n`;
+        markdown += `You do **not** need to search the web! Margix IMS includes a comprehensive, built-in **Indian GST HSN / SAC Master Directory** with official CBIC classifications, commodity descriptions, and applicable GST rate slabs (0%, 5%, 12%, 18%, 28%).\n\n`;
+        markdown += `### How to find HSN details with Copilot:\n`;
+        markdown += `- **Search a specific product:** Ask *"What is the HSN code for Basmati Rice?"* or *"GST rate for sugar"*\n`;
+        markdown += `- **Search by commodity:** Ask *"Find HSN for spices"* or *"Search HSN code 1006"*\n`;
+        markdown += `- **Browse the full directory:** Ask *"Show all HSN codes"* or click the button below.\n\n`;
+        markdown += `When creating a new SKU, Margix automatically suggests matching HSN codes and applies the legal GST rate.\n`;
+
+        actions.push({ label: "Open HSN & GST Directory", route: "/masters/hsn", permission: "master.view" });
+        actions.push({ label: "Browse Products (SKUs)", route: "/masters/skus", permission: "master.view" });
+        actions.push({ label: "Create Product (SKU)", route: "/masters/skus", permission: "master.manage" });
+        sources.push("Central GST HSN / SAC Master");
+        break;
+      }
+
       case "inventory_overview": {
         const invData = executed.find((e) => e.toolName === "get_inventory_overview")?.output as InventoryOverviewResult | undefined;
         const totalRegistered = invData?.totalRegisteredSkus ?? 0;
@@ -2245,15 +2403,32 @@ export class AutonomousAgentService {
       }
 
       case "list_hsn_codes": {
-        const hData = executed.find((e) => e.toolName === "list_hsn_codes")?.output as { count: number; hsnCodes: Array<{ code: string; description: string; gstRate: string }> } | undefined;
+        const step = executed.find((e) => e.toolName === "list_hsn_codes");
+        const hData = step?.output as { count: number; query?: string | null; hsnCodes: Array<{ code: string; description: string; gstRate: string }> } | undefined;
         const list = hData?.hsnCodes || [];
-        markdown = `## ⚖️ HSN / SAC Codes & GST Rates\n\n`;
-        markdown += `Registered HSN Directory entries: **${list.length}**\n\n`;
-        if (list.length > 0) {
-          markdown += `| HSN Code | Description | GST Rate |\n`;
-          markdown += `| :--- | :--- | :---: |\n`;
-          for (const h of list) {
-            markdown += `| \`${h.code}\` | ${h.description} | **${h.gstRate}** |\n`;
+        const queryTerm = hData?.query || undefined;
+
+        if (queryTerm) {
+          markdown = `## ⚖️ HSN / SAC Code Search for "${queryTerm}"\n\n`;
+          if (list.length > 0) {
+            markdown += `Found **${list.length}** matching HSN / GST entry${list.length > 1 ? "ies" : ""} in the directory:\n\n`;
+            markdown += `| HSN Code | Description | GST Rate |\n`;
+            markdown += `| :--- | :--- | :---: |\n`;
+            for (const h of list) {
+              markdown += `| \`${h.code}\` | ${h.description} | **${h.gstRate}** |\n`;
+            }
+          } else {
+            markdown += `No matching HSN codes found for **"${queryTerm}"** in the directory.\n\nYou can browse the full list or define a custom HSN code under HSN & GST master.\n`;
+          }
+        } else {
+          markdown = `## ⚖️ HSN / SAC Codes & GST Rates\n\n`;
+          markdown += `Registered HSN Directory entries: **${list.length}**\n\n`;
+          if (list.length > 0) {
+            markdown += `| HSN Code | Description | GST Rate |\n`;
+            markdown += `| :--- | :--- | :---: |\n`;
+            for (const h of list) {
+              markdown += `| \`${h.code}\` | ${h.description} | **${h.gstRate}** |\n`;
+            }
           }
         }
         actions.push({ label: "Open HSN & GST", route: "/masters/hsn", permission: "master.view" });

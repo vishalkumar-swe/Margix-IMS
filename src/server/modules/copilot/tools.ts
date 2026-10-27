@@ -203,6 +203,13 @@ const adjustmentListArgs = z
   })
   .strict();
 
+const hsnListArgs = z
+  .object({
+    query: z.string().trim().max(120).optional(),
+    limit: limitField,
+  })
+  .strict();
+
 const returnsListArgs = z
   .object({
     type: z.enum(["sales_return", "purchase_return"]),
@@ -1499,15 +1506,32 @@ const TOOLS: CopilotTool[] = [
     name: "list_hsn_codes",
     description: "Directory of HSN / SAC codes with GST rate slabs and trade descriptions.",
     permission: "master.view",
-    parameters: { type: "object", properties: {} },
-    async execute() {
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Filter by HSN code, trade name, or commodity description" },
+        limit: { type: "integer", default: 20 },
+      },
+    },
+    async execute(args) {
+      const { query, limit } = hsnListArgs.parse(args ?? {});
+      const where: Prisma.HsnCodeWhereInput = { isActive: true };
+      if (query && query.trim()) {
+        const q = query.trim();
+        where.OR = [
+          { code: { contains: q, mode: "insensitive" } },
+          { description: { contains: q, mode: "insensitive" } },
+          { keywords: { contains: q, mode: "insensitive" } },
+        ];
+      }
       const hsnList = await prisma.hsnCode.findMany({
-        where: { isActive: true },
+        where,
         orderBy: { code: "asc" },
-        take: 30,
+        take: limit,
       });
       return {
         count: hsnList.length,
+        query: query ?? null,
         hsnCodes: hsnList.map((h) => ({
           code: h.code,
           description: h.description,

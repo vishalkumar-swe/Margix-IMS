@@ -244,6 +244,33 @@ describe("AutonomousAgentService", () => {
       expect(AutonomousAgentService.planIntent("check my notifications and unread alerts", context).intent).toBe("my_notifications");
       expect(AutonomousAgentService.planIntent("can we reverse GRN-2026-0001 safely?", context).intent).toBe("reversal_check");
     });
+
+    it("handles web research inquiries, order creation guidance, and HSN inquiries accurately", () => {
+      // 1. Web research & capability inquiry
+      const capPlan = AutonomousAgentService.planIntent("can you do a web research?", context);
+      expect(capPlan.intent).toBe("copilot_capabilities");
+      expect(AutonomousAgentService.isOperationalOrConfirmation("can you do a web research?")).toBe(true);
+
+      // 2. Order creation capability inquiry
+      const orderPlan = AutonomousAgentService.planIntent("will you able to create a order?", context);
+      expect(orderPlan.intent).toBe("order_creation_guidance");
+      expect(AutonomousAgentService.isOperationalOrConfirmation("will you able to create a order?")).toBe(true);
+
+      // 3. HSN capability from web inquiry
+      const hsnWebPlan = AutonomousAgentService.planIntent("will you able to find out the hsn, other details of product from the web", context);
+      expect(hsnWebPlan.intent).toBe("hsn_guidance");
+      expect(AutonomousAgentService.isOperationalOrConfirmation("will you able to find out the hsn, other details of product from the web")).toBe(true);
+
+      // 4. Specific product HSN search
+      const hsnSearchPlan = AutonomousAgentService.planIntent("what is the hsn for basmati rice", context);
+      expect(hsnSearchPlan.intent).toBe("list_hsn_codes");
+      expect(hsnSearchPlan.steps[0].arguments).toMatchObject({ query: "basmati rice" });
+
+      // 5. Full HSN directory listing
+      const hsnAllPlan = AutonomousAgentService.planIntent("show all hsn codes", context);
+      expect(hsnAllPlan.intent).toBe("list_hsn_codes");
+      expect(hsnAllPlan.steps[0].arguments).not.toHaveProperty("query");
+    });
   });
 });
 
