@@ -65,7 +65,7 @@ export const copilotChatSchema = z.object({
       z.object({
         role: z.enum(["user", "assistant"]),
         content: z.string().max(4000),
-        confirmation: copilotConfirmationSchema.optional(),
+        confirmation: copilotConfirmationSchema.nullable().optional(),
       }),
     )
     .max(24)

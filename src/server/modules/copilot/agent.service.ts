@@ -209,7 +209,7 @@ export class AutonomousAgentService {
    */
   static isOperationalOrConfirmation(
     message: string,
-    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation }>,
+    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
   ): boolean {
     const plan = AutonomousAgentService.planIntent(message, undefined, history);
     return (
@@ -227,7 +227,7 @@ export class AutonomousAgentService {
   static planIntent(
     message: string,
     context?: AgentContext,
-    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation }>,
+    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
   ): { intent: string; steps: AgentPlanStep[]; pendingConfirmation?: CopilotConfirmation } {
     const text = message.toLowerCase().trim();
     const onInvoiceRoute = Boolean(context?.route?.startsWith("/invoices"));
@@ -865,7 +865,7 @@ export class AutonomousAgentService {
     message: string,
     context: AgentContext,
     actor?: Actor,
-    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation }>,
+    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
   ): Promise<AgentExecutionResult> {
     const { intent, steps, pendingConfirmation } = this.planIntent(message, context, history);
     const executed: AgentExecutionResult["stepsExecuted"] = [];
@@ -1604,7 +1604,7 @@ export class AutonomousAgentService {
     message: string,
     context: AgentContext,
     actor?: Actor,
-    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation }>,
+    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
   ): ReadableStream<Uint8Array> {
     return new ReadableStream<Uint8Array>({
       async start(controller) {
