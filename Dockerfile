@@ -28,17 +28,6 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1 NEXT_OUTPUT=standalone
 RUN npm run build
 
-# ---- Tools: migrations, DB grants, seed, the Tally sync and notification workers ----
-FROM deps AS tools
-COPY prisma ./prisma
-COPY scripts ./scripts
-COPY ops/postgres ./ops/postgres
-COPY src ./src
-COPY tsconfig.json ./
-ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 NPM_CONFIG_UPDATE_NOTIFIER=false PRISMA_HIDE_UPDATE_MESSAGE=1
-USER node
-CMD ["sh", "-c", "npx prisma migrate deploy && npx tsx scripts/db-grants.ts"]
-
 # ---- Runtime base: Node, OpenSSL and the Prisma CLI, no application ----
 # The home server mounts a host-built app into it (deploy/deploy.sh: fast
 # deploys without rebuilding images); the "app" stage bakes the app in.
@@ -67,6 +56,17 @@ COPY prisma/schema.prisma ./prisma/schema.prisma
 COPY prisma/migrations ./prisma/migrations
 COPY ops/postgres/app-role-grants.sql ./ops/postgres/app-role-grants.sql
 COPY ops/railway/pre-deploy.sh ./ops/railway/pre-deploy.sh
+
+# ---- Tools: migrations, DB grants, seed, the Tally sync and notification workers ----
+FROM deps AS tools
+COPY prisma ./prisma
+COPY scripts ./scripts
+COPY ops/postgres ./ops/postgres
+COPY src ./src
+COPY tsconfig.json ./
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 NPM_CONFIG_UPDATE_NOTIFIER=false PRISMA_HIDE_UPDATE_MESSAGE=1
+USER node
+CMD ["sh", "-c", "npx prisma migrate deploy && npx tsx scripts/db-grants.ts"]
 
 # ---- Final image: the stage named by TARGET ----
 FROM ${TARGET}
