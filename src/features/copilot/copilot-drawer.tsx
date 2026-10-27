@@ -5,8 +5,12 @@ import {
   ArrowUpRight,
   Ban,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Cpu,
   Database,
   Headphones,
+  Loader2,
   Mic,
   MicOff,
   Send,
@@ -16,12 +20,14 @@ import {
   Volume2,
   VolumeX,
   X,
+  XCircle,
 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { apiRequest } from "@/lib/api-client";
 import { cn } from "@/lib/cn";
+import type { AgentExecutionStep } from "@/lib/copilot/types";
 import { useCopilot } from "./copilot-provider";
 import { MarkdownLite } from "./markdown-lite";
 import { MilestoneIconView } from "./milestone-icon";
@@ -47,6 +53,135 @@ function speechRecognition(): (new () => SpeechRecognitionLike) | null {
     webkitSpeechRecognition?: new () => SpeechRecognitionLike;
   };
   return scope.SpeechRecognition ?? scope.webkitSpeechRecognition ?? null;
+}
+
+function AgentExecutionCard({
+  thinking,
+  steps,
+}: {
+  thinking?: string;
+  steps: AgentExecutionStep[];
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const total = steps.length;
+  const completed = steps.filter((s) => s.status === "completed").length;
+  const isRunning = steps.some((s) => s.status === "running" || s.status === "pending");
+  const failed = steps.filter((s) => s.status === "failed").length;
+
+  return (
+    <div className="mb-2.5 overflow-hidden rounded-xl border border-slate-200/90 bg-slate-50/80 shadow-2xs transition-all">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-slate-100/70"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="relative flex size-4 shrink-0 items-center justify-center">
+            {isRunning ? (
+              <>
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-blue-400 opacity-60" />
+                <Loader2 className="size-3.5 animate-spin text-blue-600" />
+              </>
+            ) : failed > 0 ? (
+              <XCircle className="size-3.5 text-rose-500" />
+            ) : (
+              <CheckCircle2 className="size-3.5 text-emerald-600" />
+            )}
+          </span>
+          <span className="font-semibold text-slate-800 truncate text-[11px] sm:text-xs">
+            {isRunning
+              ? `Agent Executing (${completed}/${total} completed)...`
+              : `Autonomous Agent Execution (${total} steps)`}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0 text-slate-500">
+          <span className="rounded-full bg-slate-200/90 px-1.5 py-0.2 text-[10px] font-medium tabular-nums text-slate-700">
+            {completed}/{total}
+          </span>
+          {expanded ? <ChevronUp className="size-3.5 text-slate-400" /> : <ChevronDown className="size-3.5 text-slate-400" />}
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-slate-200/70 bg-white/70 px-3 py-2 text-xs space-y-2">
+          {thinking && (
+            <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 p-2 text-[11px] text-indigo-950 leading-relaxed">
+              <span className="font-semibold text-indigo-700 flex items-center gap-1 mb-0.5">
+                <Cpu className="size-3" />
+                Agent Reasoning & Objective
+              </span>
+              <p className="italic text-slate-600">{thinking}</p>
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            {steps.map((step, idx) => {
+              const isStepRunning = step.status === "running";
+              const isStepDone = step.status === "completed";
+              const isStepFailed = step.status === "failed";
+
+              return (
+                <div
+                  key={`${step.name}-${idx}`}
+                  className={cn(
+                    "flex items-start gap-2 rounded-lg p-1.5 text-[11px] transition-colors border",
+                    isStepRunning
+                      ? "border-blue-200 bg-blue-50/70 text-blue-950"
+                      : isStepDone
+                      ? "border-slate-100 bg-slate-50/50 text-slate-700"
+                      : isStepFailed
+                      ? "border-rose-200 bg-rose-50/70 text-rose-950"
+                      : "border-transparent text-slate-400",
+                  )}
+                >
+                  <span className="mt-0.5 shrink-0">
+                    {isStepRunning ? (
+                      <Loader2 className="size-3 animate-spin text-blue-600" />
+                    ) : isStepDone ? (
+                      <CheckCircle2 className="size-3 text-emerald-600" />
+                    ) : isStepFailed ? (
+                      <XCircle className="size-3 text-rose-500" />
+                    ) : (
+                      <span className="inline-block size-2.5 rounded-full border border-slate-300" />
+                    )}
+                  </span>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-1.5">
+                      <p className="font-medium truncate text-slate-800">
+                        {step.name}
+                      </p>
+                      <span className="shrink-0 rounded bg-slate-100 px-1 py-0.2 text-[9px] font-mono text-slate-600">
+                        {step.tool}
+                      </span>
+                    </div>
+
+                    {step.description && !step.outputSummary && (
+                      <p className="text-[10px] text-slate-500 truncate mt-0.5">
+                        {step.description}
+                      </p>
+                    )}
+
+                    {step.outputSummary && (
+                      <p
+                        className={cn(
+                          "text-[10px] mt-0.5 font-medium flex items-center gap-1",
+                          isStepFailed ? "text-rose-600" : "text-emerald-700",
+                        )}
+                      >
+                        {isStepDone && "✓ "}
+                        {step.outputSummary}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** Right-hand Copilot drawer: conversation, chips, diagnostics and composer (PRD §7.2). */
@@ -379,14 +514,21 @@ export function CopilotDrawer() {
               >
                 {message.role === "user" ? (
                   <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
-                ) : message.content ? (
-                  <MarkdownLite text={message.content} />
                 ) : (
-                  <span className="flex items-center gap-1 py-1" aria-label="Copilot is thinking">
-                    <span className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.2s]" />
-                    <span className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.1s]" />
-                    <span className="size-1.5 animate-bounce rounded-full bg-slate-400" />
-                  </span>
+                  <>
+                    {message.steps && message.steps.length > 0 && (
+                      <AgentExecutionCard thinking={message.thinking} steps={message.steps} />
+                    )}
+                    {message.content ? (
+                      <MarkdownLite text={message.content} />
+                    ) : !message.steps || message.steps.length === 0 ? (
+                      <span className="flex items-center gap-1 py-1" aria-label="Copilot is thinking">
+                        <span className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.2s]" />
+                        <span className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.1s]" />
+                        <span className="size-1.5 animate-bounce rounded-full bg-slate-400" />
+                      </span>
+                    ) : null}
+                  </>
                 )}
                 {message.role === "assistant" && message.confirmation && (
                   <div

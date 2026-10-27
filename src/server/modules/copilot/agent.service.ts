@@ -8,6 +8,8 @@ import type {
   CopilotAction,
   CopilotConfirmation,
   CopilotActionType,
+  AgentExecutionStep,
+  AgentStepStatus,
 } from "@/lib/copilot/types";
 import { executeCopilotToolData, type WebSearchResult } from "./tools";
 import { getWorkspaceCounts } from "./copilot.queries";
@@ -420,7 +422,10 @@ function matchCommoditySpec(query: string, rawMessage: string): StatutoryCommodi
   };
 }
 
-function extractCommodityTarget(rawMessage: string): {
+function extractCommodityTarget(
+  rawMessage: string,
+  history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
+): {
   commodity: string;
   isStateWise: boolean;
   isBuySell: boolean;
@@ -428,10 +433,22 @@ function extractCommodityTarget(rawMessage: string): {
   isMarketPrice: boolean;
 } {
   const text = rawMessage.toLowerCase();
-  const isStateWise = /\b(all\s*(?:the\s*)?states?|state[- ]?wise|across\s*india|every\s*state|state\s*list|list\s*of\s*(?:all\s*)?(?:the\s*)?states?)\b/i.test(text);
-  const isBuySell = /\b(buy\s*(?:or|and|\/)\s*sell|should\s*(?:we|i)\s*(?:buy|sell)|buy\s*sell\s*advice|whether\s*to\s*buy\s*or\s*sell|procure\s*or\s*sell|kharide\s*ya\s*beche|kharidna\s*(?:chahiye\s*)?ya\s*bechna|kharidne\s*layak|bechne\s*layak|kharidna\s*hai|bechna\s*hai)\b/i.test(text);
-  const isExplicitSearch = /\b(web\s*search|websearch|search\s*(?:the\s*)?web|google|look\s*up\s*online|search\s*online|find\s*online|deep\s*research|market\s*research)\b/i.test(text);
-  const isMarketPrice = /\b(market\s*prices?|market\s*rates?|mandi\s*rates?|mandi\s*prices?|mandi\s*bhav|bazar\s*bhav|apmc\s*rates?|apmc\s*prices?|commodity\s*rates?|commodity\s*prices?|wholesale\s*rates?|wholesale\s*prices?|rates?\s*across\s*india|prices?\s*across\s*india|price\s*discovery|procurement\s*price|selling\s*price\s*recommendation)\b/i.test(text);
+  const isStateWise =
+    /\b(all\s*(?:the\s*)?states?|state[- ]?wise|across\s*india|every\s*state|state\s*list|list\s*of\s*(?:all\s*)?(?:the\s*)?states?|each\s*state|per\s*state|all\s*state)\b/i.test(
+      text,
+    );
+  const isBuySell =
+    /\b(buy\s*(?:or|and|\/)\s*sell|should\s*(?:we|i)\s*(?:buy|sell)|buy\s*sell\s*advice|whether\s*to\s*buy\s*or\s*sell|procure\s*or\s*sell|kharide\s*ya\s*beche|kharidna\s*(?:chahiye\s*)?ya\s*bechna|kharidne\s*layak|bechne\s*layak|kharidna\s*hai|bechna\s*hai)\b/i.test(
+      text,
+    );
+  const isExplicitSearch =
+    /\b(web\s*search|websearch|search\s*(?:the\s*)?web|google|look\s*up\s*online|search\s*online|find\s*online|deep\s*research|market\s*research)\b/i.test(
+      text,
+    );
+  const isMarketPrice =
+    /\b(market\s*prices?|market\s*rates?|mandi\s*rates?|mandi\s*prices?|mandi\s*bhav|bazar\s*bhav|apmc\s*rates?|apmc\s*prices?|commodity\s*rates?|commodity\s*prices?|wholesale\s*rates?|wholesale\s*prices?|rates?\s*across\s*india|prices?\s*across\s*india|price\s*discovery|procurement\s*price|selling\s*price\s*recommendation|avg\s*price|average\s*price|high\s*price|highest\s*price|low\s*price|lowest\s*price)\b/i.test(
+      text,
+    );
 
   const isPureCapabilityQuestion =
     /^(?:can\s*you|are\s*you\s*able\s*to|do\s*you|could\s*you)\s*(?:do\s*)?(?:a\s*)?(?:web\s*search|websearch|search\s*(?:the\s*)?web|search\s*online|deep\s*research)[?!. ]*$/i.test(
@@ -457,22 +474,50 @@ function extractCommodityTarget(rawMessage: string): {
     { pattern: /\b(onion|pyaz|potato|aloo|tomato|tamatar)\b/i, canonical: "vegetables" },
   ];
 
+  // 1. Direct match on current message
   for (const { pattern, canonical } of COMMODITY_PATTERNS) {
     if (pattern.test(text)) {
       return { commodity: canonical, isStateWise, isBuySell, isExplicitSearch, isMarketPrice };
     }
   }
 
+  // 2. Check conversation history in reverse order (inheriting commodity from prior turn)
+  if (history && history.length > 0) {
+    for (let i = history.length - 1; i >= 0; i--) {
+      const prevText = history[i].content?.toLowerCase() || "";
+      for (const { pattern, canonical } of COMMODITY_PATTERNS) {
+        if (pattern.test(prevText)) {
+          return { commodity: canonical, isStateWise, isBuySell, isExplicitSearch, isMarketPrice };
+        }
+      }
+    }
+  }
+
+  // 3. If asking for state-wise rates or market price overview across India without naming commodity,
+  // default cleanly to the national APMC benchmark staple "basmati rice"
+  if (isStateWise || (isMarketPrice && /across\s*india|each\s*state|all\s*state/i.test(text))) {
+    return { commodity: "basmati rice", isStateWise, isBuySell, isExplicitSearch, isMarketPrice };
+  }
+
+  // 4. Strip out prompt framing phrases and evaluate residuals
   const cleaned = rawMessage
+    .replace(/\b(?:can\s*you\s*)?(?:create|make|give|show|generate|display|provide|fetch|get)\s*(?:me\s*)?(?:a\s*)?list(?: of)?\b/gi, " ")
+    .replace(/\b(?:all\s*(?:the\s*)?states?(?:\s*of\s*india)?|across\s*india|in\s*india|for\s*india|of\s*india)\b/gi, " ")
+    .replace(/\b(?:and\s*)?(?:the\s*)?(?:avg|average|high|highest|low|lowest|modal|min|max)\s*(?:prices?|rates?)\b/gi, " ")
+    .replace(/\b(?:of|for|in)\s*(?:each|every|all)\s*states?\b/gi, " ")
     .replace(/\b(?:do\s*)?(?:a\s*)?web\s*search\s*(?:for|about|to\s*get|to\s*find|to)?/gi, " ")
     .replace(/\b(?:search\s*(?:the\s*)?web\s*(?:for|about|to\s*get|to\s*find|to)?|websearch|google|look\s*up\s*online|find\s*online)/gi, " ")
     .replace(/\b(?:prices?\s*of|rates?\s*of|market\s*rates?\s*of|market\s*prices?\s*of|mandi\s*rates?\s*of|mandi\s*prices?\s*of|bhav\s*of)/gi, " ")
-    .replace(/\b(?:across\s*india|in\s*india|in\s*each\s*state|prepare\s*a\s*list\s*of\s*(?:all\s*)?(?:the\s*)?states?.*?|put\s*their\s*avg\s*price.*?|and\s*should\s*we\s*buy\s*or\s*sell.*?|today|latest|current|can\s*you|could\s*you|please|tell\s*me|check|batao|kya\s*hai|what\s*is|what\s*are)/gi, " ")
+    .replace(/\b(?:today|latest|current|can\s*you|could\s*you|please|tell\s*me|check|batao|kya\s*hai|what\s*is|what\s*are)/gi, " ")
+    .replace(/\b(?:should\s*we\s*buy\s*or\s*sell|buy\s*or\s*sell)\b/gi, " ")
     .replace(/[?!.,;:]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  return { commodity: cleaned.length >= 2 ? cleaned : "", isStateWise, isBuySell, isExplicitSearch, isMarketPrice };
+  const isNonsenseOrSentence = cleaned.length > 28 || /\b(list|create|state|india|price|avg|high|low|each)\b/i.test(cleaned);
+  const validCommodity = !isNonsenseOrSentence && cleaned.length >= 2 ? cleaned : "";
+
+  return { commodity: validCommodity, isStateWise, isBuySell, isExplicitSearch, isMarketPrice };
 }
 
 function extractPriceNumbersFromCorpus(corpus: string): {
@@ -936,7 +981,7 @@ export class AutonomousAgentService {
     }
 
     // 0c2. Actionable Multi-Stage Deep Research & Commercial Mandi Intelligence
-    const { commodity, isStateWise, isBuySell, isExplicitSearch, isMarketPrice } = extractCommodityTarget(message);
+    const { commodity, isStateWise, isBuySell, isExplicitSearch, isMarketPrice } = extractCommodityTarget(message, history);
     const { monthName, year } = getCurrentDateInfo();
 
     if ((isExplicitSearch || isBuySell || isMarketPrice || isStateWise) && commodity.length >= 2) {
@@ -2248,6 +2293,36 @@ export class AutonomousAgentService {
     }
   }
 
+  private static summarizeToolOutput(toolName: string, output: unknown): string {
+  if (!output || typeof output !== "object") return "Completed";
+  const rec = output as Record<string, unknown>;
+  if (rec.error) return `Failed: ${String(rec.error)}`;
+  if (toolName === "web_research") {
+    const count = Number(rec.count ?? (Array.isArray(rec.results) ? rec.results.length : 0));
+    return count > 0 ? `${count} verified sources discovered` : "Completed lookup";
+  }
+  if (toolName === "search_products") {
+    const list = Array.isArray(rec.products) ? rec.products : [];
+    return `${list.length} matching catalog SKU(s)`;
+  }
+  if (toolName === "check_stock" || toolName === "check_stock_balances") {
+    const balances = Array.isArray(rec.balances) ? rec.balances : [];
+    return `${balances.length} batch balance line(s)`;
+  }
+  if (toolName === "get_fefo_pick_list") {
+    const picks = Array.isArray(rec.pickList) ? rec.pickList : [];
+    return `Allocated ${rec.allocatedQty ?? 0} across ${picks.length} batch(es)`;
+  }
+  if (toolName === "check_dispatch_readiness") {
+    return `Readiness: ${rec.overallReadiness || "Checked"}`;
+  }
+  if (toolName === "get_inventory_overview") {
+    const list = Array.isArray(rec.products) ? rec.products : [];
+    return `${list.length} products on hand`;
+  }
+  return "Completed successfully";
+}
+
   /**
    * Executes the multi-step plan, processes natural language actions, and attaches
    * confirmation proposals or executes confirmed operations.
@@ -2258,6 +2333,12 @@ export class AutonomousAgentService {
     actor?: Actor,
     history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
     llmNotice?: string,
+    onStepProgress?: (
+      stepIndex: number,
+      step: AgentPlanStep,
+      status: AgentStepStatus,
+      outputSummary?: string,
+    ) => void | Promise<void>,
   ): Promise<AgentExecutionResult> {
     const { intent, steps, pendingConfirmation } = this.planIntent(message, context, history);
     const executed: AgentExecutionResult["stepsExecuted"] = [];
@@ -2650,24 +2731,56 @@ export class AutonomousAgentService {
       };
     }
 
-    // Standard analytical & informational multi-step tools execution
-    for (const step of steps) {
+    // Standard analytical & informational multi-step tools execution with live progress reporting
+    const runStep = async (step: AgentPlanStep, index: number) => {
+      await onStepProgress?.(index, step, "running");
       try {
         const parsed = await executeCopilotToolData(step.toolName, JSON.stringify(step.arguments), {
           role: context.role,
           route: context.route,
           userId: context.userId,
         });
-        executed.push({
+        const hasError = parsed && typeof parsed === "object" && Boolean((parsed as Record<string, unknown>).error);
+        const summary = this.summarizeToolOutput(step.toolName, parsed);
+        await onStepProgress?.(index, step, hasError ? "failed" : "completed", summary);
+        return {
+          stepIndex: index,
           toolName: step.toolName,
           description: step.description,
           output: parsed,
-        });
+        };
       } catch (err) {
-        executed.push({
+        const errMsg = err instanceof Error ? err.message : String(err);
+        await onStepProgress?.(index, step, "failed", errMsg);
+        return {
+          stepIndex: index,
           toolName: step.toolName,
           description: step.description,
-          output: { error: err instanceof Error ? err.message : String(err) },
+          output: { error: errMsg },
+        };
+      }
+    };
+
+    if (steps.some((s) => s.toolName === "web_research")) {
+      // Run web research and catalog queries concurrently for fast sub-4s resolution
+      const stepResults = await Promise.all(steps.map((step, idx) => runStep(step, idx)));
+      stepResults.sort((a, b) => a.stepIndex - b.stepIndex);
+      for (const r of stepResults) {
+        executed.push({
+          toolName: r.toolName,
+          description: r.description,
+          output: r.output,
+        });
+      }
+    } else {
+      // Sequential execution for interdependent steps
+      for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
+        const res = await runStep(step, i);
+        executed.push({
+          toolName: res.toolName,
+          description: res.description,
+          output: res.output,
         });
       }
     }
@@ -3242,7 +3355,7 @@ export class AutonomousAgentService {
           }>;
         } | undefined;
 
-        const { isStateWise } = extractCommodityTarget(message);
+        const { isStateWise } = extractCommodityTarget(message, history);
         const primaryQuery =
           (webSteps[0]?.output as WebSearchResult | undefined)?.query || message;
 
@@ -4064,24 +4177,57 @@ export class AutonomousAgentService {
         try {
           const { steps, intent } = AutonomousAgentService.planIntent(message, context, history);
 
-          // If multi-step operational task, send a brief status indicator
-          if (steps.length > 1) {
-            controller.enqueue(
-              sseEvent({
-                delta: `⚡ _Autonomous Agent: Formulated ${steps.length}-step plan across ${steps.map((s) => s.name).join(" ➔ ")}_\n\n`,
-              }),
-            );
-            await new Promise((r) => setTimeout(r, 60));
+          // 1. Formulate agent thinking & rationale
+          let thinking = "";
+          if (intent === "execute_web_research") {
+            const { commodity, isStateWise } = extractCommodityTarget(message, history);
+            thinking = isStateWise
+              ? `Formulating 4-stage APMC mandi investigation across National benchmarks, producing mandis, and terminal consumption hubs for ${commodity || "Basmati Rice"} to discover regional prices and trade arbitrage.`
+              : `Formulating multi-stage deep research across APMC mandis, official GST/HSN classifications, and live warehouse inventory for ${commodity || "agricultural produce"}.`;
           } else if (intent.startsWith("propose_")) {
-            controller.enqueue(
-              sseEvent({
-                delta: `🔍 _Evaluating operational prerequisites & building safety confirmation proposal..._\n\n`,
-              }),
-            );
-            await new Promise((r) => setTimeout(r, 40));
+            thinking = `Evaluating operational prerequisites, schema invariants, and building a safety confirmation proposal.`;
+          } else if (intent === "fefo_allocation") {
+            thinking = `Checking active SKU catalog and calculating batch allocations using First-Expired, First-Out (FEFO) rules to minimize shelf-life spoilage.`;
+          } else if (intent === "dispatch_readiness") {
+            thinking = `Checking invoice line items against unexpired physical batch balances across warehouse godowns.`;
+          } else if (steps.length > 0) {
+            thinking = `Formulating autonomous multi-step execution across ${steps.length} enterprise tools.`;
           }
 
-          const result = await AutonomousAgentService.executePlan(message, context, actor, history, llmNotice);
+          // 2. Emit structured plan event so client displays interactive execution stepper card
+          if (steps.length > 0 || thinking) {
+            controller.enqueue(
+              sseEvent({
+                type: "plan",
+                thinking,
+                steps: steps.map((s) => ({
+                  name: s.name,
+                  tool: s.toolName,
+                  description: s.description,
+                  status: "pending" as const,
+                })),
+              }),
+            );
+          }
+
+          // 3. Execute plan with real-time tool progress updates
+          const result = await AutonomousAgentService.executePlan(
+            message,
+            context,
+            actor,
+            history,
+            llmNotice,
+            (stepIndex, _step, status, outputSummary) => {
+              controller.enqueue(
+                sseEvent({
+                  type: "step",
+                  stepIndex,
+                  status,
+                  outputSummary,
+                }),
+              );
+            },
+          );
 
           // Stream answer in chunks for progressive typing feel
           const fullText = result.markdownAnswer;

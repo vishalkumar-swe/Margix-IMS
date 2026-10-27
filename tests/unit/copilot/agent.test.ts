@@ -434,6 +434,52 @@ describe("AutonomousAgentService", () => {
       expect(result.actions.some((a) => a.label.includes("Register Master SKU"))).toBe(true);
       expect(result.actions.some((a) => a.label.includes("Browse HSN Directory"))).toBe(true);
     });
+
+    it("inherits commodity from conversation history for conversational state-wise inquiries", async () => {
+      const history = [
+        { role: "user" as const, content: "Do web search to get the prices of basmati rice across india" },
+        { role: "assistant" as const, content: "Here are the live prices of basmati rice across mandis." },
+      ];
+      const followUpPrompt = "can you create me a list of all the state of india and the avg price, high price, low price of each state?";
+
+      const plan = AutonomousAgentService.planIntent(followUpPrompt, context, history);
+      expect(plan.intent).toBe("execute_web_research");
+      expect(plan.steps.length).toBe(4);
+      // Ensure commodity is cleanly extracted as "basmati rice" and not sentence garbage
+      expect(plan.steps[0].arguments.query).toContain("basmati rice");
+      expect(plan.steps[0].arguments.query).not.toContain("create me a list");
+
+      const progressCalls: Array<{ index: number; status: string; summary?: string }> = [];
+      const result = await AutonomousAgentService.executePlan(
+        followUpPrompt,
+        context,
+        undefined,
+        history,
+        undefined,
+        (index, _step, status, summary) => {
+          progressCalls.push({ index, status, summary });
+        },
+      );
+
+      // Verify progress callback was triggered
+      expect(progressCalls.length).toBeGreaterThanOrEqual(4);
+      expect(progressCalls.some((p) => p.status === "running")).toBe(true);
+      expect(progressCalls.some((p) => p.status === "completed")).toBe(true);
+
+      // Verify response content
+      expect(result.markdownAnswer).toContain("State-Wise Mandi Price Intelligence");
+      expect(result.markdownAnswer).toContain("Punjab");
+      expect(result.markdownAnswer).toContain("Haryana");
+    });
+
+    it("defaults to national APMC benchmark commodity when no history exists for state-wise query", () => {
+      const prompt = "can you create me a list of all the state of india and the avg price, high price, low price of each state?";
+      const plan = AutonomousAgentService.planIntent(prompt, context);
+      expect(plan.intent).toBe("execute_web_research");
+      expect(plan.steps.length).toBe(4);
+      expect(plan.steps[0].arguments.query).toContain("basmati rice");
+      expect(plan.steps[0].arguments.query).not.toContain("create me a list");
+    });
   });
 });
 

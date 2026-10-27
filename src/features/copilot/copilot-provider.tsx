@@ -31,6 +31,8 @@ import {
 } from "@/lib/copilot/tour";
 import {
   EMPTY_WORKSPACE_COUNTS,
+  type AgentExecutionStep,
+  type AgentStepStatus,
   type CopilotAction,
   type CopilotChatMessage,
   type CopilotConfirmation,
@@ -509,6 +511,9 @@ export function CopilotProvider({
         let buffer = "";
         let finalActions: CopilotAction[] | undefined;
         let finalConfirmation: CopilotConfirmation | undefined;
+        let activeThinking: string | undefined;
+        let activeSteps: AgentExecutionStep[] | undefined;
+
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -521,12 +526,39 @@ export function CopilotProvider({
             if (!payload || payload === "[DONE]") continue;
             try {
               const event = JSON.parse(payload) as {
+                type?: "plan" | "step" | "delta";
+                thinking?: string;
+                steps?: AgentExecutionStep[];
+                stepIndex?: number;
+                status?: AgentStepStatus;
+                outputSummary?: string;
                 delta?: string;
                 error?: string;
                 done?: boolean;
                 actions?: CopilotAction[];
                 confirmation?: CopilotConfirmation;
               };
+
+              if (event.type === "plan" || (event.steps && event.thinking)) {
+                activeThinking = event.thinking;
+                activeSteps = event.steps;
+                update({ thinking: activeThinking, steps: activeSteps ? [...activeSteps] : undefined });
+              }
+
+              if (
+                (event.type === "step" || event.stepIndex !== undefined) &&
+                activeSteps &&
+                event.stepIndex !== undefined
+              ) {
+                const targetStep = activeSteps[event.stepIndex];
+                if (targetStep) {
+                  if (event.status) targetStep.status = event.status;
+                  if (event.outputSummary !== undefined) targetStep.outputSummary = event.outputSummary;
+                  activeSteps = [...activeSteps];
+                  update({ steps: activeSteps });
+                }
+              }
+
               if (event.delta) {
                 streamed += event.delta;
                 update({ content: streamed });
@@ -550,6 +582,8 @@ export function CopilotProvider({
           content: streamed || offlineAnswer(pathname),
           actions: finalActions,
           confirmation: finalConfirmation,
+          thinking: activeThinking,
+          steps: activeSteps,
         });
       } catch {
         update({ content: offlineAnswer(pathname), actions: [] });

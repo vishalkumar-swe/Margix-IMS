@@ -93,10 +93,22 @@ export interface CopilotRuntimeContext {
   recentErrors?: string[];
 }
 
+export type AgentStepStatus = "pending" | "running" | "completed" | "failed";
+
+export interface AgentExecutionStep {
+  name: string;
+  tool: string;
+  description?: string;
+  status: AgentStepStatus;
+  outputSummary?: string;
+}
+
 export interface CopilotChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  thinking?: string;
+  steps?: AgentExecutionStep[];
   actions?: CopilotAction[];
   confirmation?: CopilotConfirmation;
   createdAt: number;
