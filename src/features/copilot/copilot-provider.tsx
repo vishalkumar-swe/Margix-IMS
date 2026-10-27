@@ -33,6 +33,7 @@ import {
   EMPTY_WORKSPACE_COUNTS,
   type CopilotAction,
   type CopilotChatMessage,
+  type CopilotConfirmation,
   type CopilotRuntimeContext,
   type GuidedNavigationIntent,
   type PersistedTourState,
@@ -66,6 +67,11 @@ interface CopilotContextValue {
   messages: CopilotChatMessage[];
   pending: boolean;
   sendMessage: (question: string) => Promise<void>;
+  confirmAction: (
+    confirmation: CopilotConfirmation,
+    decision: "confirm" | "cancel",
+    reason?: string,
+  ) => Promise<void>;
   clearMessages: () => void;
   chips: string[];
   counts: WorkspaceCounts;
@@ -456,7 +462,11 @@ export function CopilotProvider({
         content: text,
         createdAt: Date.now(),
       };
-      const history = messages.slice(-12).map((message) => ({ role: message.role, content: message.content }));
+      const history = messages.slice(-12).map((message) => ({
+        role: message.role,
+        content: message.content,
+        confirmation: message.confirmation,
+      }));
       setMessages((current) => [
         ...current,
         userMessage,
@@ -489,8 +499,8 @@ export function CopilotProvider({
         }
 
         if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
-          const body = (await response.json()) as { answer?: string; actions?: CopilotAction[] };
-          update({ content: body.answer ?? offlineAnswer(pathname), actions: body.actions });
+          const body = (await response.json()) as { answer?: string; actions?: CopilotAction[]; confirmation?: CopilotConfirmation };
+          update({ content: body.answer ?? offlineAnswer(pathname), actions: body.actions, confirmation: body.confirmation });
           return;
         }
 
@@ -498,6 +508,7 @@ export function CopilotProvider({
         const decoder = new TextDecoder();
         let buffer = "";
         let finalActions: CopilotAction[] | undefined;
+        let finalConfirmation: CopilotConfirmation | undefined;
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -509,7 +520,13 @@ export function CopilotProvider({
             const payload = line.slice(5).trim();
             if (!payload || payload === "[DONE]") continue;
             try {
-              const event = JSON.parse(payload) as { delta?: string; error?: string; done?: boolean; actions?: CopilotAction[] };
+              const event = JSON.parse(payload) as {
+                delta?: string;
+                error?: string;
+                done?: boolean;
+                actions?: CopilotAction[];
+                confirmation?: CopilotConfirmation;
+              };
               if (event.delta) {
                 streamed += event.delta;
                 update({ content: streamed });
@@ -518,7 +535,12 @@ export function CopilotProvider({
                 streamed += `\n\n_${event.error}_`;
                 update({ content: streamed });
               }
-              if (event.done) finalActions = event.actions;
+              if (event.done) {
+                finalActions = event.actions;
+                if (event.confirmation) {
+                  finalConfirmation = event.confirmation;
+                }
+              }
             } catch {
               // Ignore malformed keep-alive lines.
             }
@@ -527,6 +549,7 @@ export function CopilotProvider({
         update({
           content: streamed || offlineAnswer(pathname),
           actions: finalActions,
+          confirmation: finalConfirmation,
         });
       } catch {
         update({ content: offlineAnswer(pathname), actions: [] });
@@ -535,6 +558,72 @@ export function CopilotProvider({
       }
     },
     [diagnostic, messages, pathname, pending, user.role],
+  );
+
+  const confirmAction = useCallback(
+    async (
+      confirmation: CopilotConfirmation,
+      decision: "confirm" | "cancel",
+      reason?: string,
+    ) => {
+      setPending(true);
+      try {
+        const response = await fetch("/api/v1/copilot/confirm", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            confirmationId: confirmation.id,
+            actionType: confirmation.actionType,
+            payload: confirmation.payload,
+            decision,
+            reason,
+          }),
+          credentials: "same-origin",
+        });
+
+        const json = await response.json();
+        if (!response.ok || !json.data) {
+          throw new Error(json.error?.message || json.data?.message || "Execution failed");
+        }
+
+        const res = json.data as {
+          status: "executed" | "cancelled" | "failed";
+          message: string;
+          actions?: CopilotAction[];
+        };
+
+        setMessages((current) =>
+          current.map((msg) => {
+            if (msg.confirmation?.id === confirmation.id) {
+              return {
+                ...msg,
+                confirmation: {
+                  ...msg.confirmation,
+                  status: res.status,
+                  resultMessage: res.message,
+                },
+                actions: res.actions && res.actions.length > 0 ? res.actions : msg.actions,
+              };
+            }
+            return msg;
+          }),
+        );
+
+        if (res.status === "executed") {
+          toast.success(res.message);
+        } else if (res.status === "cancelled") {
+          toast.info(res.message);
+        } else {
+          toast.error(res.message);
+        }
+        await refreshCounts();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Confirmation action failed");
+      } finally {
+        setPending(false);
+      }
+    },
+    [refreshCounts, toast],
   );
 
   // Drawer/tour open requests from any screen (dashboard card, deep links).
@@ -659,6 +748,7 @@ export function CopilotProvider({
     messages,
     pending,
     sendMessage,
+    confirmAction,
     clearMessages,
     chips: chipsForRoute(pathname),
     counts,

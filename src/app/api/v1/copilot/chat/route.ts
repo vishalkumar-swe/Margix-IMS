@@ -64,8 +64,18 @@ export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSc
   const curated = answerFromKnowledge(body.message, context, counts);
   const actions = allowedActions(curated.actions, user.role);
 
-  if (!llmConfigured()) {
-    return sse(AutonomousAgentService.executeAutonomousAgentStream(body.message, context));
+  const actor = {
+    userId: user.id,
+    role: user.role,
+    ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "127.0.0.1",
+    userAgent: request.headers.get("user-agent") || undefined,
+  };
+
+  // If message is an operational command (e.g. cancel, reverse, dispatch, short-close, seed/purge)
+  // or a conversational reply to a pending confirmation card (yes, no, kardo, cancel),
+  // dispatch directly to the autonomous agent engine with confirmation protocol & DB tools.
+  if (AutonomousAgentService.isOperationalOrConfirmation(body.message, body.history) || !llmConfigured()) {
+    return sse(AutonomousAgentService.executeAutonomousAgentStream(body.message, context, actor, body.history));
   }
 
   try {
@@ -88,6 +98,6 @@ export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSc
       err: error instanceof Error ? error.message : String(error),
     });
     // Seamlessly execute via Autonomous Multi-Step Agent using live database tools
-    return sse(AutonomousAgentService.executeAutonomousAgentStream(body.message, context));
+    return sse(AutonomousAgentService.executeAutonomousAgentStream(body.message, context, actor, body.history));
   }
 });

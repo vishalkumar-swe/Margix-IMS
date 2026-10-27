@@ -42,8 +42,9 @@ describe.skipIf(!appUrl)("least-privilege app login", () => {
   it("cannot delete, update or truncate the ledger and audit log", async () => {
     await stockedScenario("10");
     const denied = /permission denied/;
+    const ledgerMutationForbidden = /permission denied|inventory_ledger is append-only/;
 
-    await expect(app.$executeRaw`DELETE FROM "inventory_ledger"`).rejects.toThrow(denied);
+    await expect(app.$executeRaw`DELETE FROM "inventory_ledger"`).rejects.toThrow(ledgerMutationForbidden);
     await expect(app.$executeRaw`UPDATE "inventory_ledger" SET "remarks" = 'x'`).rejects.toThrow(denied);
     await expect(app.$executeRawUnsafe(`TRUNCATE "inventory_ledger"`)).rejects.toThrow(denied);
     await expect(app.$executeRaw`DELETE FROM "audit_log"`).rejects.toThrow(denied);

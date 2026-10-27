@@ -1,12 +1,16 @@
 "use client";
 
 import {
+  AlertOctagon,
   ArrowUpRight,
+  Ban,
+  CheckCircle2,
   Database,
   Headphones,
   Mic,
   MicOff,
   Send,
+  ShieldAlert,
   Sparkles,
   TriangleAlert,
   Volume2,
@@ -53,6 +57,7 @@ export function CopilotDrawer() {
     messages,
     pending,
     sendMessage,
+    confirmAction,
     chips,
     diagnostic,
     clearDiagnostic,
@@ -382,6 +387,125 @@ export function CopilotDrawer() {
                     <span className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.1s]" />
                     <span className="size-1.5 animate-bounce rounded-full bg-slate-400" />
                   </span>
+                )}
+                {message.role === "assistant" && message.confirmation && (
+                  <div
+                    className={cn(
+                      "mt-2.5 rounded-xl border p-3 text-xs shadow-sm transition-all",
+                      message.confirmation.status === "pending"
+                        ? message.confirmation.destructive
+                          ? "border-red-300 bg-red-50/70"
+                          : "border-blue-300 bg-blue-50/70"
+                        : message.confirmation.status === "executed"
+                        ? "border-emerald-300 bg-emerald-50/80"
+                        : message.confirmation.status === "cancelled"
+                        ? "border-slate-300 bg-slate-100/80"
+                        : "border-rose-300 bg-rose-50/80",
+                    )}
+                  >
+                    <div className="flex items-start gap-2">
+                      {message.confirmation.status === "pending" ? (
+                        message.confirmation.destructive ? (
+                          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-red-600" />
+                        ) : (
+                          <ShieldAlert className="mt-0.5 size-4 shrink-0 text-blue-600" />
+                        )
+                      ) : message.confirmation.status === "executed" ? (
+                        <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+                      ) : message.confirmation.status === "cancelled" ? (
+                        <Ban className="mt-0.5 size-4 shrink-0 text-slate-500" />
+                      ) : (
+                        <AlertOctagon className="mt-0.5 size-4 shrink-0 text-rose-600" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <p
+                            className={cn(
+                              "font-semibold text-xs",
+                              message.confirmation.status === "pending"
+                                ? message.confirmation.destructive
+                                  ? "text-red-900"
+                                  : "text-blue-900"
+                                : message.confirmation.status === "executed"
+                                ? "text-emerald-900"
+                                : message.confirmation.status === "cancelled"
+                                ? "text-slate-800"
+                                : "text-rose-900",
+                            )}
+                          >
+                            {message.confirmation.title}
+                          </p>
+                          <span
+                            className={cn(
+                              "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+                              message.confirmation.status === "pending"
+                                ? message.confirmation.destructive
+                                  ? "bg-red-200 text-red-800"
+                                  : "bg-blue-200 text-blue-800"
+                                : message.confirmation.status === "executed"
+                                ? "bg-emerald-200 text-emerald-800"
+                                : message.confirmation.status === "cancelled"
+                                ? "bg-slate-200 text-slate-700"
+                                : "bg-rose-200 text-rose-800",
+                            )}
+                          >
+                            {message.confirmation.status}
+                          </span>
+                        </div>
+                        <p
+                          className={cn(
+                            "mt-1 text-xs leading-relaxed",
+                            message.confirmation.status === "pending"
+                              ? message.confirmation.destructive
+                                ? "text-red-800"
+                                : "text-blue-800"
+                              : message.confirmation.status === "executed"
+                              ? "text-emerald-800"
+                              : message.confirmation.status === "cancelled"
+                              ? "text-slate-600"
+                              : "text-rose-800",
+                          )}
+                        >
+                          {message.confirmation.resultMessage || message.confirmation.description}
+                        </p>
+
+                        {message.confirmation.status === "pending" && (
+                          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                            <Button
+                              size="sm"
+                              variant={message.confirmation.destructive ? "danger" : "primary"}
+                              className="h-7 text-xs font-medium"
+                              disabled={pending}
+                              onClick={() => void confirmAction(message.confirmation!, "confirm")}
+                            >
+                              Confirm & Execute
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              className="h-7 text-xs"
+                              disabled={pending}
+                              onClick={() => void confirmAction(message.confirmation!, "cancel")}
+                            >
+                              Cancel / Abort
+                            </Button>
+                            {message.confirmation.alternatives?.map((alt, idx) => (
+                              <Button
+                                key={idx}
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-xs text-slate-600 underline hover:bg-slate-200/60"
+                                disabled={pending}
+                                onClick={() => void sendMessage(alt.label)}
+                              >
+                                {alt.label}
+                              </Button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 )}
                 {message.role === "assistant" && message.actions && message.actions.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1.5 border-t border-slate-100 pt-2">

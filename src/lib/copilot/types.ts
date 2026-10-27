@@ -41,6 +41,43 @@ export interface CopilotAction extends GuidedNavigationIntent {
   description?: string;
 }
 
+export type CopilotActionType =
+  | "CANCEL_INVOICE"
+  | "CANCEL_PO"
+  | "SHORT_CLOSE_PO"
+  | "REVERSE_LEDGER"
+  | "PURGE_SANDBOX"
+  | "SEED_SANDBOX"
+  | "POST_DISPATCH"
+  | "CREATE_PO"
+  | "CREATE_INVOICE"
+  | "CREATE_GRN"
+  | "CREATE_SKU"
+  | "CREATE_CUSTOMER"
+  | "CREATE_SUPPLIER"
+  | "CREATE_GODOWN"
+  | "STOCK_ADJUSTMENT";
+
+export interface CopilotAlternativeOption {
+  label: string;
+  action: string;
+  payload?: Record<string, unknown>;
+}
+
+export interface CopilotConfirmation {
+  id: string;
+  title: string;
+  description: string;
+  actionType: CopilotActionType;
+  payload: Record<string, unknown>;
+  destructive: boolean;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  alternatives?: CopilotAlternativeOption[];
+  status: "pending" | "confirmed" | "cancelled" | "executed" | "failed";
+  resultMessage?: string;
+}
+
 /** Safe, non-secret page state sent with a question (PRD §5.1). */
 export interface CopilotRuntimeContext {
   route: string;
@@ -61,6 +98,7 @@ export interface CopilotChatMessage {
   role: "user" | "assistant";
   content: string;
   actions?: CopilotAction[];
+  confirmation?: CopilotConfirmation;
   createdAt: number;
   /** Suggested question chips shown above the composer. */
   chips?: string[];

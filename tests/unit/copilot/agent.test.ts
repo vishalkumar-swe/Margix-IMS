@@ -83,4 +83,104 @@ describe("AutonomousAgentService", () => {
     expect(plan.intent).toBe("document_status");
     expect(plan.steps).toHaveLength(0);
   });
+
+  describe("Conversational, Broken English & Hinglish Multi-leg Intents", () => {
+    it("recognizes broken English / Hinglish for invoice cancellation proposal", () => {
+      const plan1 = AutonomousAgentService.planIntent("bhai inv-001 cancel kar do", context);
+      expect(plan1.intent).toBe("propose_cancel_invoice");
+
+      const plan2 = AutonomousAgentService.planIntent("please invoice cancle kardo", context);
+      expect(plan2.intent).toBe("propose_cancel_invoice");
+    });
+
+    it("recognizes PO short-close conversational phrasing", () => {
+      const plan = AutonomousAgentService.planIntent("short close PO-2026-0001 please", context);
+      expect(plan.intent).toBe("propose_short_close_po");
+
+      const planHinglish = AutonomousAgentService.planIntent("po close kardo baki ka", context);
+      expect(planHinglish.intent).toBe("propose_short_close_po");
+    });
+
+    it("recognizes ledger movement reversal phrasing", () => {
+      const plan = AutonomousAgentService.planIntent("reverse wrong entry in ledger LE-001", context);
+      expect(plan.intent).toBe("propose_reverse_ledger");
+
+      const planHinglish = AutonomousAgentService.planIntent("galat entry wapas lo ledger me", context);
+      expect(planHinglish.intent).toBe("propose_reverse_ledger");
+    });
+
+    it("recognizes sandbox seed and purge conversational commands", () => {
+      const seedPlan = AutonomousAgentService.planIntent("demo data seed karo", context);
+      expect(seedPlan.intent).toBe("execute_seed_sandbox");
+
+      const purgePlan = AutonomousAgentService.planIntent("demo sandbox saaf kardo", context);
+      expect(purgePlan.intent).toBe("propose_purge_sandbox");
+    });
+
+    it("recognizes dispatch posting proposal from conversational request", () => {
+      const plan = AutonomousAgentService.planIntent("fefo se dispatch bna do for invoice INV-2026-0001", context);
+      expect(plan.intent).toBe("propose_post_dispatch");
+    });
+  });
+
+  describe("Human-in-the-Loop Confirmation Protocol", () => {
+    const pendingConfirmation = {
+      id: "conf-123",
+      actionType: "CANCEL_INVOICE" as const,
+      title: "Cancel Invoice",
+      description: "Cancel test invoice",
+      destructive: true,
+      requiredPermission: "invoice.manage",
+      payload: { invoiceId: "inv-1", invoiceNumber: "INV-100" },
+      status: "pending" as const,
+    };
+
+    const historyWithPending = [
+      { role: "user" as const, content: "cancel invoice INV-100" },
+      {
+        role: "assistant" as const,
+        content: "Please confirm cancellation",
+        confirmation: pendingConfirmation,
+      },
+    ];
+
+    it("resolves affirmative confirmation replies (yes, ha, kardo, proceed)", () => {
+      const affirmativePhrases = ["yes", "ha kardo", "proceed karo", "confirm it", "sure", "theek hai"];
+      for (const phrase of affirmativePhrases) {
+        const plan = AutonomousAgentService.planIntent(phrase, context, historyWithPending);
+        expect(plan.intent).toBe("execute_pending_confirmation");
+        expect(plan.pendingConfirmation?.id).toBe("conf-123");
+      }
+    });
+
+    it("resolves negative cancellation replies (no, nahi, abort, cancel)", () => {
+      const negativePhrases = ["no", "nahi", "abort", "cancel it", "mat karo", "chhod do"];
+      for (const phrase of negativePhrases) {
+        const plan = AutonomousAgentService.planIntent(phrase, context, historyWithPending);
+        expect(plan.intent).toBe("cancel_pending_confirmation");
+        expect(plan.pendingConfirmation?.id).toBe("conf-123");
+      }
+    });
+
+    it("isOperationalOrConfirmation detects operational intent and pending confirmations", () => {
+      expect(AutonomousAgentService.isOperationalOrConfirmation("bhai inv-001 cancel kar do")).toBe(true);
+      expect(AutonomousAgentService.isOperationalOrConfirmation("ha kardo", historyWithPending)).toBe(true);
+      expect(AutonomousAgentService.isOperationalOrConfirmation("nahi", historyWithPending)).toBe(true);
+      expect(AutonomousAgentService.isOperationalOrConfirmation("what is the GST rate on basmati rice?")).toBe(false);
+    });
+
+    it("executes confirmation cancellation safely without mutating records", async () => {
+      const actor = { userId: "user-1", role: "ADMIN" as const };
+      const result = await AutonomousAgentService.executeConfirmation(actor, {
+        confirmationId: "conf-123",
+        actionType: "CANCEL_INVOICE",
+        payload: { invoiceId: "inv-1" },
+        decision: "cancel",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data.status).toBe("cancelled");
+      expect(result.data.message).toContain("cancelled");
+    });
+  });
 });

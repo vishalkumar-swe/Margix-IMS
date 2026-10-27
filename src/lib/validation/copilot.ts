@@ -18,6 +18,46 @@ export const copilotRuntimeContextSchema = z.object({
   recentErrors: z.array(z.string().max(500)).max(5).optional(),
 });
 
+export const copilotActionTypeSchema = z.enum([
+  "CANCEL_INVOICE",
+  "CANCEL_PO",
+  "SHORT_CLOSE_PO",
+  "REVERSE_LEDGER",
+  "PURGE_SANDBOX",
+  "SEED_SANDBOX",
+  "POST_DISPATCH",
+  "CREATE_PO",
+  "CREATE_INVOICE",
+  "CREATE_GRN",
+  "CREATE_SKU",
+  "CREATE_CUSTOMER",
+  "CREATE_SUPPLIER",
+  "CREATE_GODOWN",
+  "STOCK_ADJUSTMENT",
+]);
+
+export const copilotConfirmationSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string(),
+  actionType: copilotActionTypeSchema,
+  payload: z.record(z.string(), z.unknown()),
+  destructive: z.boolean(),
+  confirmLabel: z.string().optional(),
+  cancelLabel: z.string().optional(),
+  alternatives: z
+    .array(
+      z.object({
+        label: z.string(),
+        action: z.string(),
+        payload: z.record(z.string(), z.unknown()).optional(),
+      }),
+    )
+    .optional(),
+  status: z.enum(["pending", "confirmed", "cancelled", "executed", "failed"]),
+  resultMessage: z.string().optional(),
+});
+
 export const copilotChatSchema = z.object({
   message: z.string().trim().min(1, "Ask a question.").max(1200),
   history: z
@@ -25,6 +65,7 @@ export const copilotChatSchema = z.object({
       z.object({
         role: z.enum(["user", "assistant"]),
         content: z.string().max(4000),
+        confirmation: copilotConfirmationSchema.optional(),
       }),
     )
     .max(24)
@@ -32,4 +73,14 @@ export const copilotChatSchema = z.object({
   context: copilotRuntimeContextSchema,
 });
 
+export const copilotConfirmExecutionSchema = z.object({
+  confirmationId: z.string().min(1),
+  actionType: copilotActionTypeSchema,
+  payload: z.record(z.string(), z.unknown()),
+  decision: z.enum(["confirm", "cancel", "alternative"]),
+  alternativeAction: z.string().optional(),
+  reason: z.string().max(500).optional(),
+});
+
 export type CopilotChatInput = z.infer<typeof copilotChatSchema>;
+export type CopilotConfirmExecutionInput = z.infer<typeof copilotConfirmExecutionSchema>;

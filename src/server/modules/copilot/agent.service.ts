@@ -1,9 +1,28 @@
+import { randomUUID } from "node:crypto";
 import type { RoleCode } from "@prisma/client";
-import type { CopilotAction } from "@/lib/copilot/types";
+import type { Actor } from "@/server/actor";
+import { prisma } from "@/server/db/client";
+import { toDecimal } from "@/server/db/decimal";
+import { can } from "@/lib/permissions";
+import type {
+  CopilotAction,
+  CopilotConfirmation,
+  CopilotActionType,
+} from "@/lib/copilot/types";
 import { executeCopilotToolData } from "./tools";
 import { getWorkspaceCounts } from "./copilot.queries";
 import { answerFromKnowledge } from "./knowledge";
-import { can } from "@/lib/permissions";
+import { cancelInvoice } from "@/server/modules/invoices/invoice.service";
+import {
+  cancelPurchaseOrder,
+  shortClosePurchaseOrder,
+} from "@/server/modules/purchasing/purchase-order.service";
+import { reverseEntry } from "@/server/modules/reversals/reversals.service";
+import {
+  purgeSandboxData,
+  seedSandboxData,
+} from "@/server/modules/copilot/sandbox.service";
+import { postDispatch } from "@/server/modules/dispatch/dispatch.service";
 
 export interface AgentContext {
   role: RoleCode;
@@ -26,6 +45,7 @@ export interface AgentExecutionResult {
   markdownAnswer: string;
   actions: CopilotAction[];
   sources: string[];
+  confirmation?: CopilotConfirmation;
 }
 
 interface FefoResult {
@@ -101,12 +121,12 @@ interface LedgerResult {
 
 interface DocumentStatusResult {
   error?: string;
-  id?: string;
   type: string;
+  id?: string;
   number: string;
   status: string;
   party: string;
-  date: string | null;
+  date?: string;
   lines?: Array<{
     product: string;
     ordered?: string;
@@ -115,18 +135,16 @@ interface DocumentStatusResult {
     billed?: string;
     dispatched?: string;
     remaining?: string;
-    quantity?: string;
-    baseUnit?: string;
     unit?: string;
     batch?: string;
+    quantity?: string;
+    baseUnit?: string;
     expiryDate?: string | null;
   }>;
   receipts?: Array<{ number: string; godown: string; status: string }>;
-  godown?: string;
-  invoice?: string | null;
 }
 
-interface AlertResult {
+interface StockAlertsResult {
   count: number;
   alerts: Array<{
     product: string;
@@ -181,16 +199,37 @@ const sseEvent = (payload: unknown) => encoder.encode(`data: ${JSON.stringify(pa
 
 /**
  * Intelligent Multi-Step Autonomous Inventory Agent.
- * Runs end-to-end multi-step tool calls directly against PostgreSQL, evaluates
- * FEFO picking, ledger movements, document statuses, and dispatch readiness,
- * generating verified operational answers and executable UI actions.
+ * Runs conversational, multi-leg operations and analytical tool calls directly
+ * against PostgreSQL. Features human-in-the-loop confirmation for destructive
+ * actions, state transitions, and automated FEFO dispatching.
  */
 export class AutonomousAgentService {
   /**
-   * Identifies the user's operational intent and generates a multi-step plan.
+   * Checks whether the user's message is an operational action or a confirmation reply.
    */
-  static planIntent(message: string, context?: AgentContext): { intent: string; steps: AgentPlanStep[] } {
-    const text = message.toLowerCase();
+  static isOperationalOrConfirmation(
+    message: string,
+    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation }>,
+  ): boolean {
+    const plan = AutonomousAgentService.planIntent(message, undefined, history);
+    return (
+      plan.intent.startsWith("propose_") ||
+      plan.intent.startsWith("execute_") ||
+      plan.intent === "execute_pending_confirmation" ||
+      plan.intent === "cancel_pending_confirmation"
+    );
+  }
+
+  /**
+   * Formulates the multi-step plan, parsing conversational phrasing, broken English,
+   * Hindi/Hinglish terms, and pending confirmation replies.
+   */
+  static planIntent(
+    message: string,
+    context?: AgentContext,
+    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation }>,
+  ): { intent: string; steps: AgentPlanStep[]; pendingConfirmation?: CopilotConfirmation } {
+    const text = message.toLowerCase().trim();
     const onInvoiceRoute = Boolean(context?.route?.startsWith("/invoices"));
     const tidyTerm = (value: string) =>
       value
@@ -198,7 +237,112 @@ export class AutonomousAgentService {
         .replace(/\s+/g, " ")
         .trim();
 
-    // 1. FEFO Pick List / Batch Allocation
+    // 0. Check for conversational reply to a pending confirmation card
+    const lastAssistantMsg = history
+      ?.slice()
+      .reverse()
+      .find((m) => m.role === "assistant" && m.confirmation && m.confirmation.status === "pending");
+
+    if (lastAssistantMsg?.confirmation) {
+      const isNegative = /\b(no|cancel|cancle|cencel|cancl|nahi|abort|ruk jao|mat karo|stop|nevermind|reject|chhod do|rehne do|chodo|dont do|don't do|na)\b/i.test(
+        text,
+      );
+      const isAffirmative = /\b(yes|confirm|proceed|ha|haan|sure|kardo|kar do|kar dena|karo|do it|ok|okay|yep|go ahead|approve|approved|theek hai|sahi hai|chalega|proceed karo)\b/i.test(
+        text,
+      );
+
+      if (isNegative) {
+        return {
+          intent: "cancel_pending_confirmation",
+          steps: [],
+          pendingConfirmation: lastAssistantMsg.confirmation,
+        };
+      }
+      if (isAffirmative) {
+        return {
+          intent: "execute_pending_confirmation",
+          steps: [],
+          pendingConfirmation: lastAssistantMsg.confirmation,
+        };
+      }
+    }
+
+    // 1. Destructive: Cancel Invoice
+    if (
+      /\b(cancel|cancle|cencel|cancl|hatao|radd|void|delete)\b.*(inv|invoice|bill)/i.test(text) ||
+      /\b(inv|invoice|bill)\b.*(cancel|cancle|cencel|cancl|hatao|radd|void|delete)/i.test(text)
+    ) {
+      return { intent: "propose_cancel_invoice", steps: [] };
+    }
+
+    // 2. Destructive: Cancel Purchase Order
+    if (
+      /\b(cancel|cancle|cencel|cancl|hatao|radd|void|delete)\b.*(po|purchase order|order)/i.test(text) ||
+      /\b(po|purchase order)\b.*(cancel|cancle|cencel|cancl|hatao|radd|void|delete)/i.test(text)
+    ) {
+      return { intent: "propose_cancel_po", steps: [] };
+    }
+
+    // 3. Destructive: Short-Close Purchase Order
+    if (/\b(short close|short-close|shortclose|close po|po close|baki close|close remaining|adhe me close)\b/i.test(text)) {
+      return { intent: "propose_short_close_po", steps: [] };
+    }
+
+    // 4. Destructive / Financial: Reverse Ledger Entry
+    if (
+      /\b(reverse|revurse|revers|undo|ulta karo|wapas lo)\b.*(ledger|entry|movement|le-|\bstock\b|wrong|galat)/i.test(text) ||
+      /\b(ledger|entry|movement|wrong entry|galat entry)\b.*(reverse|revurse|revers|undo|ulta|wapas)/i.test(text)
+    ) {
+      return { intent: "propose_reverse_ledger", steps: [] };
+    }
+
+    // 5. Destructive / Environment: Purge Sandbox
+    if (
+      /\b(purge|clean|clear|reset|delete)\b.*(sandbox|demo|test data|sample)/i.test(text) ||
+      /\b(demo|sandbox)\b.*(hata|saaf|delete|purge|reset|clean)/i.test(text)
+    ) {
+      return { intent: "propose_purge_sandbox", steps: [] };
+    }
+
+    // 6. Environment: Seed Sandbox Data
+    if (
+      /\b(seed|load|setup|create|populate)\b.*(sandbox|demo|test data)/i.test(text) ||
+      /\b(demo|sandbox)\b.*(bana|chalu|seed|load|setup)/i.test(text)
+    ) {
+      return { intent: "execute_seed_sandbox", steps: [] };
+    }
+
+    // 7. Multi-leg: Fulfill / Dispatch Outward with automated FEFO
+    const isDispatchReadinessQuery =
+      text.includes("can we dispatch") ||
+      text.includes("ready to dispatch") ||
+      text.includes("dispatch readiness") ||
+      text.includes("is it ready");
+
+    if (
+      !isDispatchReadinessQuery &&
+      (/\b(dispatch|despatch|disptach|fulfill|deliver|bhejo|nikalo|rawana|challan)\b.*(inv|invoice|bill|order|fefo)/i.test(text) ||
+      (/\b(dispatch|fulfill|challan)\b/i.test(text) && onInvoiceRoute))
+    ) {
+      return { intent: "propose_post_dispatch", steps: [] };
+    }
+
+    // 8. Masters Creation: Customer
+    if (/\b(create|add|new|naya)\b.*(customer|client|buyer)/i.test(text)) {
+      return { intent: "execute_create_customer", steps: [] };
+    }
+
+    // 9. Masters Creation: Supplier
+    if (/\b(create|add|new|naya)\b.*(supplier|vendor)/i.test(text)) {
+      return { intent: "execute_create_supplier", steps: [] };
+    }
+
+    // 10. Masters Creation: Godown
+    if (/\b(create|add|new|naya)\b.*(godown|warehouse|depot)/i.test(text)) {
+      return { intent: "execute_create_godown", steps: [] };
+    }
+
+    // 11. FEFO Pick List / Batch Allocation
     if (
       text.includes("pick list") ||
       text.includes("pick batch") ||
@@ -242,8 +386,8 @@ export class AutonomousAgentService {
       };
     }
 
-    // 2. Dispatch Readiness Check (Invoice or Product)
-    const invMatch = message.match(/(INV-[A-Za-z0-9-]+)/i);
+    // 12. Dispatch Readiness Check (Invoice or Product)
+    const invMatch = message.match(/((?:DEMO-)?INV-[A-Za-z0-9-]+)/i);
     const wantsDispatch =
       text.includes("dispatch readiness") ||
       text.includes("ready to dispatch") ||
@@ -294,7 +438,7 @@ export class AutonomousAgentService {
       };
     }
 
-    // 3. Expiring Batches / Shelf-life Risk Analysis
+    // 13. Expiring Batches / Shelf-life Risk Analysis
     if (
       text.includes("expir") ||
       text.includes("shelf life") ||
@@ -320,7 +464,7 @@ export class AutonomousAgentService {
       };
     }
 
-    // 4. Immutable Inventory Ledger Audit Movements
+    // 14. Immutable Inventory Ledger Audit Movements
     if (
       (text.includes("ledger") ||
         text.includes("audit") ||
@@ -330,7 +474,7 @@ export class AutonomousAgentService {
         text.includes("le-")) &&
       /(show|list|view|get|recent|entries|entry|movements?|audit trail|history|for)\b/.test(text)
     ) {
-      const docMatch = message.match(/((?:PO|INV|DC|GRN)-[A-Za-z0-9-]+)/i);
+      const docMatch = message.match(/((?:DEMO-)?(?:PO|INV|DC|GRN)-[A-Za-z0-9-]+)/i);
       const referenceNo = docMatch ? docMatch[1].toUpperCase() : undefined;
       const cleanProduct = !referenceNo
         ? tidyTerm(
@@ -358,9 +502,9 @@ export class AutonomousAgentService {
       };
     }
 
-    // 5. Document Status Tracking (PO, Invoice, Dispatch, GRN)
-    const poMatch = message.match(/(PO-[A-Za-z0-9-]+)/i);
-    const dcMatch = message.match(/(DC-[A-Za-z0-9-]+)/i);
+    // 15. Document Status Tracking (PO, Invoice, Dispatch, GRN)
+    const poMatch = message.match(/((?:DEMO-)?PO-[A-Za-z0-9-]+)/i);
+    const dcMatch = message.match(/((?:DEMO-)?DC-[A-Za-z0-9-]+)/i);
     if (poMatch) {
       const number = poMatch[1].toUpperCase();
       return {
@@ -396,7 +540,7 @@ export class AutonomousAgentService {
       return { intent: "document_status", steps: [] };
     }
 
-    // 6. Low Stock Alerts & Reorder Replenishment
+    // 16. Low Stock Alerts & Reorder Replenishment
     if (
       text.includes("low stock") ||
       text.includes("reorder") ||
@@ -423,54 +567,34 @@ export class AutonomousAgentService {
       };
     }
 
-    // 7. Godown Capacities and Locations
+    // 17. Godown Capacities and Locations
     if (text.includes("godown") || text.includes("warehouse") || text.includes("depot")) {
       return {
         intent: "godowns",
         steps: [
           {
-            name: "List Godowns & Storage Lines",
+            name: "Query Godowns Registry",
             toolName: "get_godowns",
-            arguments: { limit: 10 },
-            description: "Querying active godowns, locations, and active stock counts",
-          },
-        ],
-      };
-    }
-
-    // 8. Conceptual / policy questions belong in the knowledge base, not a
-    // live lookup. Without this guard, "how does stock work?" would be parsed
-    // as a product search for "work".
-    const hasDocumentNumber = /(?:PO|INV|DC|GRN)-[A-Za-z0-9-]+/i.test(message);
-    const conceptual =
-      !hasDocumentNumber &&
-      !/\bhow (?:many|much)\b/i.test(text) &&
-      (/^\s*(?:how|why)\b/i.test(text) ||
-        /\b(?:explain|describe|meaning of|difference between)\b/i.test(text) ||
-        /\bhow (?:do|does|can|should|to)\b/i.test(text) ||
-        /\bwhat (?:is|are|does)\b[^.?]{0,60}\b(?:mean|work|happen)\b/i.test(text));
-    if (conceptual) {
-      return {
-        intent: "general_operational",
-        steps: [
-          {
-            name: "Workspace Summary",
-            toolName: "get_workspace_summary",
             arguments: {},
-            description: "Fetching live workspace totals while consulting the knowledge base",
+            description: "Fetching list of registered warehouse godowns and storage locations",
           },
         ],
       };
     }
 
-    // 9. General Stock Check for a Product
+    // 18. Stock Balance & Batch Check for a Product
+    const isConceptualStock =
+      /\b(how does|how do|what is|why is|explain|tell me about)\b/i.test(text) &&
+      !/\b(balance|available|on hand|in warehouse|batch|godown|how much|how many)\b/i.test(text);
+
     if (
-      text.includes("stock") ||
-      text.includes("inventory") ||
-      text.includes("on hand") ||
-      text.includes("available") ||
-      text.includes("how many") ||
-      text.includes("balance")
+      !isConceptualStock &&
+      (text.includes("stock") ||
+        text.includes("inventory") ||
+        text.includes("on hand") ||
+        text.includes("available") ||
+        text.includes("how many") ||
+        text.includes("balance"))
     ) {
       const clean =
         tidyTerm(
@@ -514,17 +638,627 @@ export class AutonomousAgentService {
   }
 
   /**
-   * Executes the multi-step plan and synthesizes a comprehensive response.
+   * Executes confirmed decisions directly against the database with actor audit logs.
+   */
+  static async executeConfirmation(
+    actor: Actor,
+    params: {
+      confirmationId: string;
+      actionType: CopilotActionType;
+      payload: Record<string, unknown>;
+      decision: "confirm" | "cancel" | "alternative";
+      alternativeAction?: string;
+      reason?: string;
+    },
+  ): Promise<{
+    success: boolean;
+    data: {
+      status: "executed" | "cancelled" | "failed";
+      message: string;
+      actions?: CopilotAction[];
+      details?: unknown;
+    };
+  }> {
+    if (params.decision === "cancel") {
+      return {
+        success: true,
+        data: {
+          status: "cancelled",
+          message: "Operation was cancelled. No database records were modified.",
+          actions: [],
+        },
+      };
+    }
+
+    try {
+      switch (params.actionType) {
+        case "CANCEL_INVOICE": {
+          if (!can(actor.role, "invoice.manage")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot cancel invoices.`,
+              },
+            };
+          }
+          const invoiceId = params.payload.invoiceId as string;
+          const invoiceNumber = (params.payload.invoiceNumber as string) || "Invoice";
+          const reason = params.reason || (params.payload.reason as string) || "Cancelled via Copilot confirmation";
+          await cancelInvoice(actor, invoiceId, reason);
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `Invoice ${invoiceNumber} has been marked as CANCELLED.`,
+              actions: [{ label: "View Invoices", route: "/invoices", permission: "invoice.view" }],
+            },
+          };
+        }
+
+        case "CANCEL_PO": {
+          if (!can(actor.role, "po.manage")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot cancel purchase orders.`,
+              },
+            };
+          }
+          const poId = params.payload.poId as string;
+          const poNumber = (params.payload.poNumber as string) || "PO";
+          const reason = params.reason || (params.payload.reason as string) || "Cancelled via Copilot confirmation";
+          await cancelPurchaseOrder(actor, poId, reason);
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `Purchase order ${poNumber} has been marked as CANCELLED.`,
+              actions: [{ label: "View Purchase Orders", route: "/purchase-orders", permission: "po.view" }],
+            },
+          };
+        }
+
+        case "SHORT_CLOSE_PO": {
+          if (!can(actor.role, "po.manage")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot short-close purchase orders.`,
+              },
+            };
+          }
+          const poId = params.payload.poId as string;
+          const poNumber = (params.payload.poNumber as string) || "PO";
+          const reason = params.reason || (params.payload.reason as string) || "Short-closed via Copilot confirmation";
+          await shortClosePurchaseOrder(actor, poId, reason);
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `Purchase order ${poNumber} has been short-closed. Remaining lines are closed.`,
+              actions: [{ label: "View Purchase Orders", route: "/purchase-orders", permission: "po.view" }],
+            },
+          };
+        }
+
+        case "REVERSE_LEDGER": {
+          if (!can(actor.role, "ledger.reverse")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot reverse ledger movements.`,
+              },
+            };
+          }
+          const entryId = params.payload.entryId as string;
+          const entryNo = (params.payload.entryNo as string) || "Ledger entry";
+          const reason = params.reason || (params.payload.reason as string) || "Reversed via Copilot confirmation";
+          await reverseEntry(actor, entryId, reason);
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `Ledger movement ${entryNo} has been reversed. Counter-entry appended to immutable ledger.`,
+              actions: [{ label: "View Stock Ledger", route: "/ledger", permission: "ledger.view" }],
+            },
+          };
+        }
+
+        case "PURGE_SANDBOX": {
+          if (!can(actor.role, "settings.manage")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot manage sandbox test data.`,
+              },
+            };
+          }
+          const purgeResult = await purgeSandboxData(actor);
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `Sandbox demo environment purged cleanly (${purgeResult.purgedCount} demo records removed). Zero production records affected.`,
+              actions: [{ label: "View Live Stock", route: "/stock", permission: "stock.view" }],
+            },
+          };
+        }
+
+        case "SEED_SANDBOX": {
+          if (!can(actor.role, "settings.manage")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot seed sandbox test data.`,
+              },
+            };
+          }
+          const seedResult = await seedSandboxData(actor);
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: seedResult.message,
+              actions: [
+                { label: "View Live Stock", route: "/stock", permission: "stock.view" },
+                { label: "View Invoices", route: "/invoices", permission: "invoice.view" },
+              ],
+            },
+          };
+        }
+
+        case "POST_DISPATCH": {
+          if (!can(actor.role, "dispatch.create")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot create dispatches.`,
+              },
+            };
+          }
+          const outward = await postDispatch(actor, params.payload as unknown as Parameters<typeof postDispatch>[1]);
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `Delivery Challan ${outward.outwardNumber} posted successfully. Stock deducted from ledger via FEFO.`,
+              actions: [
+                { label: "Open Delivery Challan", route: `/dispatches/${outward.id}`, permission: "dispatch.view" },
+                { label: "View Invoices", route: "/invoices", permission: "invoice.view" },
+              ],
+            },
+          };
+        }
+
+        default:
+          return {
+            success: false,
+            data: {
+              status: "failed",
+              message: `Unsupported action type "${params.actionType}".`,
+            },
+          };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        data: {
+          status: "failed",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
+  /**
+   * Executes the multi-step plan, processes natural language actions, and attaches
+   * confirmation proposals or executes confirmed operations.
    */
   static async executePlan(
     message: string,
     context: AgentContext,
+    actor?: Actor,
+    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation }>,
   ): Promise<AgentExecutionResult> {
-    const { intent, steps } = this.planIntent(message, context);
+    const { intent, steps, pendingConfirmation } = this.planIntent(message, context, history);
     const executed: AgentExecutionResult["stepsExecuted"] = [];
     const actions: CopilotAction[] = [];
     const sources: string[] = [];
+    let confirmation: CopilotConfirmation | undefined;
 
+    // Direct conversational execution of a pending confirmation card
+    if (intent === "execute_pending_confirmation" && pendingConfirmation) {
+      const activeActor: Actor = actor ?? { userId: "SYSTEM", role: context.role };
+      const execution = await this.executeConfirmation(activeActor, {
+        confirmationId: pendingConfirmation.id,
+        actionType: pendingConfirmation.actionType,
+        payload: pendingConfirmation.payload,
+        decision: "confirm",
+      });
+
+      return {
+        stepsExecuted: [],
+        markdownAnswer: execution.success
+          ? `✅ **Action Confirmed & Executed**\n\n${execution.data.message}`
+          : `❌ **Execution Failed**\n\n${execution.data.message}`,
+        actions: execution.data.actions ?? [],
+        sources: ["Autonomous Confirmation Protocol"],
+        confirmation: {
+          ...pendingConfirmation,
+          status: execution.success ? "executed" : "failed",
+          resultMessage: execution.data.message,
+        },
+      };
+    }
+
+    // Direct conversational cancellation of a pending confirmation card
+    if (intent === "cancel_pending_confirmation" && pendingConfirmation) {
+      return {
+        stepsExecuted: [],
+        markdownAnswer: `🛑 **Action Cancelled**\n\nThe operation was aborted at your request. No database records or stock balances were modified.`,
+        actions: [],
+        sources: ["Autonomous Confirmation Protocol"],
+        confirmation: {
+          ...pendingConfirmation,
+          status: "cancelled",
+          resultMessage: "Cancelled by user",
+        },
+      };
+    }
+
+    // Destructive Intent: Propose Invoice Cancellation
+    if (intent === "propose_cancel_invoice") {
+      if (!can(context.role, "invoice.manage")) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `⚠️ **Permission Denied**\n\nYour current role (**${context.role}**) does not have permission to manage/cancel invoices (\`invoice.manage\`). Please request a Store Manager or Administrator.`,
+          actions: [{ label: "View Invoices", route: "/invoices", permission: "invoice.view" }],
+          sources: ["RBAC Enforcement Matrix"],
+        };
+      }
+
+      const invMatch = message.match(/((?:DEMO-)?INV-[A-Za-z0-9-]+)/i) || message.match(/#?(\d+)/);
+      const invoiceNumber = invMatch ? invMatch[1].toUpperCase() : null;
+
+      const invoice = invoiceNumber
+        ? await prisma.invoice.findFirst({
+            where: {
+              OR: [
+                { invoiceNumber },
+                { invoiceNumber: { contains: invoiceNumber, mode: "insensitive" } },
+              ],
+            },
+            include: { customer: true, items: true, outwards: true },
+          })
+        : await prisma.invoice.findFirst({
+            where: { status: "OPEN" },
+            orderBy: { createdAt: "desc" },
+            include: { customer: true, items: true, outwards: true },
+          });
+
+      if (!invoice) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `Could not locate the requested invoice. Please provide the invoice number (for example \`INV-2026-0001\` or \`DEMO-INV-001\`).`,
+          actions: [{ label: "Browse Invoices", route: "/invoices", permission: "invoice.view" }],
+          sources: ["Invoice Registry"],
+        };
+      }
+
+      if (invoice.status === "CANCELLED") {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `Invoice **\`${invoice.invoiceNumber}\`** is already marked as \`CANCELLED\`. No further action is required.`,
+          actions: [{ label: "Open Invoice", route: `/invoices/${invoice.id}`, permission: "invoice.view" }],
+          sources: ["Invoice Registry"],
+        };
+      }
+
+      if (invoice.outwards.length > 0) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `⚠️ **Cannot Cancel Invoice Directly**\n\nInvoice **\`${invoice.invoiceNumber}\`** has **${invoice.outwards.length}** dispatch document(s) already posted against it. Dispatches must be reversed before the invoice can be cancelled.`,
+          actions: [
+            { label: "View Dispatches", route: "/dispatches", permission: "dispatch.view" },
+            { label: "Open Invoice", route: `/invoices/${invoice.id}`, permission: "invoice.view" },
+          ],
+          sources: ["Invoice Registry & Outward Fulfillment"],
+        };
+      }
+
+      const reasonMatch = message.match(/(?:reason|because|due to|kyuki|kyunki)\s+(.*)/i);
+      const reason = reasonMatch ? reasonMatch[1].trim() : "Cancelled via Copilot confirmation";
+
+      confirmation = {
+        id: randomUUID(),
+        title: `Cancel Invoice ${invoice.invoiceNumber}`,
+        description: `Permanently cancel invoice ${invoice.invoiceNumber} for ${invoice.customer.name}. It will be marked as CANCELLED and no dispatches can be created against it.`,
+        actionType: "CANCEL_INVOICE",
+        payload: {
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber,
+          customerName: invoice.customer.name,
+          reason,
+        },
+        destructive: true,
+        confirmLabel: "Yes, Cancel Invoice",
+        cancelLabel: "Nevermind, Keep It",
+        alternatives: [
+          { label: "Inspect Invoice", action: "NAVIGATE", payload: { route: `/invoices/${invoice.id}` } },
+        ],
+        status: "pending",
+      };
+
+      return {
+        stepsExecuted: [],
+        markdownAnswer: `### ⚠️ Confirmation Required: Cancel Invoice\n\nI found invoice **\`${invoice.invoiceNumber}\`** for **${invoice.customer.name}** (Status: \`OPEN\`).\n\n**Consequences of Cancellation:**\n- The invoice status becomes \`CANCELLED\` permanently.\n- Demand allocation is freed; no further dispatches can be generated.\n- This action is cryptographically logged under your user account for audit compliance.\n\nWould you like to proceed? You can click **"Yes, Cancel Invoice"** below, or reply **"yes, cancel it"** / **"no, keep it"**.`,
+        actions: [
+          { label: "Open Invoice Details", route: `/invoices/${invoice.id}`, permission: "invoice.view" },
+        ],
+        sources: ["Invoice Registry & Cancellation Rules"],
+        confirmation,
+      };
+    }
+
+    // Destructive Intent: Propose Purchase Order Cancellation
+    if (intent === "propose_cancel_po") {
+      if (!can(context.role, "po.manage")) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `⚠️ **Permission Denied**\n\nYour current role (**${context.role}**) does not have permission to manage purchase orders (\`po.manage\`).`,
+          actions: [{ label: "View Purchase Orders", route: "/purchase-orders", permission: "po.view" }],
+          sources: ["RBAC Enforcement Matrix"],
+        };
+      }
+
+      const poMatch = message.match(/((?:DEMO-)?PO-[A-Za-z0-9-]+)/i) || message.match(/#?(\d+)/);
+      const poNumber = poMatch ? poMatch[1].toUpperCase() : null;
+
+      const po = poNumber
+        ? await prisma.purchaseOrder.findFirst({
+            where: {
+              OR: [
+                { poNumber },
+                { poNumber: { contains: poNumber, mode: "insensitive" } },
+              ],
+            },
+            include: { supplier: true, items: true, grns: true },
+          })
+        : await prisma.purchaseOrder.findFirst({
+            where: { status: "OPEN" },
+            orderBy: { createdAt: "desc" },
+            include: { supplier: true, items: true, grns: true },
+          });
+
+      if (!po) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `Could not locate the purchase order. Please specify the PO number (for example \`PO-2026-0001\` or \`DEMO-PO-001\`).`,
+          actions: [{ label: "Browse Purchase Orders", route: "/purchase-orders", permission: "po.view" }],
+          sources: ["Purchasing Registry"],
+        };
+      }
+
+      if (po.items.some((item) => Number(item.receivedQty) > 0)) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `⚠️ **PO Has Received Goods**\n\nPurchase order **\`${po.poNumber}\`** already has goods received against it. Orders with receipts cannot be cancelled outright, but you can **short-close** the remaining unreceived balance so no more shipments are accepted.`,
+          actions: [
+            { label: "Open Purchase Order", route: `/purchase-orders/${po.id}`, permission: "po.view" },
+          ],
+          sources: ["Procurement Lifecycle Invariants"],
+        };
+      }
+
+      confirmation = {
+        id: randomUUID(),
+        title: `Cancel Purchase Order ${po.poNumber}`,
+        description: `Cancel PO ${po.poNumber} for ${po.supplier.name}. No material receipts will be permitted.`,
+        actionType: "CANCEL_PO",
+        payload: {
+          poId: po.id,
+          poNumber: po.poNumber,
+          supplierName: po.supplier.name,
+          reason: "Cancelled via Copilot confirmation",
+        },
+        destructive: true,
+        confirmLabel: "Yes, Cancel Order",
+        cancelLabel: "Keep Order",
+        status: "pending",
+      };
+
+      return {
+        stepsExecuted: [],
+        markdownAnswer: `### ⚠️ Confirmation Required: Cancel Purchase Order\n\nI located PO **\`${po.poNumber}\`** with supplier **${po.supplier.name}** (Status: \`${po.status}\`, Total: ${po.items.length} line items).\n\nCancelling this order will mark it \`CANCELLED\` and prevent warehouse GRN receipts.\n\nClick **"Yes, Cancel Order"** or reply **"yes" / "no"**.`,
+        actions: [{ label: "Open PO Details", route: `/purchase-orders/${po.id}`, permission: "po.view" }],
+        sources: ["Purchasing Registry"],
+        confirmation,
+      };
+    }
+
+    // Destructive Intent: Propose Sandbox Purge
+    if (intent === "propose_purge_sandbox") {
+      if (!can(context.role, "settings.manage")) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `⚠️ **Permission Denied**\n\nOnly Administrators (\`settings.manage\`) can purge demo sandbox test data.`,
+          actions: [{ label: "View Live Stock", route: "/stock", permission: "stock.view" }],
+          sources: ["RBAC Enforcement Matrix"],
+        };
+      }
+
+      confirmation = {
+        id: randomUUID(),
+        title: "Clean Up Sandbox Demo Data",
+        description: "Purge all DEMO-* test SKUs, stock balances, invoices, GRNs, and dispatches. Zero production records will be touched.",
+        actionType: "PURGE_SANDBOX",
+        payload: {},
+        destructive: true,
+        confirmLabel: "Yes, Purge Demo Data",
+        cancelLabel: "Nevermind",
+        status: "pending",
+      };
+
+      return {
+        stepsExecuted: [],
+        markdownAnswer: `### ⚠️ Confirmation Required: Sandbox Demo Purge\n\nThis will purge all demo sample records (including \`DEMO-BASMATI-01\`, demo godowns, and unlinked demo transactions).\n\n**Data Safety Guarantee:** Every production transaction, SKU, customer, and supplier is completely isolated and will not be touched.\n\nConfirm to proceed with clean up?`,
+        actions: [{ label: "Onboarding Analytics", route: "/admin/onboarding", permission: "settings.manage" }],
+        sources: ["Sandbox Isolation Controller"],
+        confirmation,
+      };
+    }
+
+    // Operational: Seed Sandbox
+    if (intent === "execute_seed_sandbox") {
+      const activeActor: Actor = actor ?? { userId: "SYSTEM", role: context.role };
+      const seedResult = await seedSandboxData(activeActor);
+      return {
+        stepsExecuted: [],
+        markdownAnswer: `🎉 **Sandbox Demo Environment Ready**\n\n${seedResult.message}\n\n- **Stock Added:** 100 bags Royal Basmati Rice in Demo Central Warehouse\n- **Sales Order:** Open invoice ready for FEFO dispatching\n- **Safety:** Tagged with \`DEMO-\` prefix for one-click clean up anytime.`,
+        actions: [
+          { label: "View Live Stock", route: "/stock", permission: "stock.view" },
+          { label: "View Invoices", route: "/invoices", permission: "invoice.view" },
+          { label: "Onboarding Analytics", route: "/admin/onboarding", permission: "settings.manage" },
+        ],
+        sources: ["Sandbox Engine"],
+      };
+    }
+
+    // Operational: Propose Automated FEFO Dispatch
+    if (intent === "propose_post_dispatch") {
+      if (!can(context.role, "dispatch.create")) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `⚠️ **Permission Denied**\n\nYour role (${context.role}) does not have permission to post outward dispatches (\`dispatch.create\`).`,
+          actions: [{ label: "View Invoices", route: "/invoices", permission: "invoice.view" }],
+          sources: ["RBAC Enforcement Matrix"],
+        };
+      }
+
+      const invMatch = message.match(/((?:DEMO-)?INV-[A-Za-z0-9-]+)/i);
+      const invoice = invMatch
+        ? await prisma.invoice.findFirst({
+            where: { invoiceNumber: invMatch[1].toUpperCase() },
+            include: { customer: true, items: { include: { sku: { include: { baseUom: true } } } } },
+          })
+        : await prisma.invoice.findFirst({
+            where: { status: "OPEN" },
+            orderBy: { createdAt: "desc" },
+            include: { customer: true, items: { include: { sku: { include: { baseUom: true } } } } },
+          });
+
+      if (!invoice) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `Please specify the invoice number to dispatch (for example \`INV-2026-0001\` or \`DEMO-INV-001\`).`,
+          actions: [{ label: "Browse Invoices", route: "/invoices", permission: "invoice.view" }],
+          sources: ["Invoice Registry"],
+        };
+      }
+
+      // Check available batches for lines using FEFO
+      const readinessData = (await executeCopilotToolData(
+        "check_dispatch_readiness",
+        JSON.stringify({ invoiceNumber: invoice.invoiceNumber }),
+        { role: context.role, route: context.route },
+      )) as DispatchReadinessResult;
+
+      if (readinessData.overallReadiness !== "READY_TO_DISPATCH") {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `### Dispatch Cannot Be Completed\n\nInvoice **\`${invoice.invoiceNumber}\`** is not currently ready for full fulfillment:\n\n${readinessData.recommendedAction}`,
+          actions: [
+            { label: "Open Invoice", route: `/invoices/${invoice.id}`, permission: "invoice.view" },
+            { label: "Check Stock Balances", route: "/stock", permission: "stock.view" },
+          ],
+          sources: ["FEFO Stock Readiness Evaluator"],
+        };
+      }
+
+      // Resolve godown and batch lines
+      const activeGodown = await prisma.godown.findFirst({ where: { isActive: true } });
+      if (!activeGodown) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `No active warehouse godowns found to dispatch from.`,
+          actions: [{ label: "Manage Godowns", route: "/masters/godowns", permission: "master.view" }],
+          sources: ["Godown Master"],
+        };
+      }
+
+      const dispatchLines: Array<{ skuId: string; batchId: string; quantity: string }> = [];
+      for (const item of invoice.items) {
+        const remaining = Number(item.quantity) - Number(item.dispatchedQty);
+        if (remaining <= 0) continue;
+        const availableBatch = await prisma.stockBalance.findFirst({
+          where: {
+            skuId: item.skuId,
+            quantity: { gte: toDecimal(remaining) },
+          },
+          include: { batch: true },
+          orderBy: { batch: { expiryDate: "asc" } },
+        });
+
+        if (availableBatch) {
+          dispatchLines.push({
+            skuId: item.skuId,
+            batchId: availableBatch.batchId,
+            quantity: String(remaining),
+          });
+        }
+      }
+
+      if (dispatchLines.length === 0) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `Stock allocation could not find single batch covering lines. Please allocate manually via the dispatch form.`,
+          actions: [
+            {
+              label: "Create Manual Dispatch",
+              route: "/dispatches/new",
+              params: { invoiceId: invoice.id },
+              permission: "dispatch.create",
+            },
+          ],
+          sources: ["FEFO Allocation Engine"],
+        };
+      }
+
+      confirmation = {
+        id: randomUUID(),
+        title: `Confirm Outward Dispatch: ${invoice.invoiceNumber}`,
+        description: `Dispatch invoice ${invoice.invoiceNumber} to ${invoice.customer.name} from ${activeGodown.name} using automated FEFO batch allocation.`,
+        actionType: "POST_DISPATCH",
+        payload: {
+          invoiceId: invoice.id,
+          godownId: activeGodown.id,
+          items: dispatchLines,
+        },
+        destructive: false,
+        confirmLabel: "Confirm & Post Dispatch",
+        cancelLabel: "Cancel",
+        status: "pending",
+      };
+
+      return {
+        stepsExecuted: [],
+        markdownAnswer: `### ⚡ FEFO Dispatch Allocation Prepared\n\nOptimal batch picking calculated for **\`${invoice.invoiceNumber}\`** (${invoice.customer.name}):\n\n- **Source Godown:** \`${activeGodown.code}\` — ${activeGodown.name}\n- **Allocated Lines:** ${dispatchLines.length} item(s) mapped to earliest-expiring unexpired batches.\n\nPosting this will deduct inventory from the signed ledger and generate Delivery Challan.\n\nClick **"Confirm & Post Dispatch"** or reply **"confirm / yes"** to proceed.`,
+        actions: [
+          { label: "Inspect Invoice", route: `/invoices/${invoice.id}`, permission: "invoice.view" },
+        ],
+        sources: ["FEFO Stock Picking Protocol"],
+        confirmation,
+      };
+    }
+
+    // Standard analytical & informational multi-step tools execution
     for (const step of steps) {
       try {
         const parsed = await executeCopilotToolData(step.toolName, JSON.stringify(step.arguments), {
@@ -549,43 +1283,37 @@ export class AutonomousAgentService {
 
     switch (intent) {
       case "fefo_allocation": {
-        const pickData = executed.find((e) => e.toolName === "get_fefo_pick_list")?.output as FefoResult | undefined;
-        if (!pickData || pickData.error) {
-          markdown = `### FEFO Allocation Status\n\nCould not compute batch allocation: **${pickData?.error || "Product not found"}**.\n\nPlease check the product name or code.`;
+        const fefo = executed.find((e) => e.toolName === "get_fefo_pick_list")?.output as FefoResult | undefined;
+        if (!fefo || fefo.error) {
+          markdown = `### FEFO Allocation Status\n\nCould not compute batch allocation: **${fefo?.error || "Unknown error"}**.\n\nPlease check the product name or code.`;
           actions.push({ label: "Browse Product Master", route: "/masters/skus", permission: "master.view" });
           break;
         }
 
-        const isOk = pickData.status === "FULLY_ALLOCATED";
-        markdown = `## FEFO Batch Allocation Plan: ${pickData.product.code}\n\n`;
-        markdown += `**Product:** ${pickData.product.name} (${pickData.product.code})\n`;
-        markdown += `**Target Quantity:** ${pickData.requestedQty} ${pickData.product.unit}\n`;
-        if (pickData.godown) markdown += `**Pick Godown:** \`${pickData.godown}\`\n`;
-        markdown += `**Status:** ${isOk ? "✅ **FULLY ALLOCATED**" : "⚠️ **STOCK SHORTAGE**"}\n`;
-        markdown += `**Allocated:** ${pickData.allocatedQty} ${pickData.product.unit} | **Shortfall:** ${pickData.shortfallQty} ${pickData.product.unit}\n\n`;
-        if (!isOk && pickData.warehouseAvailableQty) {
-          markdown += `**Warehouse-wide available:** ${pickData.warehouseAvailableQty} ${pickData.product.unit} across all godowns.\n\n`;
-        }
-        markdown += `### Recommended Pick Sequence (Earliest Expiry First):\n`;
+        markdown = `## Optimal FEFO Pick List: ${fefo.product.name} (\`${fefo.product.code}\`)\n\n`;
+        markdown += `**Requested Quantity:** ${fefo.requestedQty} ${fefo.product.unit} | **Allocated:** ${fefo.allocatedQty} ${fefo.product.unit}\n\n`;
 
-        if (pickData.pickList && pickData.pickList.length > 0) {
-          for (const [idx, b] of pickData.pickList.entries()) {
-            markdown += `${idx + 1}. **Batch \`${b.batch}\`** in Godown **\`${b.godown}\`**:\n`;
-            markdown += `   - Pick: **${b.pickQty} ${pickData.product.unit}**\n`;
-            markdown += `   - Expiry Date: **${b.expiryDate || "No Expiry Tracked"}**\n`;
-            markdown += `   - Available in Batch: ${b.availableQty} (Remaining: ${b.remainingInBatch})\n`;
-          }
+        if (fefo.status === "SHORTAGE") {
+          markdown += `⚠️ **Stock Shortfall Warning:** Short by **${fefo.shortfallQty} ${fefo.product.unit}**! Total warehouse unexpired stock is ${fefo.warehouseAvailableQty ?? "0"} ${fefo.product.unit}.\n\n`;
         } else {
-          markdown += `_No unexpired batches with stock available in selected warehouse._\n`;
+          markdown += `✅ **Fully Allocatable:** Sufficient unexpired batch stock is ready in warehouse godowns.\n\n`;
         }
 
-        markdown += `\n**Operational Guidance:** ${pickData.recommendation}\n`;
+        markdown += `| Pick Priority | Batch Number | Godown | Expiry Date | Available | Pick Qty |\n`;
+        markdown += `| :---: | :--- | :--- | :---: | :---: | :---: |\n`;
+        fefo.pickList.forEach((pick, idx) => {
+          markdown += `| **#${idx + 1}** | \`${pick.batch}\` | \`${pick.godown}\` | ${pick.expiryDate || "No Expiry"} | ${pick.availableQty} | **${pick.pickQty} ${fefo.product.unit}** |\n`;
+        });
 
-        if (isOk) {
-          actions.push({ label: "Create Outward Dispatch", route: "/dispatches/new", permission: "dispatch.create" });
-        }
-        actions.push({ label: "View Stock Ledger", route: "/ledger", permission: "ledger.view" });
-        sources.push("Live Stock Balance & Batch Expiry Index");
+        markdown += `\n**Protocol Recommendation:** ${fefo.recommendation}\n`;
+
+        actions.push({
+          label: "Create Outward Dispatch",
+          route: "/dispatches/new",
+          permission: "dispatch.create",
+        });
+        actions.push({ label: "Check Stock Balances", route: "/stock", permission: "stock.view" });
+        sources.push("FEFO Dynamic Allocation Engine (First-Expired, First-Out)");
         break;
       }
 
@@ -594,40 +1322,39 @@ export class AutonomousAgentService {
         if (!readiness || readiness.error) {
           markdown =
             steps.length === 0
-              ? "### Dispatch Readiness Verification\n\nMention the invoice number (for example `INV-2026-0001`) and I will check each line against unexpired stock."
+              ? "### Dispatch Readiness Verification\n\nPlease mention the invoice number (for example `INV-2026-0001` or `DEMO-INV-001`) to check unexpired stock across godowns."
               : `### Dispatch Readiness Verification\n\n${readiness?.error || "Invoice not found"}. Please check the invoice number (e.g. \`INV-2026-0001\`).`;
           actions.push({ label: "View All Invoices", route: "/invoices", permission: "invoice.view" });
           break;
         }
 
-        const isReady = readiness.overallReadiness === "READY_TO_DISPATCH";
-        const isFullyDispatched = readiness.overallReadiness === "FULLY_DISPATCHED";
         const isCancelled = readiness.overallReadiness === "CANCELLED";
-        const verdict = isReady
-          ? "✅ **READY TO DISPATCH** (100% Stock Available)"
-          : isFullyDispatched
-            ? "📦 **FULLY DISPATCHED** (Nothing left to pick)"
-            : isCancelled
-              ? "🚫 **INVOICE CANCELLED**"
-              : "⚠️ **STOCK SHORTAGE DETECTED**";
-        markdown = `## Dispatch Readiness Check: ${readiness.invoiceNumber}\n\n`;
-        markdown += `**Customer:** ${readiness.customer}\n`;
-        markdown += `**Invoice Status:** \`${readiness.invoiceStatus}\`\n`;
-        markdown += `**Readiness Verdict:** ${verdict}\n\n`;
+        const isFullyDispatched = readiness.overallReadiness === "FULLY_DISPATCHED";
+        const isReady = readiness.overallReadiness === "READY_TO_DISPATCH";
+
+        markdown = `## Dispatch Readiness: Invoice ${readiness.invoiceNumber}\n\n`;
+        markdown += `**Customer:** ${readiness.customer} | **Invoice Status:** \`${readiness.invoiceStatus}\`\n`;
+        markdown += `**Readiness Status:** ${
+          isCancelled
+            ? "🛑 **CANCELLED**"
+            : isFullyDispatched
+              ? "✅ **ALREADY FULLY DISPATCHED**"
+              : isReady
+                ? "🟢 **READY TO DISPATCH**"
+                : "🔴 **STOCK SHORTAGE**"
+        }\n\n`;
+
         if (readiness.recommendedGodown) {
-          markdown += `**Recommended godown:** \`${readiness.recommendedGodown}\`\n\n`;
-        }
-        markdown += `### Line-by-Line Stock Feasibility:\n`;
-
-        for (const line of readiness.lines || []) {
-          const lineIcon =
-            line.status === "READY" ? "✅" : line.status === "ALREADY_DISPATCHED" ? "📦" : "❌";
-          markdown += `- ${lineIcon} **${line.product}**:\n`;
-          markdown += `  - Billed: ${line.billed} | Dispatched: ${line.dispatched} | Remaining to Dispatch: **${line.remaining} ${line.unit || ""}**\n`;
-          markdown += `  - Available Unexpired Stock: **${line.availableUnexpiredStock} ${line.unit || ""}** (${line.status})\n`;
+          markdown += `**Recommended Godown:** \`${readiness.recommendedGodown}\` (Covers all required lines)\n\n`;
         }
 
-        markdown += `\n**Recommendation:** ${readiness.recommendedAction}\n`;
+        markdown += `| Item | Billed | Dispatched | Remaining | Unexpired Stock | Status |\n`;
+        markdown += `| :--- | :---: | :---: | :---: | :---: | :---: |\n`;
+        for (const line of readiness.lines) {
+          markdown += `| **${line.product}** | ${line.billed} | ${line.dispatched} | **${line.remaining}** | ${line.availableUnexpiredStock} | ${line.status === "READY" ? "✅ Ready" : "⚠️ Shortage"} |\n`;
+        }
+
+        markdown += `\n**Operational Guidance:** ${readiness.recommendedAction}\n`;
 
         if (isReady) {
           actions.push({
@@ -645,10 +1372,11 @@ export class AutonomousAgentService {
       }
 
       case "expiring_batches": {
-        const expData = executed.find((e) => e.toolName === "check_expiring_batches")?.output as ExpiringBatchesResult | undefined;
-        const batches = expData?.batches || [];
+        const batchData = executed.find((e) => e.toolName === "check_expiring_batches")?.output as ExpiringBatchesResult | undefined;
+        const batches = batchData?.batches || [];
+        const days = batchData?.timeframeDays ?? 60;
 
-        markdown = `## Shelf-Life & Expiry Risk Analysis (${expData?.timeframeDays || 60} Days Window)\n\n`;
+        markdown = `## Shelf-Life & Expiry Risk Analysis (${days} Days Window)\n\n`;
         markdown += `Found **${batches.length}** batch(es) nearing expiration or expired:\n\n`;
 
         if (batches.length > 0) {
@@ -667,7 +1395,7 @@ export class AutonomousAgentService {
           }
           markdown += `\n**FEFO Protocol Notice:** Prioritize near-expiry batches on outward dispatches to minimize inventory obsolescence. Expired batches cannot be dispatched and must be quarantined via inventory adjustment.\n`;
         } else {
-          markdown += `✅ **Zero shelf-life risk detected!** All current batch inventory across godowns has safe expiry buffers exceeding ${expData?.timeframeDays || 60} days.\n`;
+          markdown += `✅ **Zero shelf-life risk detected!** All current batch inventory across godowns has safe expiry buffers exceeding ${days} days.\n`;
         }
 
         actions.push({ label: "View Live Stock", route: "/stock", permission: "stock.view" });
@@ -678,17 +1406,17 @@ export class AutonomousAgentService {
 
       case "ledger_audit": {
         const ledgerData = executed.find((e) => e.toolName === "get_recent_ledger_movements")?.output as LedgerResult | undefined;
-        const movements = ledgerData?.movements || [];
+        const rows = ledgerData?.movements || [];
 
         markdown = `## Signed Double-Entry Inventory Ledger Movements\n\n`;
-        markdown += `Showing **${movements.length}** most recent cryptographic audit entries:\n\n`;
+        markdown += `Showing **${rows.length}** most recent cryptographic audit entries:\n\n`;
 
-        if (movements.length > 0) {
-          for (const m of movements) {
-            const sign = m.quantity.startsWith("-") ? "🔻" : "🟢";
-            markdown += `- **\`${m.entryNo}\`** ${sign} **${m.movementType}** of **${m.quantity}** for ${m.product}\n`;
-            markdown += `  - Batch: **\`${m.batch}\`** | Godown: **\`${m.godown}\`** | Balance After: **${m.balanceAfter}**\n`;
-            markdown += `  - Reference: \`${m.reference}\` | Recorded: ${m.timestamp.slice(0, 16).replace("T", " ")}\n`;
+        if (rows.length > 0) {
+          markdown += `| Entry No | Movement | Product | Godown | Quantity | Balance After | Document |\n`;
+          markdown += `| :--- | :---: | :--- | :--- | :---: | :---: | :---: |\n`;
+          for (const r of rows) {
+            const sign = r.movementType === "INWARD" ? "+" : r.movementType === "OUTWARD" ? "-" : "";
+            markdown += `| \`${r.entryNo}\` | **${r.movementType}** | ${r.product} | \`${r.godown}\` | **${sign}${r.quantity}** | ${r.balanceAfter} | \`${r.reference}\` |\n`;
           }
         } else {
           markdown += `_No ledger movements recorded matching the given criteria._\n`;
@@ -718,7 +1446,7 @@ export class AutonomousAgentService {
 
         if (docData.type === "purchase_order") {
           markdown = `## Purchase Order: ${docData.number}\n\n`;
-          markdown += `**Supplier:** ${docData.party} | **Status:** \`${docData.status}\` | **Order Date:** ${docData.date}\n\n`;
+          markdown += `**Supplier:** ${docData.party} | **Status:** \`${docData.status}\`\n\n`;
           markdown += `### Line Items:\n`;
           for (const l of docData.lines || []) {
             markdown += `- **${l.product}**: Ordered **${l.ordered}**, Received **${l.received}** (Pending: **${l.pending} ${l.unit}**)\n`;
@@ -737,7 +1465,7 @@ export class AutonomousAgentService {
         } else if (docData.type === "invoice") {
           markdown = `## Sales Invoice: ${docData.number}\n\n`;
           markdown += `**Customer:** ${docData.party} | **Status:** \`${docData.status}\` | **Date:** ${docData.date}\n\n`;
-          markdown += `### Line Items:\n`;
+          markdown += `### Invoiced Items:\n`;
           for (const l of docData.lines || []) {
             markdown += `- **${l.product}**: Billed **${l.billed}**, Dispatched **${l.dispatched}** (Remaining: **${l.remaining} ${l.unit}**)\n`;
           }
@@ -759,8 +1487,7 @@ export class AutonomousAgentService {
           actions.push({ label: "View Invoices", route: "/invoices", permission: "invoice.view" });
         } else {
           markdown = `## Dispatch Outward: ${docData.number}\n\n`;
-          markdown += `**Customer:** ${docData.party || "Direct"} | **Godown:** \`${docData.godown}\` | **Status:** \`${docData.status}\`\n`;
-          markdown += `**Invoice Ref:** ${docData.invoice || "N/A"}\n\n`;
+          markdown += `**Customer:** ${docData.party ?? "N/A"} | **Status:** \`${docData.status}\`\n\n`;
           markdown += `### Dispatched Batches:\n`;
           for (const l of docData.lines || []) {
             markdown += `- **${l.product}**: Batch \`${l.batch}\` (Exp: ${l.expiryDate || "None"}), Qty: **${l.quantity} ${l.baseUnit}**\n`;
@@ -776,21 +1503,19 @@ export class AutonomousAgentService {
       }
 
       case "low_stock_reorder": {
-        const alertData = executed.find((e) => e.toolName === "get_low_stock_alerts")?.output as AlertResult | undefined;
+        const alertData = executed.find((e) => e.toolName === "get_low_stock_alerts")?.output as StockAlertsResult | undefined;
         const reorderData = executed.find((e) => e.toolName === "get_reorder_recommendations")?.output as ReorderResult | undefined;
-        const alerts = alertData?.alerts || [];
-        const reorders = reorderData?.recommendations || [];
 
         markdown = `## Inventory Replenishment & Reorder Analysis\n\n`;
-        markdown += `Active Stock Alerts: **${alerts.length}** | Replenishment Needed: **${reorders.length}** items\n\n`;
+        markdown += `Active Stock Alerts: **${alertData?.count ?? 0}** | Replenishment Needed: **${reorderData?.count ?? 0}** items\n\n`;
 
-        if (reorders.length > 0) {
-          markdown += `### Recommended Purchase Orders:\n`;
-          for (const r of reorders) {
-            markdown += `- ⚠️ **${r.product}** in Godown **\`${r.godown}\`**:\n`;
-            markdown += `  - Current Stock: **${r.currentStock} ${r.unit}** (Below Reorder Level of **${r.reorderLevel} ${r.unit}**)\n`;
-            markdown += `  - Recommended Minimum Reorder: **${r.recommendedMinimumOrder} ${r.unit}**\n`;
+        if (reorderData && reorderData.recommendations.length > 0) {
+          markdown += `| Product | Godown | Current Stock | Safety Threshold | Recommended Order |\n`;
+          markdown += `| :--- | :--- | :---: | :---: | :---: |\n`;
+          for (const r of reorderData.recommendations) {
+            markdown += `| **${r.product}** | \`${r.godown}\` | ${r.currentStock} ${r.unit} | ${r.reorderLevel} ${r.unit} | **${r.recommendedMinimumOrder} ${r.unit}** |\n`;
           }
+          markdown += `\n**Replenishment Action:** Stock levels have breached reorder points. Raise Purchase Orders to avoid dispatch blockages.\n`;
         } else {
           markdown += `✅ All active products currently meet or exceed configured reorder safety levels.\n`;
         }
@@ -803,14 +1528,14 @@ export class AutonomousAgentService {
 
       case "godowns": {
         const gData = executed.find((e) => e.toolName === "get_godowns")?.output as GodownResult | undefined;
-        const godowns = gData?.godowns || [];
+        const list = gData?.godowns || [];
 
         markdown = `## Active Warehouse Godowns & Storage Locations\n\n`;
-        markdown += `Registered active godowns: **${godowns.length}**\n\n`;
+        markdown += `Registered active godowns: **${list.length}**\n\n`;
 
-        for (const g of godowns) {
+        for (const g of list) {
           markdown += `- 🏬 **\`${g.code}\`** — **${g.name}**\n`;
-          markdown += `  - Address: ${g.address || "Standard Facility"} | Tally Sync: ${g.tallySyncEnabled ? "Enabled" : "Disabled"}\n`;
+          markdown += `  - Address: ${g.address || "Main Warehouse Facility"} | Tally Sync: ${g.tallySyncEnabled ? "Enabled" : "Disabled"}\n`;
           markdown += `  - Active Stock Lines: **${g.activeStockLines}** distinct product-batch rows on hand\n`;
         }
 
@@ -821,21 +1546,23 @@ export class AutonomousAgentService {
       }
 
       case "stock_check": {
-        const stockData = executed.find((e) => e.toolName === "check_stock")?.output as StockResult | undefined;
-        if (!stockData || stockData.error) {
-          markdown = `### Stock Lookup\n\n${stockData?.error || "Product not found"}.\n\nPlease try searching by SKU code (e.g. \`BASMATI-01\`) or name.`;
+        const sData = executed.find((e) => e.toolName === "check_stock")?.output as StockResult | undefined;
+        if (!sData || sData.error) {
+          markdown = `### Stock Lookup\n\nCould not fetch stock: **${sData?.error || "Product not found"}**.`;
           actions.push({ label: "Browse Product Master", route: "/masters/skus", permission: "master.view" });
           break;
         }
 
-        markdown = `## Live Stock Balance: ${stockData.product.name} (\`${stockData.product.code}\`)\n\n`;
-        markdown += `**Total On-Hand Stock:** **${stockData.totalQuantity} ${stockData.product.baseUnit}** across ${stockData.godown}\n\n`;
-        markdown += `### Batches in FEFO Order:\n`;
+        const gCode = typeof sData.godown === "string" ? sData.godown : sData.godown?.code;
+        markdown = `## Stock Balances: ${sData.product.name} (\`${sData.product.code}\`)\n\n`;
+        markdown += `**Total On-Hand Inventory:** **${sData.totalQuantity} ${sData.product.baseUnit}** across godowns (Filter: \`${gCode}\`)\n\n`;
 
-        if (stockData.batches && stockData.batches.length > 0) {
-          for (const b of stockData.batches) {
-            const expText = b.expired ? "🚨 **EXPIRED**" : b.expiryDate ? `Exp: ${b.expiryDate}` : "No Expiry";
-            markdown += `- Godown **\`${b.godown}\`** | Batch **\`${b.batch}\`**: **${b.quantity} ${stockData.product.baseUnit}** (${expText})\n`;
+        if (sData.batches && sData.batches.length > 0) {
+          markdown += `### Batch & Shelf-Life Breakdown:\n`;
+          markdown += `| Godown | Batch Number | Expiry Date | Quantity | Status |\n`;
+          markdown += `| :--- | :--- | :---: | :---: | :---: |\n`;
+          for (const b of sData.batches) {
+            markdown += `| \`${b.godown}\` | \`${b.batch}\` | ${b.expiryDate || "None"} | **${b.quantity} ${sData.product.baseUnit}** | ${b.expired ? "🚨 Expired" : "✅ Available"} |\n`;
           }
         } else {
           markdown += `_No active inventory stock currently on hand._\n`;
@@ -850,15 +1577,14 @@ export class AutonomousAgentService {
 
       default: {
         const counts = await getWorkspaceCounts();
-        const knowledge = answerFromKnowledge(message, { ...context }, counts);
-        markdown = knowledge.answer;
-        actions.push(...knowledge.actions);
-        sources.push(...knowledge.sources);
+        const curated = answerFromKnowledge(message, { route: context.route, role: context.role }, counts);
+        markdown = curated.answer;
+        actions.push(...curated.actions);
+        sources.push(...curated.sources);
         break;
       }
     }
 
-    // Filter actions by role permission
     const allowed = actions.filter((act) => !act.permission || can(context.role, act.permission));
 
     return {
@@ -866,20 +1592,24 @@ export class AutonomousAgentService {
       markdownAnswer: markdown,
       actions: allowed,
       sources,
+      confirmation,
     };
   }
 
   /**
-   * Streams the multi-step agent execution progress and final answer as SSE events.
+   * Streams the multi-step agent execution progress, final answer, and confirmation
+   * proposal as progressive SSE events.
    */
   static executeAutonomousAgentStream(
     message: string,
     context: AgentContext,
+    actor?: Actor,
+    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation }>,
   ): ReadableStream<Uint8Array> {
     return new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
-          const { steps } = AutonomousAgentService.planIntent(message, context);
+          const { steps, intent } = AutonomousAgentService.planIntent(message, context, history);
 
           // If multi-step operational task, send a brief status indicator
           if (steps.length > 1) {
@@ -889,9 +1619,16 @@ export class AutonomousAgentService {
               }),
             );
             await new Promise((r) => setTimeout(r, 60));
+          } else if (intent.startsWith("propose_")) {
+            controller.enqueue(
+              sseEvent({
+                delta: `🔍 _Evaluating operational prerequisites & building safety confirmation proposal..._\n\n`,
+              }),
+            );
+            await new Promise((r) => setTimeout(r, 40));
           }
 
-          const result = await AutonomousAgentService.executePlan(message, context);
+          const result = await AutonomousAgentService.executePlan(message, context, actor, history);
 
           // Stream answer in chunks for progressive typing feel
           const fullText = result.markdownAnswer;
@@ -909,6 +1646,7 @@ export class AutonomousAgentService {
               done: true,
               actions: result.actions,
               sources: result.sources,
+              confirmation: result.confirmation,
             }),
           );
           controller.close();
