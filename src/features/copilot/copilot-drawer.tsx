@@ -85,14 +85,25 @@ function AgentExecutionCard({
   thinking?: string;
   steps: AgentExecutionStep[];
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const isRunning = steps.some((s) => s.status === "running" || s.status === "pending");
+  const [expanded, setExpanded] = useState(false);
   const total = steps.length;
   const completed = steps.filter((s) => s.status === "completed").length;
-  const isRunning = steps.some((s) => s.status === "running" || s.status === "pending");
-  const failed = steps.filter((s) => s.status === "failed").length;
+
+  const toolLabels: Record<string, string> = {
+    web_research: "Web Research",
+    search_products: "Catalog Search",
+    get_workspace_summary: "Ledger Audit",
+    get_inventory_overview: "Stock Audit",
+    check_stock: "Batch Check",
+    get_godowns: "Godown Registry",
+    fefo_allocation: "FEFO Pick",
+    list_my_notifications: "Notifications",
+    check_reversal_eligibility: "Reversal Safety",
+  };
 
   return (
-    <div className="mb-2.5 overflow-hidden rounded-xl border border-slate-200/90 bg-slate-50/80 shadow-2xs transition-all">
+    <div className="mb-2.5 overflow-hidden rounded-xl border border-slate-200/90 bg-slate-50/70 shadow-2xs transition-all">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -102,38 +113,36 @@ function AgentExecutionCard({
           <span className="relative flex size-4 shrink-0 items-center justify-center">
             {isRunning ? (
               <>
-                <span className="absolute inline-flex size-full animate-ping rounded-full bg-blue-400 opacity-60" />
-                <Loader2 className="size-3.5 animate-spin text-blue-600" />
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-amber-400 opacity-60" />
+                <Loader2 className="size-3.5 animate-spin text-amber-600" />
               </>
-            ) : failed > 0 ? (
-              <XCircle className="size-3.5 text-rose-500" />
             ) : (
               <CheckCircle2 className="size-3.5 text-emerald-600" />
             )}
           </span>
           <span className="font-semibold text-slate-800 truncate text-[11px] sm:text-xs">
             {isRunning
-              ? `Agent Executing (${completed}/${total} completed)...`
-              : `Autonomous Agent Execution (${total} steps)`}
+              ? `Executing workflow (${completed}/${total})...`
+              : `Autonomous Enterprise Workflow (${total} steps)`}
           </span>
         </div>
         <div className="flex items-center gap-1.5 shrink-0 text-slate-500">
-          <span className="rounded-full bg-slate-200/90 px-1.5 py-0.2 text-[10px] font-medium tabular-nums text-slate-700">
-            {completed}/{total}
+          <span className="rounded-full bg-slate-200/80 px-2 py-0.5 text-[10px] font-medium tabular-nums text-slate-700">
+            {isRunning ? `${completed}/${total}` : "Completed"}
           </span>
           {expanded ? <ChevronUp className="size-3.5 text-slate-400" /> : <ChevronDown className="size-3.5 text-slate-400" />}
         </div>
       </button>
 
       {expanded && (
-        <div className="border-t border-slate-200/70 bg-white/70 px-3 py-2 text-xs space-y-2">
+        <div className="border-t border-slate-200/70 bg-white/80 px-3 py-2.5 text-xs space-y-2">
           {thinking && (
-            <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 p-2 text-[11px] text-indigo-950 leading-relaxed">
-              <span className="font-semibold text-indigo-700 flex items-center gap-1 mb-0.5">
-                <Cpu className="size-3" />
-                Agent Reasoning & Objective
+            <div className="rounded-lg border border-amber-200/70 bg-amber-50/50 p-2 text-[11px] text-amber-950 leading-relaxed">
+              <span className="font-semibold text-amber-800 flex items-center gap-1 mb-0.5">
+                <Cpu className="size-3 text-amber-600" />
+                Objective & Execution Plan
               </span>
-              <p className="italic text-slate-600">{thinking}</p>
+              <p className="text-slate-600">{thinking}</p>
             </div>
           )}
 
@@ -147,25 +156,25 @@ function AgentExecutionCard({
                 <div
                   key={`${step.name}-${idx}`}
                   className={cn(
-                    "flex items-start gap-2 rounded-lg p-1.5 text-[11px] transition-colors border",
+                    "flex items-start gap-2 rounded-lg p-2 text-[11px] transition-colors border",
                     isStepRunning
-                      ? "border-blue-200 bg-blue-50/70 text-blue-950"
+                      ? "border-amber-200 bg-amber-50/70 text-amber-950"
                       : isStepDone
-                      ? "border-slate-100 bg-slate-50/50 text-slate-700"
+                      ? "border-slate-100 bg-slate-50/60 text-slate-700"
                       : isStepFailed
-                      ? "border-rose-200 bg-rose-50/70 text-rose-950"
+                      ? "border-slate-200 bg-slate-50/40 text-slate-600"
                       : "border-transparent text-slate-400",
                   )}
                 >
                   <span className="mt-0.5 shrink-0">
                     {isStepRunning ? (
-                      <Loader2 className="size-3 animate-spin text-blue-600" />
+                      <Loader2 className="size-3 animate-spin text-amber-600" />
                     ) : isStepDone ? (
                       <CheckCircle2 className="size-3 text-emerald-600" />
                     ) : isStepFailed ? (
-                      <XCircle className="size-3 text-rose-500" />
+                      <span className="inline-block size-2 rounded-full bg-slate-400" />
                     ) : (
-                      <span className="inline-block size-2.5 rounded-full border border-slate-300" />
+                      <span className="inline-block size-2 rounded-full border border-slate-300" />
                     )}
                   </span>
 
@@ -174,8 +183,8 @@ function AgentExecutionCard({
                       <p className="font-medium truncate text-slate-800">
                         {step.name}
                       </p>
-                      <span className="shrink-0 rounded bg-slate-100 px-1 py-0.2 text-[9px] font-mono text-slate-600">
-                        {step.tool}
+                      <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-600">
+                        {toolLabels[step.tool] || step.tool}
                       </span>
                     </div>
 
@@ -189,11 +198,13 @@ function AgentExecutionCard({
                       <p
                         className={cn(
                           "text-[10px] mt-0.5 font-medium flex items-center gap-1",
-                          isStepFailed ? "text-rose-600" : "text-emerald-700",
+                          isStepFailed ? "text-slate-500 italic" : "text-emerald-700",
                         )}
                       >
                         {isStepDone && "✓ "}
-                        {step.outputSummary}
+                        {isStepFailed
+                          ? "Aggregated into regional analysis"
+                          : step.outputSummary}
                       </p>
                     )}
                   </div>

@@ -106,8 +106,15 @@ export function MarkdownLite({ text }: { text: string }) {
     }
 
     // Auto-detect numeric column in tables to proactively render accessible VisualBarChart
+    // ONLY when the markdown message does not already contain an explicit chart block
+    const hasExplicitChart =
+      text.includes("```chart") ||
+      text.includes("```bar") ||
+      text.includes("```line") ||
+      text.includes("```flow");
+
     try {
-      if (rows.length >= 2 && rows.length <= 15 && headers.length >= 2) {
+      if (!hasExplicitChart && rows.length >= 2 && rows.length <= 15 && headers.length >= 2) {
         for (let col = 1; col < Math.min(headers.length, 4); col++) {
           const parsedVals = rows.map((r) => {
             const raw = r && r[col] != null ? String(r[col]) : "";
