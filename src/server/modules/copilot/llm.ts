@@ -39,6 +39,7 @@ export interface LlmToolCall {
   id: string;
   type: "function";
   function: { name: string; arguments: string };
+  extra_content?: Record<string, unknown>;
 }
 
 export interface LlmTool {
@@ -100,6 +101,7 @@ interface OpenAiChunk {
         id?: string;
         type?: string;
         function?: { name?: string; arguments?: string };
+        extra_content?: Record<string, unknown>;
       }[];
     };
     finish_reason?: string | null;
@@ -227,6 +229,12 @@ function accumulateToolCalls(calls: Map<number, LlmToolCall>, deltas: ParsedLine
     if (delta.id) existing.id = delta.id;
     if (delta.function?.name) existing.function.name = delta.function.name;
     if (delta.function?.arguments) existing.function.arguments += delta.function.arguments;
+    if (delta.extra_content) {
+      existing.extra_content = {
+        ...(existing.extra_content ?? {}),
+        ...delta.extra_content,
+      };
+    }
     calls.set(index, existing);
   }
 }
