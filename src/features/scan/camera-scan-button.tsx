@@ -18,7 +18,7 @@ export function CameraScanButton({ onScan, title = "Scan with camera" }: { onSca
 
   return (
     <>
-      <Button variant="secondary" size="icon" className="h-9 w-9 shrink-0" onClick={() => setOpen(true)} aria-label={title} title={title}>
+      <Button type="button" variant="secondary" size="icon" className="h-9 w-9 shrink-0" onClick={() => setOpen(true)} aria-label={title} title={title}>
         <Camera aria-hidden />
       </Button>
       <Dialog open={open} onClose={() => setOpen(false)} title={title}>

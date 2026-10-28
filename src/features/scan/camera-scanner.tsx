@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/alert";
+import { cn } from "@/lib/cn";
 
 /**
  * Camera scanning. Uses the browser's native BarcodeDetector where it exists
@@ -71,10 +72,38 @@ export function useCameraScanSupported(): boolean {
   return supported;
 }
 
+/** Emits a pleasant scan confirmation beep and haptic vibration when available */
+function playScanFeedback() {
+  try {
+    if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+      navigator.vibrate?.([40]);
+    }
+    const AudioContextClass =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (AudioContextClass) {
+      const ctx = new AudioContextClass();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, ctx.currentTime); // 880Hz A5 chime
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.12);
+    }
+  } catch {
+    // Audio / vibrate might not be permitted or supported, fail silently
+  }
+}
+
 /** Live camera preview that reports the first code it reads. Mount it only while scanning. */
 export function CameraScanner({ onDetected }: { onDetected: (value: string) => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [detectedCode, setDetectedCode] = useState<string | null>(null);
   const onDetectedRef = useRef(onDetected);
 
   useEffect(() => {
@@ -104,7 +133,13 @@ export function CameraScanner({ onDetected }: { onDetected: (value: string) => v
             const [first] = await detector.detect(video);
             if (first?.rawValue && !stopped) {
               stopped = true;
-              onDetectedRef.current(first.rawValue);
+              const raw = first.rawValue;
+              setDetectedCode(raw);
+              playScanFeedback();
+              // Keep camera stream active for a brief moment to show success indicator before closing
+              setTimeout(() => {
+                onDetectedRef.current(raw);
+              }, 400);
               return;
             }
           } catch {
@@ -138,14 +173,48 @@ export function CameraScanner({ onDetected }: { onDetected: (value: string) => v
   return (
     <div className="space-y-3">
       {error && <Alert tone="error">{error}</Alert>}
-      <video
-        ref={videoRef}
-        muted
-        playsInline
-        className="aspect-video w-full rounded-md bg-slate-900 object-cover"
-        aria-label="Camera preview"
-      />
-      <p className="text-xs text-slate-500">Hold the barcode or QR code steady inside the frame.</p>
+      <div className="relative overflow-hidden rounded-lg bg-slate-950 border border-slate-800">
+        <video
+          ref={videoRef}
+          muted
+          playsInline
+          className={cn(
+            "aspect-video w-full object-cover transition-all duration-300",
+            detectedCode ? "opacity-90 ring-4 ring-emerald-500 scale-[1.01]" : ""
+          )}
+          aria-label="Camera preview"
+        />
+        {/* Reticle / aiming guide */}
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+          <div
+            className={cn(
+              "relative h-28 w-48 sm:h-36 sm:w-64 rounded-xl border-2 transition-all duration-300 flex items-center justify-center",
+              detectedCode
+                ? "border-emerald-400 bg-emerald-500/20 scale-105 shadow-[0_0_25px_rgba(16,185,129,0.5)]"
+                : "border-dashed border-white/60 bg-black/15 shadow-[0_0_0_9999px_rgba(0,0,0,0.3)]"
+            )}
+          >
+            {/* Corner accent marks */}
+            <div className="absolute top-0 left-0 h-3 w-3 border-t-2 border-l-2 border-brand-400" />
+            <div className="absolute top-0 right-0 h-3 w-3 border-t-2 border-r-2 border-brand-400" />
+            <div className="absolute bottom-0 left-0 h-3 w-3 border-b-2 border-l-2 border-brand-400" />
+            <div className="absolute bottom-0 right-0 h-3 w-3 border-b-2 border-r-2 border-brand-400" />
+          </div>
+        </div>
+
+        {detectedCode && (
+          <div className="absolute inset-x-0 bottom-4 flex justify-center px-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
+            <span className="flex items-center gap-2 rounded-full bg-emerald-600/95 backdrop-blur-xs px-4 py-1.5 text-xs font-semibold text-white shadow-xl ring-1 ring-emerald-400">
+              <span className="inline-block size-2 rounded-full bg-white animate-pulse" />
+              <span>Scanned:</span>
+              <span className="font-mono tracking-wider">{detectedCode}</span>
+            </span>
+          </div>
+        )}
+      </div>
+      <p className="text-center text-xs text-slate-500">
+        {detectedCode ? "Success! Applying scanned barcode..." : "Hold the barcode or QR code steady inside the frame."}
+      </p>
     </div>
   );
 }

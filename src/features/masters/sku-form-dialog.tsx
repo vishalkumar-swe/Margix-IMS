@@ -2,7 +2,7 @@
 
 import { Loader2, Pencil, Plus, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -16,7 +16,7 @@ import { humanize } from "@/lib/format";
 import { SKU_STATUSES } from "@/lib/enums";
 import { HsnPicker } from "./hsn-picker";
 import { CameraScanButton } from "@/features/scan/camera-scan-button";
-import { useBarcodeLookup } from "@/features/scan/use-barcode-lookup";
+import { useBarcodeLookup, type AutoFillCatalogDetails } from "@/features/scan/use-barcode-lookup";
 
 export interface SkuFormValues {
   code: string;
@@ -111,30 +111,34 @@ export function SkuFormDialog({
   /** GST rate of the HSN code last picked, to tell following it from overriding it. */
   const [hsnRate, setHsnRate] = useState<string | null>(null);
 
+  const onAutoFill = useCallback((details: AutoFillCatalogDetails) => {
+    setForm((prev) => ({
+      ...prev,
+      name: prev.name && prev.name !== details.name ? prev.name : details.name,
+      description: prev.description ? prev.description : (details.description ?? prev.description),
+      categoryId: prev.categoryId ? prev.categoryId : (details.suggestedCategoryId ?? prev.categoryId),
+      baseUomId: prev.baseUomId ? prev.baseUomId : (details.suggestedBaseUomId ?? prev.baseUomId),
+      hsnCode: prev.hsnCode ? prev.hsnCode : (details.suggestedHsnCode ?? prev.hsnCode),
+      gstRate: prev.gstRate ? prev.gstRate : (details.suggestedGstRate ?? prev.gstRate),
+    }));
+    if (details.suggestedGstRate) {
+      setHsnRate(details.suggestedGstRate);
+    }
+  }, []);
+
   const { lookingUp, status: barcodeStatus, lookupBarcode } = useBarcodeLookup({
-    onAutoFill: (details) => {
-      setForm((prev) => ({
-        ...prev,
-        name: prev.name && prev.name !== details.name ? prev.name : details.name,
-        description: prev.description ? prev.description : (details.description ?? prev.description),
-        categoryId: prev.categoryId ? prev.categoryId : (details.suggestedCategoryId ?? prev.categoryId),
-        baseUomId: prev.baseUomId ? prev.baseUomId : (details.suggestedBaseUomId ?? prev.baseUomId),
-        hsnCode: prev.hsnCode ? prev.hsnCode : (details.suggestedHsnCode ?? prev.hsnCode),
-        gstRate: prev.gstRate ? prev.gstRate : (details.suggestedGstRate ?? prev.gstRate),
-      }));
-      if (details.suggestedGstRate) {
-        setHsnRate(details.suggestedGstRate);
-      }
-    },
+    onAutoFill,
   });
 
+  const prevOpenRef = useRef(false);
   useEffect(() => {
-    if (open) {
+    if (open && !prevOpenRef.current) {
       setForm(initial);
       if (initial.barcode && !editing) {
         lookupBarcode(initial.barcode, true);
       }
     }
+    prevOpenRef.current = open;
   }, [open, initial, editing, lookupBarcode]);
 
   const save = useApiMutation((values: SkuFormValues) => {

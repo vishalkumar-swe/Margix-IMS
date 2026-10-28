@@ -11,6 +11,8 @@ export interface BarcodeStatusMessage {
   existingSkuCode?: string;
 }
 
+export type AutoFillCatalogDetails = NonNullable<BarcodeLookupResult["catalogDetails"]>;
+
 export function useBarcodeLookup({
   onFound,
   onAutoFill,

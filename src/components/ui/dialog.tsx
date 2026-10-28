@@ -1,12 +1,15 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/cn";
 
 /**
  * Modal dialog on the native <dialog> element: focus trapping, Escape to
  * close and inert background come from the browser.
+ * Rendered in a portal to prevent DOM nesting conflicts and event bubbling
+ * when dialogs are opened from within other dialogs.
  */
 export function Dialog({
   open,
@@ -27,12 +30,21 @@ export function Dialog({
   const titleId = useId();
   const descriptionId = useId();
   const bodyRef = useRef<HTMLDivElement>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
     if (open && !dialog.open) {
-      dialog.showModal();
+      try {
+        dialog.showModal();
+      } catch {
+        // Safe fallback if already open or unsupported in mock environment
+      }
       // Autofocus the first focusable field in the body instead of the close button.
       requestAnimationFrame(() => {
         const target = bodyRef.current?.querySelector<HTMLElement>(
@@ -41,17 +53,40 @@ export function Dialog({
         target?.focus();
       });
     }
-    if (!open && dialog.open) dialog.close();
+    if (!open && dialog.open) {
+      try {
+        dialog.close();
+      } catch {
+        // Safe fallback
+      }
+    }
   }, [open]);
 
-  return (
+  const handleClose = (e: SyntheticEvent<HTMLDialogElement>) => {
+    e.stopPropagation();
+    if (e.target !== ref.current) return;
+    onClose();
+  };
+
+  const handleCancel = (e: SyntheticEvent<HTMLDialogElement>) => {
+    e.stopPropagation();
+    if (e.target !== ref.current) return;
+    onClose();
+  };
+
+  if (!mounted || typeof document === "undefined") {
+    return null;
+  }
+
+  const content = (
     <dialog
       ref={ref}
-      onClose={onClose}
+      onClose={handleClose}
+      onCancel={handleCancel}
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
       className={cn(
-        "surface-solid m-auto hidden max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-lg flex-col rounded-xl open:flex border p-0 text-slate-900 shadow-2xl",
+        "surface-solid m-auto hidden max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-lg flex-col rounded-xl open:flex border p-0 text-slate-900 shadow-2xl backdrop:bg-black/50 backdrop:backdrop-blur-xs",
         className,
       )}
     >
@@ -80,4 +115,6 @@ export function Dialog({
       )}
     </dialog>
   );
+
+  return createPortal(content, document.body);
 }
