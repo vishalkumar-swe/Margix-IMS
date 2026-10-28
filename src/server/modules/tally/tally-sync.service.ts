@@ -63,7 +63,7 @@ export async function retryTallyJob(actor: Actor, id: string): Promise<TallySync
   return withTx(async (tx) => {
     const { count } = await tx.tallySyncJob.updateMany({
       where: { id, status: "FAILED" },
-      data: { status: "PENDING", attempts: 0, nextAttemptAt: new Date() },
+      data: { status: "PENDING", attempts: 0, nextAttemptAt: new Date(0) },
     });
     if (count === 0) {
       const job = await tx.tallySyncJob.findUnique({ where: { id }, select: { status: true } });

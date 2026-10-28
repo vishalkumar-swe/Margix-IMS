@@ -23,7 +23,18 @@ export async function enqueueTallySync(tx: Tx, input: TallyEnqueueInput): Promis
   if (!godown.tallySyncEnabled) return false;
 
   await tx.tallySyncJob.createMany({
-    data: [{ entityType: input.entityType, entityId: input.entityId, entityNo: input.entityNo }],
+    data: [
+      {
+        entityType: input.entityType,
+        entityId: input.entityId,
+        entityNo: input.entityNo,
+        // A new document is due immediately. The schema default `now()` is the
+        // transaction start and rounds to milliseconds, which can leave the job
+        // a fraction of a millisecond in the future when a worker runs right
+        // after commit.
+        nextAttemptAt: new Date(0),
+      },
+    ],
     skipDuplicates: true,
   });
   return true;
