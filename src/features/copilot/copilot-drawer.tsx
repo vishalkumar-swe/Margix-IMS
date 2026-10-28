@@ -11,8 +11,11 @@ import {
   Database,
   Headphones,
   Loader2,
+  Maximize2,
   Mic,
   MicOff,
+  Minimize2,
+  Minus,
   Send,
   ShieldAlert,
   Sparkles,
@@ -240,6 +243,7 @@ export function CopilotDrawer() {
     can,
   } = useCopilot();
   const toast = useToast();
+  const [viewMode, setViewMode] = useState<"standard" | "expanded" | "minimized">("standard");
   const [input, setInput] = useState("");
   const [listening, setListening] = useState(false);
   const [floorMode, setFloorMode] = useState(false);
@@ -312,11 +316,22 @@ export function CopilotDrawer() {
   }, [messages, floorMode, voiceSpoken, pending]);
 
   useEffect(() => {
+    if (drawerOpen && viewMode === "minimized") {
+      setViewMode("standard");
+    }
+  }, [drawerOpen]);
+
+  useEffect(() => {
     if (!drawerOpen) return;
     const previous = document.activeElement as HTMLElement | null;
     const timer = window.setTimeout(() => inputRef.current?.focus(), 80);
 
     function onKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeDrawer();
+        return;
+      }
       if (event.key !== "Tab") return;
       const panel = panelRef.current;
       if (!panel) return;
@@ -428,100 +443,202 @@ export function CopilotDrawer() {
 
   if (!drawerOpen) return null;
 
+  if (viewMode === "minimized") {
+    return (
+      <div className="fixed bottom-5 right-5 z-[100] flex items-center gap-3 rounded-2xl border border-white/60 bg-white/90 dark:bg-slate-900/90 px-4 py-2.5 shadow-2xl backdrop-blur-2xl ring-1 ring-black/10 animate-in fade-in slide-in-from-bottom-4 duration-200">
+        <button
+          type="button"
+          onClick={() => setViewMode("standard")}
+          className="flex items-center gap-3 text-left focus:outline-none"
+        >
+          <span className="relative flex size-8 items-center justify-center rounded-xl bg-brand-500 text-slate-950 shadow-xs">
+            <Sparkles className="size-4" />
+            {pending && (
+              <span className="absolute -top-1 -right-1 flex size-2.5">
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-amber-400 opacity-80" />
+                <span className="relative inline-flex size-2.5 rounded-full bg-amber-500" />
+              </span>
+            )}
+          </span>
+          <div className="min-w-0 pr-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-semibold text-slate-900 dark:text-white">AI Copilot</span>
+              <span
+                className={cn(
+                  "rounded-full px-1.5 py-0.2 text-[9px] font-bold",
+                  pending ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800",
+                )}
+              >
+                {pending ? "Synthesizing…" : "Active"}
+              </span>
+            </div>
+            <p className="max-w-[200px] truncate text-[11px] text-slate-500 dark:text-slate-400">
+              {pending
+                ? "Processing intelligence…"
+                : messages[messages.length - 1]?.content?.slice(0, 40) || "Click to expand workspace"}
+            </p>
+          </div>
+        </button>
+        <div className="flex items-center gap-1 border-l border-slate-200/80 dark:border-slate-700/80 pl-2">
+          <button
+            type="button"
+            onClick={() => setViewMode("standard")}
+            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 transition-colors"
+            title="Expand to center workspace"
+            aria-label="Expand Copilot"
+          >
+            <Maximize2 className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={closeDrawer}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 transition-colors"
+            title="Close Copilot"
+            aria-label="Close Copilot"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
-      <div className="fixed inset-0 z-[98] bg-slate-900/25 backdrop-blur-[1px]" onClick={closeDrawer} aria-hidden />
-      <aside
-        ref={panelRef}
-        id="copilot-drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-label="AI Copilot"
-        className="glass-strong fixed inset-y-0 right-0 z-[100] flex w-full max-w-lg lg:max-w-xl flex-col border-l shadow-2xl transition-all"
-      >
-        <header className="shrink-0 border-b border-slate-200 px-4 py-3">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <span className="grid size-9 shrink-0 place-items-center rounded-full bg-brand-500 text-black">
-                <Sparkles className="size-4" aria-hidden />
-              </span>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-semibold text-slate-900">AI Copilot</p>
-                  {floorMode && (
-                    <span className="rounded-full bg-emerald-100 px-2 py-0.2 text-[10px] font-bold text-emerald-800">
-                      Floor Mode
+      <div
+        className="fixed inset-0 z-[98] bg-slate-950/45 backdrop-blur-md transition-opacity duration-300 animate-in fade-in"
+        onClick={closeDrawer}
+        aria-hidden
+      />
+      <div className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 md:p-6 pointer-events-none">
+        <aside
+          ref={panelRef}
+          id="copilot-drawer"
+          role="dialog"
+          aria-modal="true"
+          aria-label="AI Copilot & Enterprise Intelligence"
+          className={cn(
+            "pointer-events-auto flex flex-col rounded-2xl sm:rounded-3xl border border-white/70 dark:border-slate-700/70 bg-white/90 dark:bg-slate-900/90 shadow-[0_25px_70px_rgba(0,0,0,0.3)] backdrop-blur-2xl ring-1 ring-black/5 overflow-hidden transition-all duration-300 ease-out",
+            viewMode === "expanded"
+              ? "w-[96vw] max-w-[96vw] h-[94vh] max-h-[1050px]"
+              : "w-full max-w-4xl h-[86vh] max-h-[880px]",
+          )}
+        >
+          <header className="shrink-0 border-b border-slate-200/70 dark:border-slate-800/70 bg-white/60 dark:bg-slate-900/60 px-4 py-3 sm:px-6 sm:py-3.5 backdrop-blur-md">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="relative grid size-10 shrink-0 place-items-center rounded-2xl bg-brand-500 text-slate-950 shadow-xs">
+                  <Sparkles className="size-5" aria-hidden />
+                  {pending && (
+                    <span className="absolute -top-1 -right-1 flex size-2.5">
+                      <span className="absolute inline-flex size-full animate-ping rounded-full bg-amber-400 opacity-80" />
+                      <span className="relative inline-flex size-2.5 rounded-full bg-amber-500" />
                     </span>
                   )}
+                </span>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm sm:text-base font-bold text-slate-900 dark:text-white tracking-tight">
+                      Margix AI Copilot
+                    </p>
+                    <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-brand-100/90 dark:bg-brand-900/30 px-2 py-0.5 text-[10px] font-semibold text-brand-900 dark:text-brand-300">
+                      <Cpu className="size-3 text-brand-700 dark:text-brand-400" />
+                      Enterprise Intelligence
+                    </span>
+                    {floorMode && (
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                        Floor Mode
+                      </span>
+                    )}
+                  </div>
+                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                    {tour.active && currentMilestone
+                      ? `Milestone ${currentMilestone.order}: ${currentMilestone.title}`
+                      : pending
+                        ? "Analyzing query & synthesizing live market intelligence…"
+                        : "Autonomous APMC mandi research, batch audits & FEFO allocations"}
+                  </p>
                 </div>
-                <p className="truncate text-xs text-slate-500">
-                  {tour.active && currentMilestone
-                    ? `Milestone ${currentMilestone.order}: ${currentMilestone.title}`
-                    : "Ask about this screen or the ledger rules"}
-                </p>
               </div>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  const next = !floorMode;
-                  setFloorMode(next);
-                  toast.info(next ? "Warehouse Floor Hands-Free Mode activated." : "Floor Mode off.");
-                }}
-                className={cn(
-                  "flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium transition-colors border",
-                  floorMode
-                    ? "border-emerald-500 bg-emerald-50 text-emerald-800"
-                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
-                )}
-                title="Warehouse Floor Hands-Free Mode (speaks answers aloud)"
-              >
-                <Headphones className="size-3" />
-                <span>Floor</span>
-              </button>
-              {floorMode && (
+              <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setVoiceSpoken(!voiceSpoken)}
-                  className="rounded p-1 text-slate-500 hover:bg-slate-100"
-                  title={voiceSpoken ? "Mute speech" : "Enable speech"}
+                  onClick={() => {
+                    const next = !floorMode;
+                    setFloorMode(next);
+                    toast.info(next ? "Warehouse Floor Hands-Free Mode activated." : "Floor Mode off.");
+                  }}
+                  className={cn(
+                    "flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors border shadow-2xs",
+                    floorMode
+                      ? "border-emerald-500 bg-emerald-50 text-emerald-800"
+                      : "border-slate-200/80 bg-white/80 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-50",
+                  )}
+                  title="Warehouse Floor Hands-Free Mode (speaks answers aloud)"
                 >
-                  {voiceSpoken ? <Volume2 className="size-3.5 text-emerald-600" /> : <VolumeX className="size-3.5 text-slate-400" />}
+                  <Headphones className="size-3" />
+                  <span className="hidden sm:inline">Floor</span>
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={closeDrawer}
-                className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-                aria-label="Close Copilot"
-              >
-                <X className="size-4" aria-hidden />
-              </button>
+                {floorMode && (
+                  <button
+                    type="button"
+                    onClick={() => setVoiceSpoken(!voiceSpoken)}
+                    className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    title={voiceSpoken ? "Mute speech" : "Enable speech"}
+                  >
+                    {voiceSpoken ? <Volume2 className="size-4 text-emerald-600" /> : <VolumeX className="size-4 text-slate-400" />}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setViewMode(viewMode === "expanded" ? "standard" : "expanded")}
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 transition-colors"
+                  title={viewMode === "expanded" ? "Standard View" : "Expand for Better View (Wide Screen)"}
+                  aria-label={viewMode === "expanded" ? "Standard View" : "Expand for Better View"}
+                >
+                  {viewMode === "expanded" ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("minimized")}
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 transition-colors"
+                  title="Minimize to floating widget"
+                  aria-label="Minimize Copilot"
+                >
+                  <Minus className="size-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={closeDrawer}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 transition-colors"
+                  aria-label="Close Copilot"
+                >
+                  <X className="size-4" aria-hidden />
+                </button>
+              </div>
             </div>
-          </div>
-          <div className="mt-3 flex items-center gap-3">
-            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-200">
-              <div
-                className="h-full rounded-full bg-brand-500 transition-all"
-                style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
-              />
+            <div className="mt-3 flex items-center gap-3">
+              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className="h-full rounded-full bg-brand-500 transition-all"
+                  style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
+                />
+              </div>
+              <span className="text-[11px] font-medium text-slate-500 tabular-nums">
+                {progress.done}/{progress.total} completed
+              </span>
+              {tour.active &&
+                (tour.paused ? (
+                  <Button variant="link" size="sm" className="h-auto" onClick={resumeTour}>
+                    Resume
+                  </Button>
+                ) : (
+                  <Button variant="link" size="sm" className="h-auto" onClick={pauseTour}>
+                    Pause
+                  </Button>
+                ))}
             </div>
-            <span className="text-[11px] font-medium text-slate-500 tabular-nums">
-              {progress.done}/{progress.total} completed
-            </span>
-            {tour.active &&
-              (tour.paused ? (
-                <Button variant="link" size="sm" className="h-auto" onClick={resumeTour}>
-                  Resume
-                </Button>
-              ) : (
-                <Button variant="link" size="sm" className="h-auto" onClick={pauseTour}>
-                  Pause
-                </Button>
-              ))}
-          </div>
-        </header>
+          </header>
 
         <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
           {messages.length === 0 && (
@@ -763,8 +880,29 @@ export function CopilotDrawer() {
             </div>
           ))}
 
-          {pending && messages[messages.length - 1]?.content === "" && (
-            <p className="text-[11px] text-slate-400">Answering from the Margix knowledge base…</p>
+          {pending && (!messages[messages.length - 1]?.content || messages[messages.length - 1]?.content === "") && (
+            <div className="flex items-center gap-3 rounded-2xl border border-brand-200/80 bg-gradient-to-r from-brand-50/90 via-white/90 to-brand-50/60 p-3.5 shadow-xs backdrop-blur-md animate-in fade-in duration-200">
+              <div className="relative flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand-500 text-slate-950 shadow-xs">
+                <Sparkles className="size-4 animate-spin text-slate-950" />
+                <span className="absolute -top-1 -right-1 flex size-2.5">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-amber-400 opacity-80" />
+                  <span className="relative inline-flex size-2.5 rounded-full bg-amber-500" />
+                </span>
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-900">Synthesizing Real-Time Intelligence</span>
+                  <span className="flex items-center gap-1">
+                    <span className="size-1.5 rounded-full bg-brand-600 animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <span className="size-1.5 rounded-full bg-brand-600 animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <span className="size-1.5 rounded-full bg-brand-600 animate-bounce" style={{ animationDelay: "300ms" }} />
+                  </span>
+                </div>
+                <p className="mt-0.5 text-[11px] text-slate-500 truncate">
+                  Consulting live APMC mandi feeds, GST rules & signed inventory ledger…
+                </p>
+              </div>
+            </div>
           )}
         </div>
 
@@ -807,7 +945,7 @@ export function CopilotDrawer() {
           </div>
         )}
 
-        <div className="shrink-0 border-t border-slate-200 px-4 py-3">
+        <div className="shrink-0 border-t border-slate-200/70 bg-white/60 dark:bg-slate-900/60 px-4 py-3 backdrop-blur-md sm:px-6">
           <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1">
             {chips.map((chip) => (
               <button
@@ -815,14 +953,14 @@ export function CopilotDrawer() {
                 type="button"
                 onClick={() => void sendMessage(chip)}
                 disabled={pending}
-                className="shrink-0 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 transition-colors hover:border-brand-300 hover:bg-brand-50 hover:text-slate-900 disabled:opacity-50"
+                className="shrink-0 rounded-full border border-slate-200/80 bg-white/80 dark:bg-slate-800/80 px-3 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 shadow-2xs transition-colors hover:border-brand-400 hover:bg-brand-50 hover:text-slate-950 disabled:opacity-50"
               >
                 {chip}
               </button>
             ))}
           </div>
           {listening && (
-            <div className="mb-2 flex items-center gap-2 rounded-lg border border-brand-300 bg-brand-50 px-3 py-2 text-xs text-brand-900 animate-pulse">
+            <div className="mb-2 flex items-center gap-2 rounded-xl border border-brand-300 bg-brand-50 px-3 py-2 text-xs text-brand-900 animate-pulse">
               <Mic className="size-4 text-brand-700 animate-bounce" />
               <span className="font-medium">
                 {floorMode
@@ -837,10 +975,10 @@ export function CopilotDrawer() {
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="Ask about this screen…"
+              placeholder="Ask about this screen, check stock, or explore market prices…"
               aria-label="Ask the Copilot"
               data-copilot-ignore
-              className="h-10 min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-3 text-sm shadow-sm focus:border-slate-400 focus:outline-2 focus:outline-offset-2 focus:outline-slate-900"
+              className="h-10 min-w-0 flex-1 rounded-xl border border-slate-300/80 bg-white px-3.5 text-sm shadow-xs transition-colors focus:border-brand-500 focus:outline-2 focus:outline-offset-2 focus:outline-brand-500"
               maxLength={1200}
             />
             {Recognition && (
@@ -859,12 +997,19 @@ export function CopilotDrawer() {
               {!pending && <Send aria-hidden />}
             </Button>
           </form>
-          <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
-            Answers come from Margix rules and your current page state. The Copilot never posts, reverses or deletes
-            anything — every ledger write needs your confirmation.
-          </p>
+          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-1 text-[11px] text-slate-400">
+            <span className="flex items-center gap-1 font-medium text-slate-500">
+              <Sparkles className="size-3 text-brand-600" />
+              Autonomous Enterprise Intelligence & APMC Live Feeds
+            </span>
+            <span className="flex items-center gap-1 text-[10px] text-slate-400">
+              <ShieldAlert className="size-3 text-slate-400" />
+              Ledger mutations strictly require your explicit confirmation
+            </span>
+          </div>
         </div>
       </aside>
-    </>
-  );
+    </div>
+  </>
+);
 }
