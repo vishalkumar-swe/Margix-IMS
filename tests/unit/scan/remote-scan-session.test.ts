@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createScanSession,
+  getOrCreateScanSession,
   getScanSession,
   markSessionConnected,
   popBarcodesFromSession,
@@ -40,5 +41,25 @@ describe("Remote Scan Session Store", () => {
     const popped2 = popBarcodesFromSession(id);
     expect(popped2?.barcodes).toEqual([]);
   });
-});
 
+  it("reuses existing session when requested without forceNew", () => {
+    const session1 = getOrCreateScanSession({ userId: "user-123" });
+    markSessionConnected(session1.id);
+
+    // Opening another product form reuses the same connected session
+    const session2 = getOrCreateScanSession({ userId: "user-123" });
+    expect(session2.id).toBe(session1.id);
+    expect(session2.status).toBe("connected");
+
+    // Reusing by explicit sessionId
+    const session3 = getOrCreateScanSession({ sessionId: session1.id });
+    expect(session3.id).toBe(session1.id);
+  });
+
+  it("creates new session when forceNew is true", () => {
+    const session1 = getOrCreateScanSession({ userId: "user-456" });
+    const session2 = getOrCreateScanSession({ userId: "user-456", forceNew: true });
+
+    expect(session2.id).not.toBe(session1.id);
+  });
+});

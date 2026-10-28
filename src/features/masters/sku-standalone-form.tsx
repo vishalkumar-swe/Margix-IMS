@@ -15,6 +15,7 @@ import { emitCopilotEvent } from "@/lib/copilot/runtime";
 import { HsnPicker } from "./hsn-picker";
 import { CameraScanButton } from "@/features/scan/camera-scan-button";
 import { PhoneScanButton } from "@/features/scan/phone-scan-button";
+import { usePhoneScanner } from "@/features/scan/use-phone-scanner";
 import { useBarcodeLookup } from "@/features/scan/use-barcode-lookup";
 import { EMPTY_SKU, type SkuFormValues } from "./sku-form-dialog";
 
@@ -94,6 +95,15 @@ export function SkuStandaloneForm({
       lookupBarcode(initialBarcode, true);
     }
   }, [initialBarcode, lookupBarcode]);
+
+  // Listen for paired phone scans in background while form is active
+  usePhoneScanner({
+    active: true,
+    onScan: (code) => {
+      setForm((prev) => ({ ...prev, barcode: code }));
+      lookupBarcode(code, true);
+    },
+  });
 
   const save = useApiMutation((values: SkuFormValues) => {
     return apiRequest<{ id: string; code: string }>("/skus", {

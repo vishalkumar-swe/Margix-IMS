@@ -17,6 +17,7 @@ import { SKU_STATUSES } from "@/lib/enums";
 import { HsnPicker } from "./hsn-picker";
 import { CameraScanButton } from "@/features/scan/camera-scan-button";
 import { PhoneScanButton } from "@/features/scan/phone-scan-button";
+import { usePhoneScanner } from "@/features/scan/use-phone-scanner";
 import { useBarcodeLookup, type AutoFillCatalogDetails } from "@/features/scan/use-barcode-lookup";
 
 export interface SkuFormValues {
@@ -160,6 +161,17 @@ export function SkuFormDialog({
 
   const { lookingUp, status: barcodeStatus, lookupBarcode } = useBarcodeLookup({
     onAutoFill,
+  });
+
+  // Listen for paired phone scans in background while form is open
+  usePhoneScanner({
+    active: open,
+    onScan: (code) => {
+      setForm((prev) => ({ ...prev, barcode: code }));
+      if (!editing) {
+        lookupBarcode(code, true);
+      }
+    },
   });
 
   const prevOpenRef = useRef(false);

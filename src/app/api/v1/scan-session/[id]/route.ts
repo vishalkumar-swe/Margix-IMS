@@ -2,13 +2,15 @@ import { z } from "zod";
 import { apiRoute, publicApiRoute } from "@/server/http/api-route";
 import { NotFoundError } from "@/server/errors";
 import {
+  deleteScanSession,
   markSessionConnected,
   popBarcodesFromSession,
   pushBarcodeToSession,
+  touchScanSession,
 } from "@/server/modules/scan/remote-scan-session";
 
 const phoneActionSchema = z.object({
-  action: z.enum(["join", "scan"]),
+  action: z.enum(["join", "scan", "ping"]),
   barcode: z.string().trim().min(1).max(200).optional(),
 });
 
@@ -21,13 +23,20 @@ export const GET = apiRoute({ permission: "stock.view" }, async ({ params }) => 
   return result;
 });
 
-/** Mobile phone posts join status and scanned barcodes */
+/** Mobile phone posts join status, keepalive ping, and scanned barcodes */
 export const POST = publicApiRoute({ body: phoneActionSchema }, async ({ params, body }) => {
   const sessionId = params.id;
+
   if (body.action === "join") {
     const ok = markSessionConnected(sessionId);
     if (!ok) throw new NotFoundError("Scan session not found or expired.");
     return { ok: true, status: "connected" };
+  }
+
+  if (body.action === "ping") {
+    const ok = touchScanSession(sessionId);
+    if (!ok) throw new NotFoundError("Scan session not found or expired.");
+    return { ok: true, status: "pong" };
   }
 
   if (body.action === "scan" && body.barcode) {
@@ -39,3 +48,8 @@ export const POST = publicApiRoute({ body: phoneActionSchema }, async ({ params,
   return { ok: false };
 });
 
+/** Desktop can explicitly terminate this session */
+export const DELETE = apiRoute({ permission: "stock.view" }, async ({ params }) => {
+  const ok = deleteScanSession(params.id);
+  return { ok };
+});

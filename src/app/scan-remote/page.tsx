@@ -9,10 +9,12 @@ import { Input } from "@/components/ui/form-controls";
 import { loadDetectorClass } from "@/features/scan/camera-scanner";
 
 const WANTED_FORMATS = ["qr_code", "code_128", "ean_13", "ean_8", "upc_a", "upc_e", "code_39"];
+const PHONE_STORAGE_KEY = "margix_remote_phone_session";
 
 function playBeep() {
   try {
-    const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    const ctx = new (window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = "sine";
@@ -33,8 +35,9 @@ function playBeep() {
 
 function RemoteScannerContent() {
   const searchParams = useSearchParams();
-  const sessionId = searchParams.get("session");
+  const rawSessionFromUrl = searchParams.get("session");
 
+  const [sessionId, setSessionId] = useState<string | null>(rawSessionFromUrl);
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,13 +55,37 @@ function RemoteScannerContent() {
   const soundOnRef = useRef(soundOn);
   soundOnRef.current = soundOn;
 
-  // 1. Join session on mount
+  // 1. Resolve and persist session ID
+  useEffect(() => {
+    if (rawSessionFromUrl) {
+      setSessionId(rawSessionFromUrl);
+      try {
+        localStorage.setItem(PHONE_STORAGE_KEY, rawSessionFromUrl);
+      } catch {
+        // ignore
+      }
+    } else {
+      try {
+        const cached = localStorage.getItem(PHONE_STORAGE_KEY);
+        if (cached) {
+          setSessionId(cached);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }, [rawSessionFromUrl]);
+
+  // 2. Join session on mount
   useEffect(() => {
     if (!sessionId) {
-      setError("No session ID found. Please scan the QR code from the Margix desktop screen.");
+      setError("No session ID found. Please scan the QR code from your Margix computer screen.");
       setConnecting(false);
       return;
     }
+
+    setConnecting(true);
+    setError(null);
 
     fetch(`/api/v1/scan-session/${encodeURIComponent(sessionId)}`, {
       method: "POST",
@@ -66,7 +93,7 @@ function RemoteScannerContent() {
       body: JSON.stringify({ action: "join" }),
     })
       .then((res) => {
-        if (!res.ok) throw new Error("Session expired or invalid.");
+        if (!res.ok) throw new Error("Session expired or invalid. Please scan the QR code on your computer again.");
         return res.json();
       })
       .then(() => {
@@ -76,10 +103,44 @@ function RemoteScannerContent() {
       .catch((err) => {
         setError(err instanceof Error ? err.message : "Failed to connect to desktop session.");
         setConnecting(false);
+        try {
+          localStorage.removeItem(PHONE_STORAGE_KEY);
+        } catch {
+          // ignore
+        }
       });
   }, [sessionId]);
 
-  // 2. Camera feed and continuous detection
+  // 3. Heartbeat keepalive every 12 seconds so connection stays fresh and detects desktop reset
+  useEffect(() => {
+    if (!connected || !sessionId) return;
+
+    const interval = setInterval(() => {
+      fetch(`/api/v1/scan-session/${encodeURIComponent(sessionId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "ping" }),
+      })
+        .then((res) => {
+          if (!res.ok) {
+            setConnected(false);
+            setError("Session ended on desktop. Please scan the new QR code on your computer.");
+            try {
+              localStorage.removeItem(PHONE_STORAGE_KEY);
+            } catch {
+              // ignore
+            }
+          }
+        })
+        .catch(() => {
+          // Network blip, retry next cycle
+        });
+    }, 12000);
+
+    return () => clearInterval(interval);
+  }, [connected, sessionId]);
+
+  // 4. Camera feed and continuous detection
   useEffect(() => {
     if (!connected || !sessionId) return;
     let stopped = false;
@@ -209,13 +270,17 @@ function RemoteScannerContent() {
           </div>
           <div>
             <h1 className="text-sm font-bold tracking-tight">Margix Wireless Scanner</h1>
-            <p className="text-[11px] text-slate-400">Mobile Barcode Reader</p>
+            <p className="text-[11px] text-slate-400">Connected to PC</p>
           </div>
         </div>
 
-        {connected && (
+        {connected ? (
           <span className="flex items-center gap-1.5 rounded-full bg-emerald-950/80 px-2.5 py-1 text-xs font-semibold text-emerald-400 ring-1 ring-emerald-500/30">
             <span className="size-2 rounded-full bg-emerald-400 animate-pulse" /> Connected
+          </span>
+        ) : (
+          <span className="flex items-center gap-1.5 rounded-full bg-amber-950/80 px-2.5 py-1 text-xs font-semibold text-amber-400 ring-1 ring-amber-500/30">
+            <span className="size-2 rounded-full bg-amber-400 animate-pulse" /> Connecting...
           </span>
         )}
       </header>
@@ -229,7 +294,26 @@ function RemoteScannerContent() {
           </div>
         )}
 
-        {error && <Alert tone="error">{error}</Alert>}
+        {error && (
+          <div className="space-y-3">
+            <Alert tone="error">{error}</Alert>
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full text-xs"
+              onClick={() => {
+                try {
+                  localStorage.removeItem(PHONE_STORAGE_KEY);
+                } catch {
+                  // ignore
+                }
+                window.location.reload();
+              }}
+            >
+              Retry Connection
+            </Button>
+          </div>
+        )}
 
         {connected && (
           <>
@@ -310,7 +394,10 @@ function RemoteScannerContent() {
             </div>
 
             {/* Manual Code Fallback */}
-            <form onSubmit={handleSendManual} className="mt-2 space-y-2 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+            <form
+              onSubmit={handleSendManual}
+              className="mt-2 space-y-2 rounded-xl border border-slate-800 bg-slate-900/60 p-3"
+            >
               <label htmlFor="manual-barcode" className="text-xs font-semibold text-slate-300 block">
                 Type barcode manually
               </label>
@@ -335,7 +422,7 @@ function RemoteScannerContent() {
             </form>
 
             <p className="text-center text-xs text-slate-500 pb-4">
-              Point this phone at any product barcode. The scanned item will appear instantly on your computer screen.
+              Your phone stays connected. Aim at barcodes as you create products on your computer screen.
             </p>
           </>
         )}
