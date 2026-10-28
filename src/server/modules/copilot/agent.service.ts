@@ -42,11 +42,20 @@ import {
   seedSandboxData,
 } from "@/server/modules/copilot/sandbox.service";
 import { postDispatch } from "@/server/modules/dispatch/dispatch.service";
+import {
+  SCREEN_ANCHOR_NOUNS,
+  anchorLookup,
+  isAnchorReference,
+  type ScreenAnchor,
+} from "@/lib/copilot/screen-anchor";
+import { encodeCopilotEvent } from "@/lib/copilot/stream-events";
 
 export interface AgentContext {
   role: RoleCode;
   route: string;
   userId?: string;
+  /** Record the user is looking at, used to resolve "it" / "this" / "iska". */
+  anchor?: ScreenAnchor;
 }
 
 export type AgentChatHistoryItem = {
@@ -238,7 +247,7 @@ interface StockResult {
 }
 
 const encoder = new TextEncoder();
-const sseEvent = (payload: unknown) => encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+const sseEvent = encodeCopilotEvent;
 
 interface StatutoryCommoditySpec {
   aliases: string[];
@@ -1118,6 +1127,83 @@ function synthesizeCommercialDeepResearch(params: {
  * against PostgreSQL. Features human-in-the-loop confirmation for destructive
  * actions, state transitions, and automated FEFO dispatching.
  */
+/**
+ * Ways people ask to see a directory. "What suppliers do we have?" and "kitne
+ * vendors hain" are the same request as "list suppliers" and must reach the
+ * same deterministic listing rather than falling through to a generic answer.
+ */
+const DIRECTORY_REQUEST =
+  /\b(show|list|view|all|find|get|details?|have|having|exists?|existing|registered|directory|available|how\s+many|which|what)\b|\b(kitne|kitni|kaunse|konse|batao|dikhao|hain|hai)\b/i;
+
+/** Sentence-cased noun for a heading ("purchase order" -> "Purchase order"). */
+function titleCaseNoun(noun: string): string {
+  return noun.charAt(0).toUpperCase() + noun.slice(1);
+}
+
+/** Flattens one record into a two-column table; nested lists are summarised. */
+function renderRecordTable(detail: Record<string, unknown>): string {
+  const rows: string[] = ["| Field | Value |", "| :--- | :--- |"];
+  for (const [key, value] of Object.entries(detail)) {
+    if (value === null || value === undefined || value === "") continue;
+    const label = key
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .replace(/^./, (c) => c.toUpperCase());
+    if (Array.isArray(value)) {
+      rows.push(`| ${label} | ${value.length} item(s) |`);
+      continue;
+    }
+    if (typeof value === "object") continue;
+    rows.push(`| ${label} | ${String(value)} |`);
+  }
+  return rows.length > 2 ? `${rows.join("\n")}\n` : "_No displayable fields on this record._\n";
+}
+
+/**
+ * Zero dead-ends: every anchored answer offers the next logical business steps
+ * for that record kind instead of leaving the user at a full stop.
+ */
+function anchorFollowUps(anchor: ScreenAnchor | undefined): CopilotAction[] {
+  switch (anchor?.kind) {
+    case "supplier":
+      return [
+        { label: "New Purchase Order", route: "/purchase-orders/new", permission: "po.manage" },
+        { label: "All Suppliers", route: "/masters/suppliers", permission: "master.view" },
+      ];
+    case "customer":
+      return [
+        { label: "New Invoice", route: "/invoices/new", permission: "invoice.manage" },
+        { label: "All Customers", route: "/masters/customers", permission: "master.view" },
+      ];
+    case "sku":
+      return [
+        { label: "Check Stock", route: "/stock", permission: "stock.view" },
+        { label: "New Purchase Order", route: "/purchase-orders/new", permission: "po.manage" },
+      ];
+    case "purchaseOrder":
+      return [
+        { label: "Receive Goods (GRN)", route: "/grns/new", permission: "grn.create" },
+        { label: "All Purchase Orders", route: "/purchase-orders", permission: "po.view" },
+      ];
+    case "invoice":
+      return [
+        { label: "Post Dispatch", route: "/dispatches/new", permission: "dispatch.create" },
+        { label: "All Invoices", route: "/invoices", permission: "invoice.view" },
+      ];
+    case "grn":
+      return [{ label: "Stock Balances", route: "/stock", permission: "stock.view" }];
+    case "dispatch":
+      return [{ label: "All Dispatches", route: "/dispatches", permission: "dispatch.view" }];
+    case "transfer":
+      return [{ label: "All Transfers", route: "/transfers", permission: "transfer.view" }];
+    case "adjustment":
+      return [{ label: "All Adjustments", route: "/adjustments", permission: "adjustment.view" }];
+    case "godown":
+      return [{ label: "Stock by Godown", route: "/stock", permission: "stock.view" }];
+    default:
+      return [];
+  }
+}
+
 export class AutonomousAgentService {
   /**
    * Checks whether the user's message is an explicit confirmation reply (e.g. yes, ha, proceed, cancel, abort)
@@ -1842,7 +1928,7 @@ export class AutonomousAgentService {
     }
 
     // 16b. Customers Directory
-    if (/\b(customers?|clients?|buyers?)\b/i.test(text) && /\b(show|list|view|all|find|get|details?)\b/i.test(text)) {
+    if (/\b(customers?|clients?|buyers?)\b/i.test(text) && DIRECTORY_REQUEST.test(text)) {
       return {
         intent: "list_customers",
         steps: [
@@ -1857,7 +1943,7 @@ export class AutonomousAgentService {
     }
 
     // 16c. Suppliers / Vendors Directory
-    if (/\b(suppliers?|vendors?)\b/i.test(text) && /\b(show|list|view|all|find|get|details?)\b/i.test(text)) {
+    if (/\b(suppliers?|vendors?)\b/i.test(text) && DIRECTORY_REQUEST.test(text)) {
       return {
         intent: "list_suppliers",
         steps: [
@@ -2357,6 +2443,23 @@ export class AutonomousAgentService {
             toolName: "check_stock",
             arguments: { product: queryTarget },
             description: `Querying live godown stock and batches for "${queryTarget}"`,
+          },
+        ],
+      };
+    }
+
+    // Screen anchor: "show its batches" / "iska detail" on a detail screen means
+    // the record in front of the user, so load it instead of the generic summary.
+    const anchored = isAnchorReference(message) ? anchorLookup(context?.anchor) : null;
+    if (anchored) {
+      return {
+        intent: "anchored_record",
+        steps: [
+          {
+            name: "Open Current Record",
+            toolName: anchored.toolName,
+            arguments: { identifier: anchored.identifier },
+            description: `Loading the ${anchored.noun} currently open on screen`,
           },
         ],
       };
@@ -5597,6 +5700,24 @@ export class AutonomousAgentService {
 
         actions.push({ label: "View Ledger Audit", route: "/audit", permission: "audit.view" });
         sources.push("Cryptographic Reversal Safety Evaluator");
+        break;
+      }
+
+      case "anchored_record": {
+        const anchor = context.anchor;
+        const noun = anchor ? SCREEN_ANCHOR_NOUNS[anchor.kind] : "record";
+        const detail = executed[0]?.output as Record<string, unknown> | undefined;
+        const failure = typeof detail?.error === "string" ? detail.error : null;
+        if (!detail || failure) {
+          markdown = `I could not open the ${noun} on this screen${failure ? `: ${failure}` : "."}`;
+          markdown += `\n\nTell me the name or document number and I will look it up.`;
+          sources.push("Screen Context Anchor");
+          break;
+        }
+        markdown = `## ${titleCaseNoun(noun)} on screen\n\n`;
+        markdown += renderRecordTable(detail);
+        actions.push(...anchorFollowUps(anchor));
+        sources.push("Screen Context Anchor");
         break;
       }
 

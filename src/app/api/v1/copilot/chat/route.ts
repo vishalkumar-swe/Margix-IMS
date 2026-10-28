@@ -1,18 +1,20 @@
 import { can } from "@/lib/permissions";
 import type { CopilotAction, CopilotConfirmation } from "@/lib/copilot/types";
+import { deriveAnchorFromRoute } from "@/lib/copilot/screen-anchor";
+import { encodeCopilotEvent } from "@/lib/copilot/stream-events";
 import { copilotChatSchema } from "@/lib/validation/copilot";
 import { apiRoute } from "@/server/http/api-route";
 import { logger } from "@/server/observability/logger";
 import { getWorkspaceCounts } from "@/server/modules/copilot/copilot.queries";
 import { answerFromKnowledge, buildLlmPrompt } from "@/server/modules/copilot/knowledge";
 import { llmConfigured, streamChatCompletion } from "@/server/modules/copilot/llm";
-import { copilotToolsForRole, executeCopilotTool } from "@/server/modules/copilot/tools";
+import { copilotToolsForRole, describeCopilotToolCall, executeCopilotTool } from "@/server/modules/copilot/tools";
 import { AutonomousAgentService } from "@/server/modules/copilot/agent.service";
 import { checkDomainGuard } from "@/server/modules/copilot/guard";
+import { shouldUseFastPath } from "@/server/modules/copilot/routing";
 import { createHash } from "node:crypto";
 
-const encoder = new TextEncoder();
-const event = (payload: unknown) => encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+const event = encodeCopilotEvent;
 
 function sse(stream: ReadableStream<Uint8Array>): Response {
   return new Response(stream, {
@@ -63,7 +65,10 @@ function withFinalEvent(
  * If the upstream provider is offline or exhausted, the Autonomous Agent Planner takes over.
  */
 export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSchema }, async ({ body, user, request }) => {
-  const context = { ...body.context, role: user.role, userId: user.id };
+  // Older clients (and any non-browser caller) may not send an anchor; the URL
+  // still identifies the record on every detail screen.
+  const anchor = body.context.anchor ?? deriveAnchorFromRoute(body.context.route) ?? undefined;
+  const context = { ...body.context, anchor, role: user.role, userId: user.id };
   const counts = await getWorkspaceCounts();
   const curated = answerFromKnowledge(body.message, context, counts);
   const actions = allowedActions(curated.actions, user.role);
@@ -80,8 +85,11 @@ export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSc
   if (guard.blocked) {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(event({ type: "token", text: guard.refusalText || "This topic is outside the Margix enterprise domain." }));
-        controller.enqueue(event({ type: "final", actions: [], sources: ["Margix Enterprise Guardrail"] }));
+        // Must use the same {delta} / {done} shape as every other path: the
+        // browser ignores anything else, so a refusal sent as {type:"token"}
+        // left the user watching an empty bubble spin.
+        controller.enqueue(event({ delta: guard.refusalText || "This topic is outside the Margix enterprise domain." }));
+        controller.enqueue(event({ done: true, actions: [], sources: ["Margix Enterprise Guardrail"] }));
         controller.close();
       },
     });
@@ -92,6 +100,16 @@ export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSc
   const isPendingReply = AutonomousAgentService.isPendingConfirmationReply(body.message, body.history);
 
   if (isPendingReply || !llmConfigured()) {
+    return sse(AutonomousAgentService.executeAutonomousAgentStream(body.message, context, actor, body.history));
+  }
+
+  // 2. Tier 1 fast path. A plain lookup ("what suppliers do we have?") is
+  // rendered deterministically from the database: no provider round trip, so no
+  // latency, no tokens, and no chance of the model editorialising over data it
+  // did not change. Anything analytical or mid-conversation skips this.
+  const { intent } = AutonomousAgentService.planIntent(body.message, context, body.history);
+  if (shouldUseFastPath(body.message, intent, body.history.length)) {
+    logger.debug("copilot fast path", { intent, route: context.route });
     return sse(AutonomousAgentService.executeAutonomousAgentStream(body.message, context, actor, body.history));
   }
 
@@ -108,6 +126,7 @@ export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSc
       messages,
       signal: request.signal,
       tools: copilotToolsForRole(user.role, body.message, context.route),
+      describeTool: describeCopilotToolCall,
       executeTool: (name, args) =>
         executeCopilotTool(name, args, {
           role: user.role,

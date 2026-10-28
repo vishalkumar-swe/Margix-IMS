@@ -1,5 +1,6 @@
 import type { RoleCode } from "@prisma/client";
 import type { Permission } from "@/lib/permissions";
+import type { ScreenAnchor } from "./screen-anchor";
 
 /**
  * Everything the Copilot and the walkthrough engine share. Kept in `lib/` so
@@ -97,6 +98,8 @@ export interface CopilotRuntimeContext {
   error?: { code: string; message: string; details?: unknown };
   /** Recent errors captured by the global interceptor. */
   recentErrors?: string[];
+  /** Record the user is looking at, so "delete it" resolves without asking. */
+  anchor?: ScreenAnchor;
 }
 
 export type AgentStepStatus = "pending" | "running" | "completed" | "failed";

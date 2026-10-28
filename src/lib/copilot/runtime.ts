@@ -1,4 +1,10 @@
 import type { ApiClientError } from "@/lib/api-client";
+import {
+  SCREEN_ANCHOR_KINDS,
+  deriveAnchorFromRoute,
+  type ScreenAnchor,
+  type ScreenAnchorKind,
+} from "./screen-anchor";
 import type { CopilotRuntimeContext } from "./types";
 
 /**
@@ -64,6 +70,37 @@ export function collectFormContext(): Record<string, string> {
   return result;
 }
 
+const ANCHOR_KINDS = new Set<string>(SCREEN_ANCHOR_KINDS);
+
+/**
+ * The record the user has singled out on screen, if any. A page opts in by
+ * putting `data-copilot-entity` (plus `-id` and optionally `-label`) on a row
+ * or card, and marking the active one with `data-copilot-selected`,
+ * `aria-selected` or `aria-current`. Keyboard focus counts as a selection too.
+ */
+function selectedAnchor(): ScreenAnchor | null {
+  if (typeof document === "undefined") return null;
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>("[data-copilot-entity]"));
+  if (candidates.length === 0) return null;
+  const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const chosen =
+    candidates.find((element) => element.matches("[data-copilot-selected], [aria-selected='true'], [aria-current='true'], [aria-current='page']")) ??
+    (active ? candidates.find((element) => element.contains(active)) : undefined) ??
+    (candidates.length === 1 ? candidates[0] : undefined);
+  if (!chosen) return null;
+  const kind = chosen.dataset.copilotEntity;
+  if (!kind || !ANCHOR_KINDS.has(kind)) return null;
+  const id = chosen.dataset.copilotEntityId?.trim();
+  const label = chosen.dataset.copilotEntityLabel?.trim() || chosen.textContent?.trim().slice(0, 120);
+  if (!id && !label) return null;
+  return { kind: kind as ScreenAnchorKind, id: id || undefined, label: label || undefined, source: "selection" };
+}
+
+/** Selection wins over the URL; the URL still anchors every detail screen. */
+export function collectScreenAnchor(route: string): ScreenAnchor | undefined {
+  return selectedAnchor() ?? deriveAnchorFromRoute(route) ?? undefined;
+}
+
 export function focusedLabel(): string | undefined {
   if (typeof document === "undefined") return undefined;
   const active = document.activeElement;
@@ -108,12 +145,14 @@ export function emitCopilotEvent(type: string, detail: Record<string, unknown> =
 }
 
 export function buildRuntimeContext(role: CopilotRuntimeContext["role"]): CopilotRuntimeContext {
+  const route = typeof window === "undefined" ? "/" : `${window.location.pathname}${window.location.search}`;
   return {
-    route: typeof window === "undefined" ? "/" : `${window.location.pathname}${window.location.search}`,
+    route,
     pageTitle: pageTitle(),
     role,
     form: collectFormContext(),
     focused: focusedLabel(),
+    anchor: collectScreenAnchor(route),
   };
 }
 

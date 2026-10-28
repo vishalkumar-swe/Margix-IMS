@@ -241,7 +241,28 @@ Every user query sent to the AI Copilot is automatically enriched with the clien
 * **Active Form State:** Selected godown, line item count, active SKU IDs, entered quantities.
 * **User Role & Permissions:** (Admin, Store Manager, Warehouse Operator, Accounts).
 * **DOM Error State:** Active form validation warnings, API error toasts (e.g. `INSUFFICIENT_STOCK`).
+* **Screen Anchor:** The business record the user is looking at, so relative commands ("delete it", "show its batches", "iska detail batao") resolve without a clarifying question.
 * **Document Knowledge Base:** Official Margix workflow rules, double-entry ledger specifications, tax rules, and Tally sync specifications.
+
+
+#### 5.1.1 Screen Anchoring
+
+The anchor identifies one record — `{ kind, id, label, source }` — and is resolved from two sources, selection first:
+
+| Source | How it is captured | Covers |
+| :--- | :--- | :--- |
+| `selection` | A row or card carrying `data-copilot-entity` / `-entity-id` / `-entity-label`, picked when it is marked selected (`data-copilot-selected`, `aria-selected`, `aria-current`) or contains keyboard focus. | List screens that opt in (currently the shared supplier/customer table). |
+| `route` | The record id in the URL of any detail screen (`/purchase-orders/<id>`). Derived in the browser, and again on the server so non-browser callers and older clients still anchor. | Every detail screen, with no page-level change. |
+
+List screens, create forms and action segments (`/new`, `/edit`, `/labels`, `/print`) deliberately produce **no** anchor — guessing there is worse than asking which record is meant.
+
+The anchor reaches the model two ways:
+* The LLM path injects a `SCREEN CONTEXT ANCHOR` instruction plus the anchor JSON into the system prompt, and requires the record to be confirmed by id with its lookup tool before any action is proposed.
+* The autonomous agent path (LLM offline, or a confirmation reply) maps the anchor to that record's detail tool — `get_supplier_detail`, `get_invoice_detail`, and so on — whenever the message is a pronoun reference it could not otherwise resolve, and answers with the record plus its next logical business steps.
+
+Definitions live in `src/lib/copilot/screen-anchor.ts`; browser capture in `src/lib/copilot/runtime.ts`.
+
+To anchor a new list screen, put the three data attributes on the row element — no other wiring is needed.
 
 ```mermaid
 graph TD
@@ -251,6 +272,41 @@ graph TD
     Client -- "4. User Clicks Action Link" --> NavEngine["Deep-Link & Spotlight Engine"]
     NavEngine -- "5. Highlights Target Element" --> Client
 ```
+
+### 5.1.2 Two-Tier Routing, Autonomy and Prompt Budget
+
+Every question is routed before any provider call is made. `src/server/modules/copilot/routing.ts` is the single source of truth for that decision, and the same detection drives both the tool list and the system prompt so they cannot drift apart.
+
+**Tier 1 — deterministic (no provider call).** A plain lookup is rendered straight from the database by the autonomous planner: zero latency from the model, zero tokens, and no chance of the model editorialising over data it did not change. `shouldUseFastPath` is deliberately conservative — it requires a whitelisted read-only intent, and refuses anything asking for judgement (`why`, `analyse`, `compare`, `recommend`, `kyun`, `kaise`), anything over 16 words, and any mid-conversation turn.
+
+**Tier 2 — the model, run as an autonomous agent.** The loop in `llm.ts` lets the model call tools, read the results and decide what to do next, up to `MAX_TOOL_ROUNDS` (6). Tool calls requested in the same round run **concurrently**, so a three-lookup round costs one round trip rather than three.
+
+**Cost and latency controls.** Each round re-sends the whole prompt and every tool schema, so the budget is enforced on three axes:
+
+| Control | Where | Effect |
+| :--- | :--- | :--- |
+| Domain-scoped tool schemas | `copilotToolsForRole` | Only the domains a question touches are offered, instead of all 76 tools. |
+| Domain-scoped playbooks | `DOMAIN_PLAYBOOKS` in `knowledge.ts` | The market, sales and APMC playbooks ship only when relevant; the static core is ~45% smaller than the old monolithic prompt. |
+| Stable cacheable prefix | `CORE_INSTRUCTIONS` first, runtime JSON last | The prefix is byte-identical across requests so providers can cache it; only the tail varies. |
+| Per-result cap | `MAX_TOOL_RESULT_CHARS` (6k) | One wide list cannot dominate the context of every later round. |
+| Whole-turn ceiling | `MAX_TURN_PROMPT_CHARS` (120k) | Round count alone does not bound cost; when the budget is spent the tools are withdrawn and the model answers from what it has. |
+| History clamp | `clampHistory`, re-applied every round | The working set stays bounded as agent rounds accumulate. |
+
+### 5.1.3 Live Execution Visibility
+
+An agent that works for ten seconds in silence reads as a hung window. Both answer paths therefore stream what they are doing while they do it, over the same SSE protocol:
+
+* `{"type":"plan", thinking, steps[]}` — the steps now known, each with a status.
+* `{"type":"step", stepIndex, status, outputSummary}` — one step changed.
+* `{"delta":"…"}` — answer text, once the agent is ready to write.
+
+The autonomous planner knows its whole plan upfront and sends it in one `plan` event. The model-driven path discovers work a round at a time, so it **appends** to the plan on every tool round: as soon as the model asks for tools, each call is named from its arguments (`describeCopilotToolCall` — "Purchase Order Detail · identifier: PO-2026-0001") and reported as `running`; because the round's calls run concurrently, each reports its own `completed`/`failed` and row count the moment it settles rather than waiting for its slowest sibling.
+
+All three event shapes are defined once in `src/lib/copilot/stream-events.ts` and used by every emitter and by the browser decoder. A compile-time check (`COPILOT_STREAM_CONTRACT_VERIFIED`) fails the build if a server event ever gains a field the browser frame cannot read — previously the two sides were untyped object literals, and a guardrail refusal emitted as `{type:"token",text}` was silently dropped, leaving the user with an empty bubble spinning until the stream closed.
+
+The pending banner reports the step in flight and a running clock rather than a fixed slogan; a banner that claims to be "consulting live APMC mandi feeds" on every question conveys nothing and reads as frozen after a few seconds.
+
+In the drawer, the execution card **auto-expands while the agent is working** and folds away when it finishes (a manual collapse sticks). Its header shows the step in flight and a running seconds counter; before the first progress event arrives, the thinking indicator escalates its label with elapsed time ("Thinking" → "Reading live Margix data" → "Working through the steps" → "Still working — complex request"). A moving number is what distinguishes work from a hang.
 
 ### 5.2 Dynamic Contextual Question Chips
 When opening the Copilot drawer, users see three clickable prompt chips that adapt dynamically based on their current page:

@@ -45,6 +45,7 @@ import {
 } from "@/lib/copilot/types";
 import type { Permission } from "@/lib/permissions";
 import { SERVER_COPILOT_STATE, copilotStoreFor } from "./copilot-store";
+import type { CopilotStreamFrame } from "@/lib/copilot/stream-events";
 
 interface PendingSpotlight {
   selector: string;
@@ -525,19 +526,9 @@ export function CopilotProvider({
             const payload = line.slice(5).trim();
             if (!payload || payload === "[DONE]") continue;
             try {
-              const event = JSON.parse(payload) as {
-                type?: "plan" | "step" | "delta";
-                thinking?: string;
-                steps?: AgentExecutionStep[];
-                stepIndex?: number;
-                status?: AgentStepStatus;
-                outputSummary?: string;
-                delta?: string;
-                error?: string;
-                done?: boolean;
-                actions?: CopilotAction[];
-                confirmation?: CopilotConfirmation;
-              };
+              // Typed against the shared contract so a server path cannot
+              // emit a shape this loop silently drops.
+              const event = JSON.parse(payload) as CopilotStreamFrame;
 
               if (event.type === "plan" || (event.steps && event.thinking)) {
                 activeThinking = event.thinking;

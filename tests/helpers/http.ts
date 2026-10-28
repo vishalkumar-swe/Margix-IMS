@@ -41,3 +41,33 @@ export async function sessionCookieFor(userId: string): Promise<string> {
   const { token } = await createSession(userId);
   return `${SESSION_COOKIE_NAME}=${token}`;
 }
+
+/**
+ * Invokes a streaming route and returns its decoded SSE frames. The chat
+ * Copilot answers as `text/event-stream`, which `callRoute` cannot parse.
+ */
+export async function callStreamRoute(
+  handler: RouteHandler,
+  options: CallOptions = {},
+): Promise<{ status: number; headers: Headers; frames: Array<Record<string, unknown>> }> {
+  const headers = new Headers({ host: "localhost:3000", ...options.headers });
+  if (options.cookie) headers.set("cookie", options.cookie);
+  if (options.body !== undefined) headers.set("content-type", "application/json");
+
+  const request = new Request(`http://localhost:3000${options.path ?? "/api/v1/test"}`, {
+    method: options.method ?? "POST",
+    headers,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  });
+  const response = await handler(request, { params: Promise.resolve(options.params ?? {}) });
+
+  const frames: Array<Record<string, unknown>> = [];
+  const text = await response.text();
+  for (const line of text.split("\n")) {
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    frames.push(JSON.parse(payload) as Record<string, unknown>);
+  }
+  return { status: response.status, headers: response.headers, frames };
+}

@@ -579,6 +579,28 @@ describe("AutonomousAgentService", () => {
       expect(result.markdownAnswer).toContain("1904 10");
     });
   });
+
+  it("resolves a pronoun to the record open on screen", () => {
+    const plan = AutonomousAgentService.planIntent("iska detail dikhao", {
+      role: "ADMIN" as const,
+      route: "/masters/suppliers/sup-9",
+      anchor: { kind: "supplier" as const, id: "sup-9", source: "route" as const },
+    });
+    expect(plan.intent).toBe("anchored_record");
+    expect(plan.steps[0].toolName).toBe("get_supplier_detail");
+    expect(plan.steps[0].arguments).toHaveProperty("identifier", "sup-9");
+  });
+
+  it("falls back to the workspace summary when nothing is anchored", () => {
+    const plan = AutonomousAgentService.planIntent("show me its detail", context);
+    expect(plan.intent).toBe("general_operational");
+  });
+
+  it("treats conversational directory phrasing as a plain listing", () => {
+    expect(AutonomousAgentService.planIntent("what suppliers do we have?", context).intent).toBe("list_suppliers");
+    expect(AutonomousAgentService.planIntent("kitne vendors hain", context).intent).toBe("list_suppliers");
+    expect(AutonomousAgentService.planIntent("which customers are registered", context).intent).toBe("list_customers");
+  });
 });
 
 

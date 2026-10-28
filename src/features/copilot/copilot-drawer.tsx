@@ -81,6 +81,106 @@ function speechRecognition(): (new () => SpeechRecognitionLike) | null {
   return scope.SpeechRecognition ?? scope.webkitSpeechRecognition ?? null;
 }
 
+/**
+ * Seconds since the current run started. A moving number is what tells someone
+ * the agent is working rather than hung; a static spinner does not.
+ */
+function useElapsedSeconds(running: boolean): number {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!running) return;
+    const startedAt = Date.now();
+    // Ticks faster than it displays so a restarted run corrects within a frame
+    // or two instead of showing the previous run's count for a whole second.
+    const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 250);
+    return () => window.clearInterval(timer);
+  }, [running]);
+  return elapsed;
+}
+
+/**
+ * Shown between sending a question and the first progress event. The label
+ * changes as time passes so a slow first round reads as work in progress
+ * rather than a stalled window.
+ */
+function ThinkingIndicator() {
+  const elapsed = useElapsedSeconds(true);
+  const label =
+    elapsed < 3
+      ? "Thinking"
+      : elapsed < 8
+        ? "Reading live Margix data"
+        : elapsed < 20
+          ? "Working through the steps"
+          : "Still working — complex request";
+  return (
+    <span className="flex items-center gap-2 py-1 text-[11px] text-slate-500" aria-live="polite" aria-label={`${label}, ${elapsed} seconds`}>
+      <span className="flex items-center gap-1">
+        <span className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.2s]" />
+        <span className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.1s]" />
+        <span className="size-1.5 animate-bounce rounded-full bg-slate-400" />
+      </span>
+      <span>
+        {label}
+        {elapsed >= 3 && <span className="tabular-nums"> · {elapsed}s</span>}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * Status line shown while an answer is still being produced.
+ *
+ * It reports what the agent is actually doing — the tool in flight and how
+ * many steps have finished — rather than a fixed slogan. A banner that claims
+ * to be "consulting live APMC mandi feeds" on every question tells the user
+ * nothing, and reads as frozen once it has been on screen a few seconds.
+ */
+function AgentStatusBanner({ steps }: { steps?: AgentExecutionStep[] }) {
+  const elapsed = useElapsedSeconds(true);
+  const active = steps?.find((step) => step.status === "running");
+  const done = steps?.filter((step) => step.status === "completed").length ?? 0;
+  const total = steps?.length ?? 0;
+
+  const headline = active
+    ? active.name
+    : total > 0
+      ? "Working through the results"
+      : elapsed < 3
+        ? "Thinking"
+        : elapsed < 8
+          ? "Reading live Margix data"
+          : elapsed < 20
+            ? "Working through the steps"
+            : "Still working — complex request";
+
+  const detail = active?.description ?? (total > 0 ? `${done} of ${total} step(s) complete` : "Planning the steps for this request");
+
+  return (
+    <div
+      className="flex items-center gap-3 rounded-2xl border border-brand-300 bg-brand-50/70 p-3.5 shadow-xs backdrop-blur-md animate-in fade-in duration-200"
+      aria-live="polite"
+    >
+      <div className="relative flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand-500 text-slate-950 shadow-xs">
+        <Sparkles className="size-4 animate-spin text-slate-950" />
+        <span className="absolute -top-1 -right-1 flex size-2.5">
+          <span className="absolute inline-flex size-full animate-ping rounded-full bg-amber-400 opacity-80" />
+          <span className="relative inline-flex size-2.5 rounded-full bg-amber-500" />
+        </span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="truncate text-xs font-semibold text-slate-900">{headline}</span>
+          <span className="shrink-0 rounded-full bg-brand-100 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-brand-800">
+            {total > 0 ? `${done}/${total} · ${elapsed}s` : `${elapsed}s`}
+          </span>
+        </div>
+        <p className="mt-0.5 truncate text-[11px] text-slate-500">{detail}</p>
+      </div>
+    </div>
+  );
+}
+
 function AgentExecutionCard({
   thinking,
   steps,
@@ -89,9 +189,14 @@ function AgentExecutionCard({
   steps: AgentExecutionStep[];
 }) {
   const isRunning = steps.some((s) => s.status === "running" || s.status === "pending");
-  const [expanded, setExpanded] = useState(false);
+  const [collapsedByUser, setCollapsedByUser] = useState(false);
+  // Open while the agent works so progress is visible without a click, and
+  // fold away once it finishes — unless the user has taken over the toggle.
+  const expanded = collapsedByUser ? false : isRunning;
+  const elapsed = useElapsedSeconds(isRunning);
   const total = steps.length;
   const completed = steps.filter((s) => s.status === "completed").length;
+  const activeStep = steps.find((s) => s.status === "running");
 
   const toolLabels: Record<string, string> = {
     web_research: "Web Research",
@@ -109,7 +214,7 @@ function AgentExecutionCard({
     <div className="mb-2.5 overflow-hidden rounded-xl border border-slate-200/90 bg-slate-50/70 shadow-2xs transition-all">
       <button
         type="button"
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => setCollapsedByUser(expanded)}
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-slate-100/70"
       >
         <div className="flex items-center gap-2 min-w-0">
@@ -125,13 +230,15 @@ function AgentExecutionCard({
           </span>
           <span className="font-semibold text-slate-800 truncate text-[11px] sm:text-xs">
             {isRunning
-              ? `Executing workflow (${completed}/${total})...`
+              ? activeStep
+                ? `${activeStep.name}…`
+                : `Working (${completed}/${total})…`
               : `Autonomous Enterprise Workflow (${total} steps)`}
           </span>
         </div>
         <div className="flex items-center gap-1.5 shrink-0 text-slate-500">
           <span className="rounded-full bg-slate-200/80 px-2 py-0.5 text-[10px] font-medium tabular-nums text-slate-700">
-            {isRunning ? `${completed}/${total}` : "Completed"}
+            {isRunning ? `${completed}/${total} · ${elapsed}s` : "Completed"}
           </span>
           {expanded ? <ChevronUp className="size-3.5 text-slate-400" /> : <ChevronDown className="size-3.5 text-slate-400" />}
         </div>
@@ -469,12 +576,12 @@ export function CopilotDrawer() {
                   pending ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800",
                 )}
               >
-                {pending ? "Synthesizing…" : "Active"}
+                {pending ? "Working…" : "Active"}
               </span>
             </div>
             <p className="max-w-[200px] truncate text-[11px] text-slate-500">
               {pending
-                ? "Processing intelligence…"
+                ? "Running live data steps…"
                 : messages[messages.length - 1]?.content?.slice(0, 40) || "Click to expand workspace"}
             </p>
           </div>
@@ -731,11 +838,7 @@ export function CopilotDrawer() {
                         </div>
                       </>
                     ) : !message.steps || message.steps.length === 0 ? (
-                      <span className="flex items-center gap-1 py-1" aria-label="Copilot is thinking">
-                        <span className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.2s]" />
-                        <span className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.1s]" />
-                        <span className="size-1.5 animate-bounce rounded-full bg-slate-400" />
-                      </span>
+                      <ThinkingIndicator />
                     ) : null}
                   </>
                 )}
@@ -880,29 +983,8 @@ export function CopilotDrawer() {
             </div>
           ))}
 
-          {pending && (!messages[messages.length - 1]?.content || messages[messages.length - 1]?.content === "") && (
-            <div className="flex items-center gap-3 rounded-2xl border border-brand-300 bg-brand-50/70 p-3.5 shadow-xs backdrop-blur-md animate-in fade-in duration-200">
-              <div className="relative flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand-500 text-slate-950 shadow-xs">
-                <Sparkles className="size-4 animate-spin text-slate-950" />
-                <span className="absolute -top-1 -right-1 flex size-2.5">
-                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-amber-400 opacity-80" />
-                  <span className="relative inline-flex size-2.5 rounded-full bg-amber-500" />
-                </span>
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-slate-900">Synthesizing Real-Time Intelligence</span>
-                  <span className="flex items-center gap-1">
-                    <span className="size-1.5 rounded-full bg-brand-600 animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <span className="size-1.5 rounded-full bg-brand-600 animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <span className="size-1.5 rounded-full bg-brand-600 animate-bounce" style={{ animationDelay: "300ms" }} />
-                  </span>
-                </div>
-                <p className="mt-0.5 text-[11px] text-slate-500 truncate">
-                  Consulting live APMC mandi feeds, GST rules & signed inventory ledger…
-                </p>
-              </div>
-            </div>
+          {pending && !messages[messages.length - 1]?.content && (
+            <AgentStatusBanner steps={messages[messages.length - 1]?.steps} />
           )}
         </div>
 

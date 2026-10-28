@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ROLE_CODES } from "@/lib/enums";
 import { COPILOT_ACTION_TYPES } from "@/lib/copilot/types";
+import { SCREEN_ANCHOR_KINDS } from "@/lib/copilot/screen-anchor";
 
 /** Browser state sent with a Copilot question (PRD §5.1). */
 export const copilotRuntimeContextSchema = z.object({
@@ -17,6 +18,14 @@ export const copilotRuntimeContextSchema = z.object({
     })
     .optional(),
   recentErrors: z.array(z.string().max(500)).max(5).optional(),
+  anchor: z
+    .object({
+      kind: z.enum(SCREEN_ANCHOR_KINDS),
+      id: z.string().trim().max(60).optional(),
+      label: z.string().trim().max(120).optional(),
+      source: z.enum(["route", "selection"]),
+    })
+    .optional(),
 });
 
 export const copilotActionTypeSchema = z.enum(COPILOT_ACTION_TYPES);

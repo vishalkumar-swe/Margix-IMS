@@ -1,4 +1,5 @@
 import { getEnv } from "@/server/config/env";
+import { encodeCopilotEvent, type CopilotStreamEvent } from "@/lib/copilot/stream-events";
 
 /** True when the Copilot should stream from a configured OpenAI-compatible or Google Gemini endpoint. */
 export function llmConfigured(): boolean {
@@ -62,6 +63,15 @@ export interface LlmMessage {
 
 export type LlmToolExecutor = (name: string, argumentsJson: string) => Promise<string>;
 
+/** Human-readable label for one tool call, shown in the live progress stepper. */
+export interface ToolStepDescriptor {
+  name: string;
+  tool: string;
+  description?: string;
+}
+
+export type ToolDescriber = (name: string, argumentsJson: string) => ToolStepDescriptor;
+
 export interface CompletionConfig {
   baseUrl: string;
   apiKey: string;
@@ -76,17 +86,104 @@ interface StreamOptions {
   signal?: AbortSignal;
   tools?: LlmTool[];
   executeTool?: LlmToolExecutor;
+  /** Labels tool calls so the browser can show what the agent is doing. */
+  describeTool?: ToolDescriber;
 }
 
-const MAX_TOOL_ROUNDS = 3;
+/**
+ * How many times the model may look at tool output and decide to act again.
+ * Each round is a full provider call that re-sends the prompt and every tool
+ * schema, so this is the main lever on cost: high enough for the agent to
+ * finish a multi-step goal on its own, low enough to bound a runaway loop.
+ */
+const MAX_TOOL_ROUNDS = 6;
 const MAX_TOKENS = 2048;
-const encoder = new TextEncoder();
 
-function clampHistory(messages: LlmMessage[]): LlmMessage[] {
-  // Keep the system prompt plus the most recent turns; long histories both
-  // cost more and dilute the retrieved excerpts.
+/**
+ * Cap on one tool result fed back to the model. Without it a single wide list
+ * can dominate the context of every remaining round.
+ */
+const MAX_TOOL_RESULT_CHARS = 6000;
+
+/**
+ * Whole-turn ceiling on what we send upstream, summed across rounds. Round
+ * count alone does not bound cost — a wide tool list plus accumulated results
+ * does — so when the budget is spent the tools are withdrawn and the model
+ * answers from what it already has.
+ */
+const MAX_TURN_PROMPT_CHARS = 120_000;
+
+function promptSize(messages: LlmMessage[], tools: LlmTool[] | undefined): number {
+  let size = 0;
+  for (const message of messages) size += (message.content?.length ?? 0) + 40;
+  for (const tool of tools ?? []) size += JSON.stringify(tool).length;
+  return size;
+}
+
+function trimToolResult(output: string): string {
+  if (output.length <= MAX_TOOL_RESULT_CHARS) return output;
+  return `${output.slice(0, MAX_TOOL_RESULT_CHARS)}\n…[truncated; narrow the query or ask for fewer rows]`;
+}
+
+/** One line about what a tool returned, for the live progress stepper. */
+function summarizeToolResult(output: string): string {
+  try {
+    const parsed = JSON.parse(output) as unknown;
+    if (Array.isArray(parsed)) return `${parsed.length} row(s)`;
+    if (parsed && typeof parsed === "object") {
+      const record = parsed as Record<string, unknown>;
+      if (typeof record.error === "string") return record.error.slice(0, 160);
+      const list = Object.values(record).find((value) => Array.isArray(value));
+      if (Array.isArray(list)) return `${list.length} row(s)`;
+      if (typeof record.count === "number") return `${record.count} row(s)`;
+      return `${Object.keys(record).length} field(s)`;
+    }
+  } catch {
+    // Not JSON — fall through to a length hint.
+  }
+  return output.length > 0 ? `${output.length} characters` : "no data";
+}
+
+type ToolSettled = (index: number, ok: boolean, summary: string) => void;
+
+/**
+ * Runs the tools one round requested. The model asks for independent lookups
+ * in the same round, so they run concurrently — serial execution made a
+ * three-lookup round three round-trips long for no reason. Each call reports
+ * as it settles rather than at the end, so a slow one does not hold back the
+ * progress the user can already see.
+ */
+async function runToolCalls(
+  calls: LlmToolCall[],
+  executeTool: LlmToolExecutor,
+  onSettled?: ToolSettled,
+): Promise<LlmMessage[]> {
+  const outputs = await Promise.all(
+    calls.map(async (call, index) => {
+      try {
+        const output = trimToolResult(await executeTool(call.function.name, call.function.arguments));
+        onSettled?.(index, true, summarizeToolResult(output));
+        return output;
+      } catch (error) {
+        // A failed tool is data the model can recover from, not a dead stream.
+        const message = error instanceof Error ? error.message : "Tool execution failed.";
+        onSettled?.(index, false, message);
+        return JSON.stringify({ error: message });
+      }
+    }),
+  );
+  return calls.map((call, index) => ({ role: "tool", tool_call_id: call.id, content: outputs[index] }));
+}
+
+/**
+ * Keeps the system prompt plus a bounded tail of the conversation. The tail has
+ * to be wide enough to hold several agent rounds (one assistant message plus
+ * its tool results each), but long histories cost more and dilute the retrieved
+ * excerpts, so it is re-applied on every round rather than allowed to grow.
+ */
+function clampHistory(messages: LlmMessage[], keep = 24): LlmMessage[] {
   const system = messages.filter((message) => message.role === "system");
-  const turns = messages.filter((message) => message.role !== "system").slice(-12);
+  const turns = messages.filter((message) => message.role !== "system").slice(-keep);
   // Never start with an orphaned tool result.
   while (turns[0]?.role === "tool") turns.shift();
   return [...system, ...turns];
@@ -316,9 +413,9 @@ export async function streamCompletion(options: StreamOptions): Promise<Readable
 
   return new ReadableStream<Uint8Array>({
     async start(streamController) {
-      const send = (payload: unknown) => {
+      const send = (payload: CopilotStreamEvent) => {
         try {
-          streamController.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+          streamController.enqueue(encodeCopilotEvent(payload));
         } catch {
           // The reader went away; stop writing.
         }
@@ -329,25 +426,52 @@ export async function streamCompletion(options: StreamOptions): Promise<Readable
         let currentTools = tools;
         let round = activeRound;
         let toolRounds = 0;
+        let spent = promptSize(messages, currentTools);
+        // Cumulative stepper shown in the browser. The plan is discovered a
+        // round at a time, so it grows rather than arriving complete.
+        const steps: Array<ToolStepDescriptor & { status: "pending" | "running" | "completed" | "failed"; outputSummary?: string }> = [];
 
         while (true) {
           const result = await consumeRound(round, (delta) => send({ delta }));
 
           if (result.toolCalls.length === 0 || !currentTools || !options.executeTool) break;
 
-          const toolMessages: LlmMessage[] = [];
+          const offset = steps.length;
           for (const call of result.toolCalls) {
-            const output = await options.executeTool(call.function.name, call.function.arguments);
-            toolMessages.push({ role: "tool", tool_call_id: call.id, content: output });
+            const described = options.describeTool?.(call.function.name, call.function.arguments);
+            steps.push({
+              name: described?.name ?? call.function.name,
+              tool: described?.tool ?? call.function.name,
+              description: described?.description,
+              status: "running",
+            });
           }
+          send({
+            type: "plan",
+            thinking:
+              toolRounds === 0
+                ? "Reading live Margix data to answer this."
+                : `Reviewing what came back and continuing (step ${toolRounds + 1}).`,
+            steps: steps.map((step) => ({ ...step })),
+          });
 
-          messages = [
+          const toolMessages = await runToolCalls(result.toolCalls, options.executeTool, (index, ok, summary) => {
+            const step = steps[offset + index];
+            if (!step) return;
+            step.status = ok ? "completed" : "failed";
+            step.outputSummary = summary;
+            send({ type: "step", stepIndex: offset + index, status: step.status, outputSummary: summary });
+          });
+
+          messages = clampHistory([
             ...messages,
             { role: "assistant", content: result.content || null, tool_calls: result.toolCalls },
             ...toolMessages,
-          ];
+          ]);
           toolRounds += 1;
-          currentTools = toolRounds < MAX_TOOL_ROUNDS ? tools : undefined;
+          spent += promptSize(messages, currentTools);
+          const withinBudget = toolRounds < MAX_TOOL_ROUNDS && spent < MAX_TURN_PROMPT_CHARS;
+          currentTools = withinBudget ? tools : undefined;
           round = await open(messages, currentTools);
           activeRound = round;
         }
@@ -373,6 +497,7 @@ export async function streamChatCompletion(options: {
   signal?: AbortSignal;
   tools?: LlmTool[];
   executeTool?: LlmToolExecutor;
+  describeTool?: ToolDescriber;
   sessionId?: string;
 }): Promise<ReadableStream<Uint8Array>> {
   const { sessionId, ...rest } = options;
@@ -399,6 +524,7 @@ export async function executeLlmChat(options: {
   let messages = clampHistory(options.messages);
   let currentTools = options.tools && options.tools.length > 0 ? options.tools : undefined;
   let toolRounds = 0;
+  let spent = promptSize(messages, currentTools);
   const allToolCalls: LlmToolCall[] = [];
   let finalContent = "";
 
@@ -412,19 +538,16 @@ export async function executeLlmChat(options: {
       break;
     }
 
-    const toolMessages: LlmMessage[] = [];
-    for (const call of result.toolCalls) {
-      const output = await options.executeTool(call.function.name, call.function.arguments);
-      toolMessages.push({ role: "tool", tool_call_id: call.id, content: output });
-    }
+    const toolMessages = await runToolCalls(result.toolCalls, options.executeTool);
 
-    messages = [
+    messages = clampHistory([
       ...messages,
       { role: "assistant", content: result.content || null, tool_calls: result.toolCalls },
       ...toolMessages,
-    ];
+    ]);
     toolRounds += 1;
-    currentTools = toolRounds < maxRounds ? options.tools : undefined;
+    spent += promptSize(messages, currentTools);
+    currentTools = toolRounds < maxRounds && spent < MAX_TURN_PROMPT_CHARS ? options.tools : undefined;
   }
 
   return { content: finalContent, toolCalls: allToolCalls, toolRounds };

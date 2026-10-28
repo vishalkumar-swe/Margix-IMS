@@ -15,7 +15,12 @@ interface Party {
   isActive: boolean;
 }
 
-/** Shared list for suppliers and customers. */
+/**
+ * Shared list for suppliers and customers.
+ *
+ * Each row carries `data-copilot-*` so the Copilot can resolve "deactivate it"
+ * to the row the user is working in (see lib/copilot/screen-anchor).
+ */
 export function PartyTable({ kind, parties, canManage }: { kind: "supplier" | "customer"; parties: Party[]; canManage: boolean }) {
   return (
     <Table>
@@ -32,7 +37,12 @@ export function PartyTable({ kind, parties, canManage }: { kind: "supplier" | "c
       </THead>
       <TBody>
         {parties.map((p) => (
-          <TR key={p.id}>
+          <TR
+            key={p.id}
+            data-copilot-entity={kind}
+            data-copilot-entity-id={p.id}
+            data-copilot-entity-label={p.name}
+          >
             <TD className="font-mono text-xs font-medium">{p.code}</TD>
             <TD>
               {p.name}

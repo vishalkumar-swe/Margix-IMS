@@ -12,6 +12,8 @@ import {
   type TallySyncStatus,
 } from "@prisma/client";
 import { z } from "zod";
+import { detectDomains, type CopilotDomain } from "./routing";
+import type { ToolStepDescriptor } from "./llm";
 import { COPILOT_ACTION_TYPES, type CopilotConfirmation } from "@/lib/copilot/types";
 import { presetPeriod } from "@/lib/analytics";
 import { dateOnlyToUtc, todayIst } from "@/lib/dates";
@@ -4385,189 +4387,183 @@ const TOOLS: CopilotTool[] = [
 
 const TOOL_BY_NAME = new Map(TOOLS.map((tool) => [tool.name, tool]));
 
+/** Tools every question can use: planning, catalog lookup and action proposal. */
+const CORE_TOOL_NAMES = [
+  "get_workspace_summary",
+  "search_products",
+  "check_stock",
+  "propose_action",
+  "web_research",
+  "get_market_quote",
+] as const;
+
+/** Tools offered when the question matched no domain at all. */
+const GENERAL_TOOL_NAMES = [
+  "get_inventory_overview",
+  "list_purchase_orders",
+  "list_invoices",
+  "get_daily_checklist",
+  "get_godowns",
+  "list_suppliers",
+  "list_customers",
+] as const;
+
+const DOMAIN_TOOL_NAMES: Record<CopilotDomain, readonly string[]> = {
+  purchasing: [
+    "propose_purchase_order",
+    "propose_supplier",
+    "list_purchase_orders",
+    "get_purchase_order_detail",
+    "list_suppliers",
+    "get_supplier_detail",
+    "list_grns",
+    "get_grn_detail",
+    "get_pending_po_receipts",
+    "get_purchase_analytics",
+    "get_reorder_recommendations",
+    "get_godowns",
+    "list_uoms",
+    "list_hsn_codes",
+  ],
+  sales: [
+    "propose_customer",
+    "list_invoices",
+    "get_invoice_detail",
+    "list_dispatches",
+    "get_dispatch_detail",
+    "list_customers",
+    "get_customer_detail",
+    "get_sales_analytics",
+    "check_dispatch_readiness",
+    "get_pending_invoices_for_dispatch",
+    "get_godowns",
+  ],
+  inventory: [
+    "propose_transfer",
+    "propose_stock_adjustment",
+    "get_inventory_overview",
+    "list_batches",
+    "get_batch_detail",
+    "get_godowns",
+    "get_godown_detail",
+    "check_stock_by_godown",
+    "check_expiring_batches",
+    "get_fefo_pick_list",
+    "list_stock_adjustments",
+    "get_adjustment_detail",
+    "list_transfers",
+    "get_transfer_detail",
+    "list_stock_balances",
+    "get_idle_stock",
+    "get_stock_summary_report",
+    "get_inventory_analytics",
+    "list_stock_alerts",
+    "get_low_stock_alerts",
+    "get_recent_ledger_movements",
+  ],
+  catalog: [
+    "list_skus",
+    "get_sku_detail",
+    "list_categories",
+    "get_category_detail",
+    "list_uoms",
+    "list_hsn_codes",
+    "get_hsn_detail",
+    "get_godowns",
+  ],
+  system: [
+    "list_returns",
+    "get_sales_return_detail",
+    "get_purchase_return_detail",
+    "check_reversal_eligibility",
+    "get_tally_sync_status",
+    "list_tally_queue",
+    "get_tally_job_detail",
+    "get_audit_trail",
+    "get_audit_log_detail",
+    "list_users",
+    "get_user_detail",
+    "get_system_health",
+    "get_daily_checklist",
+    "list_my_notifications",
+    "get_notification_delivery_status",
+    "list_documents",
+    "get_document_status",
+    "search_help",
+    "list_opening_stock",
+    "get_opening_balance_detail",
+  ],
+  market: [],
+};
+
+function toOpenAiTool(tool: CopilotTool): OpenAiTool {
+  return {
+    type: "function",
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    },
+  };
+}
+
+/**
+ * Schemas offered to the model for one question.
+ *
+ * Every schema is re-sent on every tool round, so the list is scoped to the
+ * domains the question actually touches (see `detectDomains`). With no query
+ * to scope by, the caller gets everything their role permits.
+ */
 export function copilotToolsForRole(role: RoleCode, query?: string, route?: string): OpenAiTool[] {
   const permitted = TOOLS.filter((tool) => can(role, tool.permission));
-  if (!query || !query.trim()) {
-    return permitted.map((tool) => ({
-      type: "function",
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
-      },
-    }));
+  if (!query || !query.trim()) return permitted.map(toOpenAiTool);
+
+  const { domains } = detectDomains(query, route);
+  const selected = new Set<string>(CORE_TOOL_NAMES);
+  for (const domain of domains) {
+    for (const name of DOMAIN_TOOL_NAMES[domain]) selected.add(name);
+  }
+  if (domains.size === 0) {
+    for (const name of GENERAL_TOOL_NAMES) selected.add(name);
   }
 
-  const q = query.toLowerCase();
-  const r = (route || "").toLowerCase();
+  return permitted.filter((tool) => selected.has(tool.name)).map(toOpenAiTool);
+}
 
-  // Universal core tools always included for planning, catalog, and context
-  const selectedNames = new Set([
-    "get_workspace_summary",
-    "search_products",
-    "check_stock",
-    "propose_action",
-    "web_research",
-    "get_market_quote",
-  ]);
+/** Readable step name for a tool, e.g. `get_purchase_order_detail` -> "Purchase Order Detail". */
+function toolStepName(name: string): string {
+  return name
+    .replace(/^(get|list|check|search|propose)_/, "")
+    .split("_")
+    .map((word) => (word.length <= 3 ? word.toUpperCase() : word.charAt(0).toUpperCase() + word.slice(1)))
+    .join(" ");
+}
 
-  // Intent / Domain detection:
-  const isPurchasing =
-    /\b(purchase|po\b|procure|supplier|vendor|grn|buy|bought|inward|receipt|order)\b/i.test(q) ||
-    r.startsWith("/purchasing") ||
-    r.startsWith("/suppliers");
-
-  const isSales =
-    /\b(sale|sales|invoice|bill|dispatch|outward|customer|buyer|client|revenue|turnover|sold|deliver)\b/i.test(q) ||
-    r.startsWith("/invoices") ||
-    r.startsWith("/dispatches") ||
-    r.startsWith("/customers") ||
-    r.startsWith("/analytics");
-
-  const isInventory =
-    (/\b(inventory|godown|warehouse|batch|batches|expiry|expire|fefo|transfer|adjust|adjustment|idle|movement|ledger|balance)\b/i.test(q) ||
-      (/\bstock\b/i.test(q) && !/\bstock\s*(price|quote|chart|market|exchange|ticker|ltp)\b/i.test(q))) ||
-    r.startsWith("/inventory") ||
-    r.startsWith("/godowns") ||
-    r.startsWith("/batches") ||
-    r.startsWith("/transfers") ||
-    r.startsWith("/adjustments");
-
-  const isCatalog =
-    /\b(sku|product|catalog|category|uom|unit|hsn|tax|gst|rate|bag|kg|item)\b/i.test(q) ||
-    r.startsWith("/products");
-
-  const isSystem =
-    /\b(return|reverse|tally|sync|audit|user|health|checklist|notification|alert|opening)\b/i.test(q) ||
-    r.startsWith("/tally") ||
-    r.startsWith("/audit") ||
-    r.startsWith("/admin");
-
-  const isMarket =
-    /\b(stock\s*price|ltp|quote|share|equity|market|nifty|sensex|jio|reliance|tata|commodity|gold|silver|sugar\s*price|chart|trading)\b/i.test(q);
-
-  if (isPurchasing) {
-    [
-      "propose_purchase_order",
-      "propose_supplier",
-      "list_purchase_orders",
-      "get_purchase_order_detail",
-      "list_suppliers",
-      "get_supplier_detail",
-      "list_grns",
-      "get_grn_detail",
-      "get_pending_po_receipts",
-      "get_purchase_analytics",
-      "get_reorder_recommendations",
-      "get_godowns",
-      "list_uoms",
-      "list_hsn_codes",
-    ].forEach((name) => selectedNames.add(name));
+/**
+ * Describes a tool call for the live progress stepper, so a long tool round
+ * reads as visible work instead of a frozen window. The arguments are echoed
+ * because "Catalog Search" alone does not tell the user what is being looked
+ * up; values are truncated and only primitives are shown.
+ */
+export function describeCopilotToolCall(name: string, rawArguments: string): ToolStepDescriptor {
+  const tool = TOOL_BY_NAME.get(name);
+  const parts: string[] = [];
+  try {
+    const args = rawArguments.trim() ? (JSON.parse(rawArguments) as Record<string, unknown>) : {};
+    for (const [key, value] of Object.entries(args)) {
+      if (value === null || value === undefined || value === "") continue;
+      if (typeof value === "object") continue;
+      parts.push(`${key}: ${String(value).slice(0, 40)}`);
+      if (parts.length >= 3) break;
+    }
+  } catch {
+    // Streamed arguments can arrive malformed; the tool name alone still helps.
   }
-
-  if (isSales) {
-    [
-      "propose_customer",
-      "list_invoices",
-      "get_invoice_detail",
-      "list_dispatches",
-      "get_dispatch_detail",
-      "list_customers",
-      "get_customer_detail",
-      "get_sales_analytics",
-      "check_dispatch_readiness",
-      "get_pending_invoices_for_dispatch",
-      "get_godowns",
-    ].forEach((name) => selectedNames.add(name));
-  }
-
-  if (isInventory) {
-    [
-      "propose_transfer",
-      "propose_stock_adjustment",
-      "get_inventory_overview",
-      "list_batches",
-      "get_batch_detail",
-      "get_godowns",
-      "get_godown_detail",
-      "check_stock_by_godown",
-      "check_expiring_batches",
-      "get_fefo_pick_list",
-      "list_stock_adjustments",
-      "get_adjustment_detail",
-      "list_transfers",
-      "get_transfer_detail",
-      "list_stock_balances",
-      "get_idle_stock",
-      "get_stock_summary_report",
-      "get_inventory_analytics",
-      "list_stock_alerts",
-      "get_low_stock_alerts",
-      "get_recent_ledger_movements",
-    ].forEach((name) => selectedNames.add(name));
-  }
-
-  if (isCatalog) {
-    [
-      "list_skus",
-      "get_sku_detail",
-      "list_categories",
-      "get_category_detail",
-      "list_uoms",
-      "list_hsn_codes",
-      "get_hsn_detail",
-      "get_godowns",
-    ].forEach((name) => selectedNames.add(name));
-  }
-
-  if (isSystem) {
-    [
-      "list_returns",
-      "get_sales_return_detail",
-      "get_purchase_return_detail",
-      "check_reversal_eligibility",
-      "get_tally_sync_status",
-      "list_tally_queue",
-      "get_tally_job_detail",
-      "get_audit_trail",
-      "get_audit_log_detail",
-      "list_users",
-      "get_user_detail",
-      "get_system_health",
-      "get_daily_checklist",
-      "list_my_notifications",
-      "get_notification_delivery_status",
-      "list_documents",
-      "get_document_status",
-      "search_help",
-      "list_opening_stock",
-      "get_opening_balance_detail",
-    ].forEach((name) => selectedNames.add(name));
-  }
-
-  // If no specific domain matched (general prompt), supply common high-level tools
-  if (!isPurchasing && !isSales && !isInventory && !isCatalog && !isSystem && !isMarket) {
-    [
-      "get_inventory_overview",
-      "list_purchase_orders",
-      "list_invoices",
-      "get_daily_checklist",
-      "get_godowns",
-      "list_suppliers",
-      "list_customers",
-    ].forEach((name) => selectedNames.add(name));
-  }
-
-  return permitted
-    .filter((tool) => selectedNames.has(tool.name))
-    .map((tool) => ({
-      type: "function",
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
-      },
-    }));
+  return {
+    name: toolStepName(name),
+    tool: name,
+    description: parts.length > 0 ? parts.join(", ") : tool?.description,
+  };
 }
 
 /**
