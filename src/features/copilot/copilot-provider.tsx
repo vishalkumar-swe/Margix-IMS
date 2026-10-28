@@ -630,8 +630,24 @@ export function CopilotProvider({
           actions?: CopilotAction[];
         };
 
-        setMessages((current) =>
-          current.map((msg) => {
+        const followUpMessage: CopilotChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content:
+            res.status === "executed"
+              ? `✅ **Action Confirmed & Executed**\n\n${res.message}`
+              : res.status === "cancelled"
+              ? `🛑 **Action Cancelled**\n\n${res.message}`
+              : `❌ **Execution Failed**\n\n${res.message}`,
+          actions: res.actions && res.actions.length > 0 ? res.actions : [
+            { label: "View Suppliers", route: "/suppliers", permission: "master.view" },
+            { label: "New Supplier", route: "/suppliers/new", permission: "master.manage" },
+          ],
+          createdAt: Date.now(),
+        };
+
+        setMessages((current) => [
+          ...current.map((msg) => {
             if (msg.confirmation?.id === confirmation.id) {
               return {
                 ...msg,
@@ -640,12 +656,12 @@ export function CopilotProvider({
                   status: res.status,
                   resultMessage: res.message,
                 },
-                actions: res.actions && res.actions.length > 0 ? res.actions : msg.actions,
               };
             }
             return msg;
           }),
-        );
+          followUpMessage,
+        ]);
 
         if (res.status === "executed") {
           toast.success(res.message);

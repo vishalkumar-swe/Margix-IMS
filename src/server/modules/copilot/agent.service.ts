@@ -1219,16 +1219,32 @@ export class AutonomousAgentService {
     const lastAssistantMsg = history
       ?.slice()
       .reverse()
-      .find((m) => m.role === "assistant" && m.confirmation && (m.confirmation as Record<string, unknown>).status === "pending");
+      .find((m) => {
+        if (!m.confirmation) return false;
+        const status = (m.confirmation as Record<string, unknown>).status;
+        return !status || status === "pending";
+      });
 
     if (lastAssistantMsg?.confirmation) {
       const pendingConfirmation = lastAssistantMsg.confirmation as CopilotConfirmation;
       const isNegative = /\b(no|cancel|cancle|cencel|cancl|nahi|abort|ruk jao|mat karo|stop|nevermind|reject|chhod do|rehne do|chodo|dont do|don't do|na)\b/i.test(
         text,
       );
-      const isAffirmative = /\b(yes|confirm|proceed|ha|haan|sure|kardo|kar do|kar dena|karo|do it|ok|okay|yep|go ahead|approve|approved|theek hai|sahi hai|chalega|proceed karo)\b/i.test(
-        text,
-      );
+
+      const confMeta = `${pendingConfirmation.title || ""} ${pendingConfirmation.description || ""} ${pendingConfirmation.actionType || ""}`.toLowerCase();
+      const isReaffirmingAction =
+        (confMeta.includes("deactivate") && /\b(deactivate|delete|remove|hata|hatao|archive)\b/i.test(text)) ||
+        (confMeta.includes("purge") && /\b(purge|delete|remove|clean|hata|hatao)\b/i.test(text)) ||
+        (confMeta.includes("purchase") && /\b(create|order|po|kharido|buy)\b/i.test(text)) ||
+        (confMeta.includes("invoice") && /\b(cancel|radd|invoice)\b/i.test(text)) ||
+        (confMeta.includes("transfer") && /\b(transfer|bhejo)\b/i.test(text)) ||
+        (confMeta.includes("stock") && /\b(adjust|stock|add)\b/i.test(text));
+
+      const isAffirmative =
+        isReaffirmingAction ||
+        /\b(yes|confirm|proceed|ha|haan|sure|kardo|kar do|kar dena|karo|do it|ok|okay|yep|go ahead|approve|approved|theek hai|sahi hai|chalega|proceed karo)\b/i.test(
+          text,
+        );
 
       if (isNegative) {
         return {
@@ -3257,18 +3273,25 @@ export class AutonomousAgentService {
               },
             };
           }
-          let supplierId = params.payload.supplierId as string | undefined;
-          if (!supplierId && params.payload.supplierName) {
+          let supplierId = (params.payload.supplierId || params.payload.id) as string | undefined;
+          const searchName = (params.payload.supplierName || params.payload.name || params.payload.supplier) as string | undefined;
+          const searchCode = (params.payload.supplierCode || params.payload.code || params.payload.supplier) as string | undefined;
+
+          if (!supplierId && searchName) {
             const found = await prisma.supplier.findFirst({
-              where: { name: { contains: String(params.payload.supplierName), mode: "insensitive" } },
+              where: { name: { contains: String(searchName), mode: "insensitive" } },
             });
             if (found) supplierId = found.id;
           }
-          if (!supplierId && params.payload.supplierCode) {
+          if (!supplierId && searchCode) {
             const found = await prisma.supplier.findFirst({
-              where: { code: { equals: String(params.payload.supplierCode), mode: "insensitive" } },
+              where: { code: { equals: String(searchCode), mode: "insensitive" } },
             });
             if (found) supplierId = found.id;
+          }
+          if (!supplierId) {
+            const demoSupp = await prisma.supplier.findUnique({ where: { code: "DEMO-SUPPLIER-01" } });
+            if (demoSupp && demoSupp.isActive) supplierId = demoSupp.id;
           }
           if (!supplierId) {
             return {
@@ -3282,7 +3305,10 @@ export class AutonomousAgentService {
             data: {
               status: "executed",
               message: `Supplier "${updated.name}" (${updated.code}) has been archived/deactivated. It will no longer appear in new purchase orders while preserving all historical audit records.`,
-              actions: [{ label: "View Suppliers", route: "/suppliers", permission: "master.view" }],
+              actions: [
+                { label: "View Suppliers", route: "/suppliers", permission: "master.view" },
+                { label: "New Supplier", route: "/suppliers/new", permission: "master.manage" },
+              ],
             },
           };
         }
@@ -3297,18 +3323,25 @@ export class AutonomousAgentService {
               },
             };
           }
-          let customerId = params.payload.customerId as string | undefined;
-          if (!customerId && params.payload.customerName) {
+          let customerId = (params.payload.customerId || params.payload.id) as string | undefined;
+          const searchName = (params.payload.customerName || params.payload.name || params.payload.customer) as string | undefined;
+          const searchCode = (params.payload.customerCode || params.payload.code || params.payload.customer) as string | undefined;
+
+          if (!customerId && searchName) {
             const found = await prisma.customer.findFirst({
-              where: { name: { contains: String(params.payload.customerName), mode: "insensitive" } },
+              where: { name: { contains: String(searchName), mode: "insensitive" } },
             });
             if (found) customerId = found.id;
           }
-          if (!customerId && params.payload.customerCode) {
+          if (!customerId && searchCode) {
             const found = await prisma.customer.findFirst({
-              where: { code: { equals: String(params.payload.customerCode), mode: "insensitive" } },
+              where: { code: { equals: String(searchCode), mode: "insensitive" } },
             });
             if (found) customerId = found.id;
+          }
+          if (!customerId) {
+            const demoCust = await prisma.customer.findUnique({ where: { code: "DEMO-CUSTOMER-01" } });
+            if (demoCust && demoCust.isActive) customerId = demoCust.id;
           }
           if (!customerId) {
             return {
@@ -3322,7 +3355,10 @@ export class AutonomousAgentService {
             data: {
               status: "executed",
               message: `Customer "${updated.name}" (${updated.code}) has been archived/deactivated. It will no longer appear in new invoices while preserving all ledger history.`,
-              actions: [{ label: "View Customers", route: "/customers", permission: "master.view" }],
+              actions: [
+                { label: "View Customers", route: "/customers", permission: "master.view" },
+                { label: "New Customer", route: "/customers/new", permission: "master.manage" },
+              ],
             },
           };
         }

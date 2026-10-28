@@ -145,12 +145,29 @@ describe("AutonomousAgentService", () => {
     ];
 
     it("resolves affirmative confirmation replies (yes, ha, kardo, proceed)", () => {
-      const affirmativePhrases = ["yes", "ha kardo", "proceed karo", "confirm it", "sure", "theek hai"];
+      const affirmativePhrases = ["yes", "ha kardo", "proceed karo", "confirm it", "sure", "theek hai", "yes delete it"];
       for (const phrase of affirmativePhrases) {
         const plan = AutonomousAgentService.planIntent(phrase, context, historyWithPending);
         expect(plan.intent).toBe("execute_pending_confirmation");
         expect(plan.pendingConfirmation?.id).toBe("conf-123");
       }
+    });
+
+    it("resolves affirmative confirmation even with intermediate chat messages in history", () => {
+      const historyWithIntermediates = [
+        ...historyWithPending,
+        {
+          role: "user" as const,
+          content: "is it deleted?",
+        },
+        {
+          role: "assistant" as const,
+          content: "No, it has not been deleted yet.",
+        },
+      ];
+      const plan = AutonomousAgentService.planIntent("yes delete it", context, historyWithIntermediates);
+      expect(plan.intent).toBe("execute_pending_confirmation");
+      expect(plan.pendingConfirmation?.id).toBe("conf-123");
     });
 
     it("resolves negative cancellation replies (no, nahi, abort, cancel)", () => {
