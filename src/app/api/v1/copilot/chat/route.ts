@@ -102,10 +102,13 @@ export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSc
     logger.warn("copilot llm unavailable; engaging autonomous database agent", {
       err: errText,
     });
+    const isIpRestriction = /ip address restriction|ip.*blocked|ip_address_blocked/i.test(errText);
     const isFundsIssue = /insufficient.*funds|402|prepayment.*depleted|quota/i.test(errText);
-    const llmNotice = isFundsIssue
-      ? "The configured AI provider has insufficient credit or exhausted its quota. Running the Margix Autonomous Deep Research & DB Engine directly with live market data."
-      : undefined;
+    const llmNotice = isIpRestriction
+      ? "Google Gemini API key has an IP address restriction enabled in Google Cloud Console. In Credentials settings, change Application Restrictions to 'None' to enable direct calls. Running Margix Autonomous Deep Research & DB Engine directly with live market data."
+      : isFundsIssue
+        ? "The configured AI provider has insufficient credit or exhausted its quota. Running the Margix Autonomous Deep Research & DB Engine directly with live market data."
+        : undefined;
     // Seamlessly execute via Autonomous Multi-Step Agent using live database tools
     return sse(AutonomousAgentService.executeAutonomousAgentStream(body.message, context, actor, body.history, llmNotice));
   }
