@@ -445,7 +445,7 @@ export function CopilotDrawer() {
 
   if (viewMode === "minimized") {
     return (
-      <div className="fixed bottom-5 right-5 z-[100] flex items-center gap-3 rounded-2xl border border-white/60 bg-white/90 dark:bg-slate-900/90 px-4 py-2.5 shadow-2xl backdrop-blur-2xl ring-1 ring-black/10 animate-in fade-in slide-in-from-bottom-4 duration-200">
+      <div className="glass-strong fixed bottom-5 right-5 z-[100] flex items-center gap-3 rounded-2xl border border-slate-200/80 px-4 py-2.5 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-200">
         <button
           type="button"
           onClick={() => setViewMode("standard")}
@@ -462,7 +462,7 @@ export function CopilotDrawer() {
           </span>
           <div className="min-w-0 pr-1">
             <div className="flex items-center gap-1.5">
-              <span className="text-xs font-semibold text-slate-900 dark:text-white">AI Copilot</span>
+              <span className="text-xs font-semibold text-slate-900">AI Copilot</span>
               <span
                 className={cn(
                   "rounded-full px-1.5 py-0.2 text-[9px] font-bold",
@@ -472,18 +472,18 @@ export function CopilotDrawer() {
                 {pending ? "Synthesizing…" : "Active"}
               </span>
             </div>
-            <p className="max-w-[200px] truncate text-[11px] text-slate-500 dark:text-slate-400">
+            <p className="max-w-[200px] truncate text-[11px] text-slate-500">
               {pending
                 ? "Processing intelligence…"
                 : messages[messages.length - 1]?.content?.slice(0, 40) || "Click to expand workspace"}
             </p>
           </div>
         </button>
-        <div className="flex items-center gap-1 border-l border-slate-200/80 dark:border-slate-700/80 pl-2">
+        <div className="flex items-center gap-1 border-l border-slate-200/80 pl-2">
           <button
             type="button"
             onClick={() => setViewMode("standard")}
-            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 transition-colors"
+            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-colors"
             title="Expand to center workspace"
             aria-label="Expand Copilot"
           >
@@ -492,7 +492,7 @@ export function CopilotDrawer() {
           <button
             type="button"
             onClick={closeDrawer}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 transition-colors"
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
             title="Close Copilot"
             aria-label="Close Copilot"
           >
@@ -506,7 +506,7 @@ export function CopilotDrawer() {
   return (
     <>
       <div
-        className="fixed inset-0 z-[98] bg-slate-950/45 backdrop-blur-md transition-opacity duration-300 animate-in fade-in"
+        className="fixed inset-0 z-[98] bg-slate-950/40 backdrop-blur-xs transition-opacity duration-300 animate-in fade-in"
         onClick={closeDrawer}
         aria-hidden
       />
@@ -518,13 +518,13 @@ export function CopilotDrawer() {
           aria-modal="true"
           aria-label="AI Copilot & Enterprise Intelligence"
           className={cn(
-            "pointer-events-auto flex flex-col rounded-2xl sm:rounded-3xl border border-white/70 dark:border-slate-700/70 bg-white/90 dark:bg-slate-900/90 shadow-[0_25px_70px_rgba(0,0,0,0.3)] backdrop-blur-2xl ring-1 ring-black/5 overflow-hidden transition-all duration-300 ease-out",
+            "glass-strong pointer-events-auto flex flex-col rounded-2xl sm:rounded-3xl border border-slate-200/80 shadow-2xl overflow-hidden transition-all duration-300 ease-out",
             viewMode === "expanded"
               ? "w-[96vw] max-w-[96vw] h-[94vh] max-h-[1050px]"
               : "w-full max-w-4xl h-[86vh] max-h-[880px]",
           )}
         >
-          <header className="shrink-0 border-b border-slate-200/70 dark:border-slate-800/70 bg-white/60 dark:bg-slate-900/60 px-4 py-3 sm:px-6 sm:py-3.5 backdrop-blur-md">
+          <header className="shrink-0 border-b border-slate-200/80 bg-slate-100/20 px-4 py-3 sm:px-6 sm:py-3.5 backdrop-blur-md">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
                 <span className="relative grid size-10 shrink-0 place-items-center rounded-2xl bg-brand-500 text-slate-950 shadow-xs">
@@ -538,11 +538,11 @@ export function CopilotDrawer() {
                 </span>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <p className="text-sm sm:text-base font-bold text-slate-900 dark:text-white tracking-tight">
+                    <p className="text-sm sm:text-base font-bold text-slate-900 tracking-tight">
                       Margix AI Copilot
                     </p>
-                    <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-brand-100/90 dark:bg-brand-900/30 px-2 py-0.5 text-[10px] font-semibold text-brand-900 dark:text-brand-300">
-                      <Cpu className="size-3 text-brand-700 dark:text-brand-400" />
+                    <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-brand-100 px-2 py-0.5 text-[10px] font-semibold text-brand-900">
+                      <Cpu className="size-3 text-brand-700" />
                       Enterprise Intelligence
                     </span>
                     {floorMode && (
@@ -551,7 +551,7 @@ export function CopilotDrawer() {
                       </span>
                     )}
                   </div>
-                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                  <p className="truncate text-xs text-slate-500">
                     {tour.active && currentMilestone
                       ? `Milestone ${currentMilestone.order}: ${currentMilestone.title}`
                       : pending
@@ -572,7 +572,7 @@ export function CopilotDrawer() {
                     "flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors border shadow-2xs",
                     floorMode
                       ? "border-emerald-500 bg-emerald-50 text-emerald-800"
-                      : "border-slate-200/80 bg-white/80 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-50",
+                      : "border-slate-200 bg-white/70 text-slate-600 hover:bg-slate-100 hover:text-slate-900",
                   )}
                   title="Warehouse Floor Hands-Free Mode (speaks answers aloud)"
                 >
@@ -583,7 +583,7 @@ export function CopilotDrawer() {
                   <button
                     type="button"
                     onClick={() => setVoiceSpoken(!voiceSpoken)}
-                    className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-colors"
                     title={voiceSpoken ? "Mute speech" : "Enable speech"}
                   >
                     {voiceSpoken ? <Volume2 className="size-4 text-emerald-600" /> : <VolumeX className="size-4 text-slate-400" />}
@@ -592,7 +592,7 @@ export function CopilotDrawer() {
                 <button
                   type="button"
                   onClick={() => setViewMode(viewMode === "expanded" ? "standard" : "expanded")}
-                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 transition-colors"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-colors"
                   title={viewMode === "expanded" ? "Standard View" : "Expand for Better View (Wide Screen)"}
                   aria-label={viewMode === "expanded" ? "Standard View" : "Expand for Better View"}
                 >
@@ -601,7 +601,7 @@ export function CopilotDrawer() {
                 <button
                   type="button"
                   onClick={() => setViewMode("minimized")}
-                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 transition-colors"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-colors"
                   title="Minimize to floating widget"
                   aria-label="Minimize Copilot"
                 >
@@ -610,7 +610,7 @@ export function CopilotDrawer() {
                 <button
                   type="button"
                   onClick={closeDrawer}
-                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 transition-colors"
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
                   aria-label="Close Copilot"
                 >
                   <X className="size-4" aria-hidden />
@@ -690,10 +690,10 @@ export function CopilotDrawer() {
             <div key={message.id} className={cn("flex", message.role === "user" ? "justify-end" : "justify-start")}>
               <div
                 className={cn(
-                  "max-w-[92%] rounded-xl px-3 py-2",
+                  "max-w-[92%] rounded-2xl px-4 py-3 shadow-xs",
                   message.role === "user"
-                    ? "bg-brand-500 text-black"
-                    : "border border-slate-200 bg-white text-slate-700 shadow-sm",
+                    ? "bg-brand-500 font-medium text-black"
+                    : "glass border border-slate-200/80 text-slate-800",
                 )}
               >
                 {message.role === "user" ? (
@@ -708,7 +708,7 @@ export function CopilotDrawer() {
                         <MessageErrorBoundary fallbackText={message.content}>
                           <MarkdownLite text={message.content} />
                         </MessageErrorBoundary>
-                        <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-1.5">
+                        <div className="mt-2 flex items-center justify-between border-t border-slate-200/60 pt-1.5">
                           <button
                             type="button"
                             onClick={() => toggleSpeakMessage(message.id, message.content)}
@@ -881,7 +881,7 @@ export function CopilotDrawer() {
           ))}
 
           {pending && (!messages[messages.length - 1]?.content || messages[messages.length - 1]?.content === "") && (
-            <div className="flex items-center gap-3 rounded-2xl border border-brand-200/80 bg-gradient-to-r from-brand-50/90 via-white/90 to-brand-50/60 p-3.5 shadow-xs backdrop-blur-md animate-in fade-in duration-200">
+            <div className="flex items-center gap-3 rounded-2xl border border-brand-300 bg-brand-50/70 p-3.5 shadow-xs backdrop-blur-md animate-in fade-in duration-200">
               <div className="relative flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand-500 text-slate-950 shadow-xs">
                 <Sparkles className="size-4 animate-spin text-slate-950" />
                 <span className="absolute -top-1 -right-1 flex size-2.5">
@@ -907,7 +907,7 @@ export function CopilotDrawer() {
         </div>
 
         {diagnostic && (
-          <div className="mx-4 mb-2 rounded-xl border border-red-200 bg-red-50 p-3">
+          <div className="mx-4 mb-2 rounded-xl border border-red-300 bg-red-50/80 p-3 shadow-xs">
             <div className="flex items-start gap-2">
               <TriangleAlert className="mt-0.5 size-4 shrink-0 text-red-600" aria-hidden />
               <div className="min-w-0 flex-1">
@@ -936,7 +936,7 @@ export function CopilotDrawer() {
               <button
                 type="button"
                 onClick={clearDiagnostic}
-                className="rounded p-1 text-red-400 hover:bg-red-100 hover:text-red-700"
+                className="rounded p-1 text-red-500 hover:bg-red-100/60 hover:text-red-700 transition-colors"
                 aria-label="Dismiss explanation"
               >
                 <X className="size-3.5" aria-hidden />
@@ -945,7 +945,7 @@ export function CopilotDrawer() {
           </div>
         )}
 
-        <div className="shrink-0 border-t border-slate-200/70 bg-white/60 dark:bg-slate-900/60 px-4 py-3 backdrop-blur-md sm:px-6">
+        <div className="shrink-0 border-t border-slate-200/80 bg-slate-100/20 px-4 py-3 backdrop-blur-md sm:px-6">
           <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1">
             {chips.map((chip) => (
               <button
@@ -953,7 +953,7 @@ export function CopilotDrawer() {
                 type="button"
                 onClick={() => void sendMessage(chip)}
                 disabled={pending}
-                className="shrink-0 rounded-full border border-slate-200/80 bg-white/80 dark:bg-slate-800/80 px-3 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 shadow-2xs transition-colors hover:border-brand-400 hover:bg-brand-50 hover:text-slate-950 disabled:opacity-50"
+                className="shrink-0 rounded-full border border-slate-200 bg-white/70 px-3 py-1 text-xs font-medium text-slate-700 shadow-2xs transition-colors hover:border-brand-400 hover:bg-brand-50 hover:text-slate-900 disabled:opacity-50"
               >
                 {chip}
               </button>
@@ -978,7 +978,7 @@ export function CopilotDrawer() {
               placeholder="Ask about this screen, check stock, or explore market prices…"
               aria-label="Ask the Copilot"
               data-copilot-ignore
-              className="h-10 min-w-0 flex-1 rounded-xl border border-slate-300/80 bg-white px-3.5 text-sm shadow-xs transition-colors focus:border-brand-500 focus:outline-2 focus:outline-offset-2 focus:outline-brand-500"
+              className="h-10 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white/80 px-3.5 text-sm text-slate-900 placeholder:text-slate-400 shadow-xs transition-colors focus:border-brand-500 focus:outline-2 focus:outline-offset-2 focus:outline-brand-500"
               maxLength={1200}
             />
             {Recognition && (
