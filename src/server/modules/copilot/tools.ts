@@ -632,7 +632,7 @@ export async function executeMarketQuote(query: string, range = "6mo", count = 1
           regularMarketPrice: pMeta?.regularMarketPrice,
         });
       }
-    } catch {}
+    } catch { }
   } else if (/^reliance$/i.test(clean)) {
     symbol = "RELIANCE.NS";
   } else if (/^nifty(\s*50)?$/i.test(clean)) {
@@ -654,7 +654,7 @@ export async function executeMarketQuote(query: string, range = "6mo", count = 1
         const best = sData.quotes?.find((q) => q.symbol?.endsWith(".NS") || q.symbol?.endsWith(".BO")) || sData.quotes?.[0];
         if (best?.symbol) symbol = best.symbol;
       }
-    } catch {}
+    } catch { }
   }
 
   try {
@@ -2590,19 +2590,19 @@ export const TOOLS: CopilotTool[] = [
           },
           sku: sku
             ? {
-                OR: [
-                  { code: { contains: sku, mode: "insensitive" } },
-                  { name: { contains: sku, mode: "insensitive" } },
-                ],
-              }
+              OR: [
+                { code: { contains: sku, mode: "insensitive" } },
+                { name: { contains: sku, mode: "insensitive" } },
+              ],
+            }
             : undefined,
           godown: godown
             ? {
-                OR: [
-                  { code: { equals: godown, mode: "insensitive" } },
-                  { name: { contains: godown, mode: "insensitive" } },
-                ],
-              }
+              OR: [
+                { code: { equals: godown, mode: "insensitive" } },
+                { name: { contains: godown, mode: "insensitive" } },
+              ],
+            }
             : undefined,
         },
         orderBy: [{ batch: { expiryDate: "asc" } }, { quantity: "desc" }],
@@ -4410,6 +4410,7 @@ const TOOL_BY_NAME = new Map(TOOLS.map((tool) => [tool.name, tool]));
 const CORE_TOOL_NAMES = [
   "get_workspace_summary",
   "search_products",
+  "lookup_barcode",
   "check_stock",
   "propose_action",
   "web_research",
@@ -4479,12 +4480,10 @@ const DOMAIN_TOOL_NAMES: Record<CopilotDomain, readonly string[]> = {
     "list_stock_alerts",
     "get_low_stock_alerts",
     "get_recent_ledger_movements",
-    "lookup_barcode",
   ],
   catalog: [
     "list_skus",
     "get_sku_detail",
-    "lookup_barcode",
     "list_categories",
     "get_category_detail",
     "list_uoms",
