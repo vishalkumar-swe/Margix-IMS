@@ -186,32 +186,49 @@ export function VisualLineChart({
         <path d={pathD} fill="none" stroke="#059669" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
 
         {/* Data Circles & Labels */}
-        {points.map((p, idx) => (
-          <g key={idx}>
-            <circle cx={p.x} cy={p.y} r="3.5" fill="#ffffff" stroke="#059669" strokeWidth="2" />
-            <text
-              x={p.x}
-              y={height - 4}
-              fontSize="9"
-              textAnchor="middle"
-              fill="#64748b"
-              fontFamily="sans-serif"
-            >
-              {p.label}
-            </text>
-            <text
-              x={p.x}
-              y={p.y - 7}
-              fontSize="9"
-              fontWeight="bold"
-              textAnchor="middle"
-              fill="#0f172a"
-              fontFamily="sans-serif"
-            >
-              {p.value.toLocaleString("en-IN")}
-            </text>
-          </g>
-        ))}
+        {points.map((p, idx) => {
+          const isStart = idx === 0;
+          const isEnd = idx === points.length - 1;
+          const isMin = p.value === minVal && idx === values.indexOf(minVal);
+          const isMax = p.value === maxVal && idx === values.indexOf(maxVal);
+          const showDot = points.length <= 25 || isStart || isEnd || isMin || isMax;
+          const showLabel = points.length <= 8 || isStart || isEnd || isMin || isMax;
+
+          if (!showDot && !showLabel) return null;
+
+          return (
+            <g key={idx}>
+              {showDot && (
+                <circle cx={p.x} cy={p.y} r={isEnd ? 4.5 : 3} fill={isEnd ? "#059669" : "#ffffff"} stroke="#059669" strokeWidth="2" />
+              )}
+              {showLabel && (
+                <>
+                  <text
+                    x={p.x}
+                    y={height - 4}
+                    fontSize="9"
+                    textAnchor={isStart ? "start" : isEnd ? "end" : "middle"}
+                    fill="#64748b"
+                    fontFamily="sans-serif"
+                  >
+                    {p.label}
+                  </text>
+                  <text
+                    x={p.x}
+                    y={p.y - 7}
+                    fontSize="9"
+                    fontWeight="bold"
+                    textAnchor={isStart ? "start" : isEnd ? "end" : "middle"}
+                    fill="#0f172a"
+                    fontFamily="sans-serif"
+                  >
+                    {p.value.toLocaleString("en-IN")}
+                  </text>
+                </>
+              )}
+            </g>
+          );
+        })}
       </svg>
     </div>
   );
@@ -302,8 +319,31 @@ export function parseChartDSL(content: string, typeHint?: string): {
     const trimmed = content.trim();
 
     // Check if JSON
-    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
       const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        const lineData = parsed
+          .map((item: any) => ({
+            label: String(item.label ?? item.date ?? item.session ?? item.x ?? ""),
+            value: Number(item.value ?? item.ltp ?? item.price ?? item.close ?? item.y ?? 0),
+          }))
+          .filter((d) => d.label && !isNaN(d.value));
+        if (typeHint === "line" && lineData.length >= 2) {
+          return { type: "line", lineData };
+        }
+        const items = parsed
+          .map((item: any) => ({
+            label: String(item.label ?? item.name ?? item.state ?? item.item ?? ""),
+            value: Number(item.value ?? item.amount ?? item.revenue ?? item.price ?? 0),
+            formattedValue: item.formattedValue,
+            sublabel: item.sublabel,
+            badge: item.badge,
+          }))
+          .filter((d) => d.label && !isNaN(d.value));
+        if (items.length > 0) {
+          return { type: "bar", items };
+        }
+      }
       return {
         type: parsed.type || (typeHint === "line" ? "line" : typeHint === "flow" ? "flow" : "bar"),
         title: parsed.title,

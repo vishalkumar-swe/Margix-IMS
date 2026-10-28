@@ -1,5 +1,5 @@
 import { can } from "@/lib/permissions";
-import type { CopilotAction } from "@/lib/copilot/types";
+import type { CopilotAction, CopilotConfirmation } from "@/lib/copilot/types";
 import { copilotChatSchema } from "@/lib/validation/copilot";
 import { apiRoute } from "@/server/http/api-route";
 import { logger } from "@/server/observability/logger";
@@ -28,18 +28,20 @@ function allowedActions(actions: CopilotAction[], role: Parameters<typeof can>[0
   return actions.filter((action) => !action.permission || can(role, action.permission));
 }
 
-/** Appends the action metadata after an upstream model stream finishes. */
+/** Appends the action and confirmation metadata after an upstream model stream finishes. */
 function withFinalEvent(
   source: ReadableStream<Uint8Array>,
   actions: CopilotAction[],
   sources: string[],
+  getConfirmation?: () => CopilotConfirmation | undefined,
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       const { done, value } = await reader.read();
       if (done) {
-        controller.enqueue(event({ done: true, actions, sources }));
+        const confirmation = getConfirmation?.();
+        controller.enqueue(event({ done: true, actions, sources, confirmation }));
         controller.close();
         return;
       }
@@ -53,10 +55,10 @@ function withFinalEvent(
 
 /**
  * Contextual Copilot & Autonomous Inventory Agent.
- * Runs multi-step tool calls against the live database. When AI_PROVIDER is active
- * and healthy, streams from the model with OpenAI function calling; if the upstream
- * provider is offline or exhausted, the Autonomous Agent Planner takes over
- * directly to execute multi-step database tool operations with live data.
+ * Runs multi-step tool calls against the live database and market data.
+ * The LLM understands natural user intent, plans prerequisite steps, queries live data,
+ * and proposes operational transactions with human-in-the-loop confirmation.
+ * If the upstream provider is offline or exhausted, the Autonomous Agent Planner takes over.
  */
 export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSchema }, async ({ body, user, request }) => {
   const context = { ...body.context, role: user.role, userId: user.id };
@@ -71,16 +73,14 @@ export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSc
     userAgent: request.headers.get("user-agent") || undefined,
   };
 
-  // 1. Pending confirmation replies and every intent that produces a write
-  // confirmation card must run through the deterministic human-in-the-loop
-  // engine. That includes dispatch, SKU registration, invoice/PO cancellation,
-  // short-close, ledger reversal, and sandbox seed/purge. Read-only analytics,
-  // greetings, and research continue to the normal LLM path.
-  const isWriteIntent = AutonomousAgentService.isWriteIntent(body.message, context, body.history);
+  // 1. Pending confirmation replies (e.g. user says "yes / confirm / ha / cancel") must execute directly
+  const isPendingReply = AutonomousAgentService.isPendingConfirmationReply(body.message, body.history);
 
-  if (isWriteIntent || !llmConfigured()) {
+  if (isPendingReply || !llmConfigured()) {
     return sse(AutonomousAgentService.executeAutonomousAgentStream(body.message, context, actor, body.history));
   }
+
+  let proposedConfirmation: CopilotConfirmation | undefined;
 
   try {
     const { system } = buildLlmPrompt(body.message, context, counts);
@@ -92,11 +92,19 @@ export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSc
     const upstream = await streamChatCompletion({
       messages,
       signal: request.signal,
-      tools: copilotToolsForRole(user.role),
-      executeTool: (name, args) => executeCopilotTool(name, args, { role: user.role, route: context.route, userId: user.id }),
+      tools: copilotToolsForRole(user.role, body.message, context.route),
+      executeTool: (name, args) =>
+        executeCopilotTool(name, args, {
+          role: user.role,
+          route: context.route,
+          userId: user.id,
+          onProposeConfirmation: (c) => {
+            proposedConfirmation = c;
+          },
+        }),
       sessionId: createHash("sha256").update(`copilot:${user.id}`).digest("hex").slice(0, 24),
     });
-    return sse(withFinalEvent(upstream, actions, curated.sources));
+    return sse(withFinalEvent(upstream, actions, curated.sources, () => proposedConfirmation));
   } catch (error) {
     const errText = error instanceof Error ? error.message : String(error);
     logger.warn("copilot llm unavailable; engaging autonomous database agent", {

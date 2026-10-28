@@ -466,7 +466,7 @@ export function CopilotProvider({
       };
       const history = messages.slice(-12).map((message) => ({
         role: message.role,
-        content: message.content,
+        content: (message.content || "").slice(0, 16000),
         confirmation: message.confirmation,
       }));
       setMessages((current) => [
@@ -579,14 +579,18 @@ export function CopilotProvider({
           }
         }
         update({
-          content: streamed || offlineAnswer(pathname),
+          content: streamed || "I completed processing your request.",
           actions: finalActions,
           confirmation: finalConfirmation,
           thinking: activeThinking,
           steps: activeSteps,
         });
-      } catch {
-        update({ content: offlineAnswer(pathname), actions: [] });
+      } catch (err) {
+        const errorMsg =
+          err instanceof Error && err.message && !err.message.includes("Failed to fetch")
+            ? `⚠️ ${err.message}`
+            : offlineAnswer(pathname);
+        update({ content: errorMsg, actions: [] });
       } finally {
         setPending(false);
       }

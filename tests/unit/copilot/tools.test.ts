@@ -63,4 +63,51 @@ describe("Copilot tools", () => {
     })) as { error: string };
     expect(result.error).toContain("role cannot access");
   });
+
+  it("filters tools dynamically based on query intent to minimize latency and token load", () => {
+    // Market / stock query
+    const marketTools = copilotToolsForRole("ADMIN", "stock price of jio platform and plot chart for last 100 LTP").map(
+      (t) => t.function.name,
+    );
+    expect(marketTools).toContain("get_market_quote");
+    expect(marketTools.length).toBeLessThanOrEqual(10);
+
+    // Purchasing / PO query
+    const poTools = copilotToolsForRole("ADMIN", "please create a purchase order of sugar for 100 bag").map(
+      (t) => t.function.name,
+    );
+    expect(poTools).toContain("list_purchase_orders");
+    expect(poTools).toContain("list_suppliers");
+    expect(poTools).toContain("propose_action");
+    expect(poTools.length).toBeLessThanOrEqual(25);
+
+    // Sales analytics query
+    const salesTools = copilotToolsForRole("ADMIN", "can you analyze my sales").map((t) => t.function.name);
+    expect(salesTools).toContain("get_sales_analytics");
+    expect(salesTools).toContain("list_invoices");
+    expect(salesTools.length).toBeLessThanOrEqual(18);
+  });
+
+  it("executes propose_action and invokes onProposeConfirmation callback", async () => {
+    let capturedConfirmation: unknown;
+    const result = (await executeCopilotToolData(
+      "propose_action",
+      JSON.stringify({
+        actionType: "CREATE_PO",
+        title: "Create Purchase Order: Sugar 100 Bags",
+        description: "Open purchase order for Sugar",
+        payload: { skuName: "Sugar", quantity: 100 },
+      }),
+      {
+        ...context,
+        onProposeConfirmation: (c) => {
+          capturedConfirmation = c;
+        },
+      },
+    )) as { success: boolean; confirmationId: string; message: string };
+
+    expect(result.success).toBe(true);
+    expect(capturedConfirmation).toBeDefined();
+    expect((capturedConfirmation as { actionType: string }).actionType).toBe("CREATE_PO");
+  });
 });

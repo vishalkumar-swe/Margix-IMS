@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   Prisma,
   type InvoiceStatus,
@@ -11,6 +12,7 @@ import {
   type TallySyncStatus,
 } from "@prisma/client";
 import { z } from "zod";
+import type { CopilotConfirmation } from "@/lib/copilot/types";
 import { presetPeriod } from "@/lib/analytics";
 import { dateOnlyToUtc, todayIst } from "@/lib/dates";
 import { can, ROLE_LABELS, type Permission } from "@/lib/permissions";
@@ -32,15 +34,16 @@ import { getWorkspaceCounts } from "./copilot.queries";
 import { retrieveKnowledge } from "./knowledge";
 
 /**
- * Read-only tools the Copilot model may call. They deliberately cannot write:
- * the model explains a document or points at the screen, and the human still
- * performs the action through the ordinary UI with RBAC enforced server-side.
+ * Tools the Copilot model may call.
+ * Can query live database entities, search live web research, retrieve real-time
+ * stock/equity/commodity market quotes, and propose operational actions with human confirmation.
  */
 
 export interface CopilotToolContext {
   role: RoleCode;
   route: string;
   userId?: string;
+  onProposeConfirmation?: (confirmation: CopilotConfirmation) => void;
 }
 
 export interface OpenAiTool {
@@ -362,6 +365,35 @@ const webResearchArgs = z
   })
   .strict();
 
+const marketQuoteArgs = z
+  .object({
+    query: z.string().trim().min(1, "Query is required").max(100),
+    range: z.enum(["1mo", "3mo", "6mo", "1y", "2y"]).default("6mo"),
+    count: z.coerce.number().int().min(5).max(200).default(100),
+  })
+  .strict();
+
+const proposeActionArgs = z
+  .object({
+    actionType: z.enum([
+      "CREATE_PO",
+      "CREATE_SKU",
+      "STOCK_ADJUSTMENT",
+      "POST_DISPATCH",
+      "CANCEL_INVOICE",
+      "CANCEL_PO",
+      "SHORT_CLOSE_PO",
+      "REVERSE_LEDGER",
+    ]),
+    title: z.string().trim().min(1).max(120),
+    description: z.string().trim().min(1).max(500),
+    payload: z.record(z.string(), z.unknown()),
+    destructive: z.boolean().default(false),
+    confirmLabel: z.string().trim().max(40).optional(),
+    cancelLabel: z.string().trim().max(40).optional(),
+  })
+  .strict();
+
 export interface WebSearchResultItem {
   title: string;
   url: string;
@@ -488,6 +520,144 @@ export async function executeWebSearch(query: string, maxResults = 5): Promise<W
     results: [],
     error: `No live web search results found for "${cleanQuery}".`,
   };
+}
+
+export interface MarketQuoteResult {
+  symbol: string;
+  name: string;
+  currency: string;
+  regularMarketPrice: number;
+  previousClose?: number;
+  change?: number;
+  changePercent?: number;
+  dayHigh?: number;
+  dayLow?: number;
+  fiftyTwoWeekHigh?: number;
+  fiftyTwoWeekLow?: number;
+  historyCount: number;
+  historicalSeries: Array<{ date: string; ltp: number }>;
+  relatedQuotes?: Array<{ symbol: string; name: string; regularMarketPrice?: number }>;
+  note?: string;
+  error?: string;
+}
+
+export async function executeMarketQuote(query: string, range = "6mo", count = 100): Promise<MarketQuoteResult> {
+  const clean = query.trim();
+  let symbol = clean.toUpperCase();
+  const relatedQuotes: Array<{ symbol: string; name: string; regularMarketPrice?: number }> = [];
+  let note: string | undefined;
+
+  // Common Indian market aliases
+  if (/^jio(\s*platform(s)?)?$/i.test(clean)) {
+    symbol = "JIOFIN.NS";
+    note = "Jio Platforms Ltd is a private unlisted subsidiary under Reliance Industries Ltd (~67% digital valuation impact). Trading and historical LTP data are available for parent Reliance Industries (RELIANCE.NS) and listed financial arm Jio Financial Services (JIOFIN.NS).";
+    try {
+      const parentRes = await fetch("https://query1.finance.yahoo.com/v8/finance/chart/RELIANCE.NS?range=1mo&interval=1d", {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+        signal: AbortSignal.timeout(3500),
+      });
+      if (parentRes.ok) {
+        const pData = await parentRes.json();
+        const pMeta = pData.chart?.result?.[0]?.meta;
+        relatedQuotes.push({
+          symbol: "RELIANCE.NS",
+          name: pMeta?.shortName || "Reliance Industries Limited",
+          regularMarketPrice: pMeta?.regularMarketPrice,
+        });
+      }
+    } catch {}
+  } else if (/^reliance$/i.test(clean)) {
+    symbol = "RELIANCE.NS";
+  } else if (/^nifty(\s*50)?$/i.test(clean)) {
+    symbol = "^NSEI";
+  } else if (/^sensex$/i.test(clean)) {
+    symbol = "^BSESN";
+  } else if (/^gold$/i.test(clean)) {
+    symbol = "GC=F";
+  } else if (/^silver$/i.test(clean)) {
+    symbol = "SI=F";
+  } else if (!symbol.includes(".") && !symbol.startsWith("^") && !symbol.includes("=")) {
+    try {
+      const sRes = await fetch(`https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(clean)}&quotesCount=5`, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+        signal: AbortSignal.timeout(4000),
+      });
+      if (sRes.ok) {
+        const sData = (await sRes.json()) as { quotes?: Array<{ symbol?: string; quoteType?: string }> };
+        const best = sData.quotes?.find((q) => q.symbol?.endsWith(".NS") || q.symbol?.endsWith(".BO")) || sData.quotes?.[0];
+        if (best?.symbol) symbol = best.symbol;
+      }
+    } catch {}
+  }
+
+  try {
+    const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${encodeURIComponent(range)}&interval=1d`, {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+      signal: AbortSignal.timeout(6000),
+    });
+
+    if (!res.ok) {
+      return {
+        symbol,
+        name: clean,
+        currency: "INR",
+        regularMarketPrice: 0,
+        historyCount: 0,
+        historicalSeries: [],
+        error: `Could not retrieve live market quote for "${symbol}" (HTTP ${res.status}).`,
+        note,
+      };
+    }
+
+    const data = await res.json();
+    const meta = data.chart?.result?.[0]?.meta;
+    const quote = data.chart?.result?.[0]?.indicators?.quote?.[0];
+    const timestamps = data.chart?.result?.[0]?.timestamp || [];
+    const closes = quote?.close || [];
+
+    const points: Array<{ date: string; ltp: number }> = [];
+    for (let i = 0; i < timestamps.length; i++) {
+      if (closes[i] != null && !isNaN(closes[i])) {
+        const d = new Date(timestamps[i] * 1000).toISOString().split("T")[0];
+        points.push({ date: d, ltp: Number(closes[i].toFixed(2)) });
+      }
+    }
+
+    const finalPoints = count && count > 0 && points.length > count ? points.slice(-count) : points;
+    const currentLtp = meta?.regularMarketPrice ?? (finalPoints[finalPoints.length - 1]?.ltp || 0);
+    const prevClose = meta?.chartPreviousClose ?? meta?.previousClose;
+    const change = prevClose ? Number((currentLtp - prevClose).toFixed(2)) : undefined;
+    const changePercent = prevClose ? Number((((currentLtp - prevClose) / prevClose) * 100).toFixed(2)) : undefined;
+
+    return {
+      symbol: meta?.symbol || symbol,
+      name: meta?.shortName || meta?.longName || symbol,
+      currency: meta?.currency || "INR",
+      regularMarketPrice: currentLtp,
+      previousClose: prevClose,
+      change,
+      changePercent,
+      dayHigh: meta?.regularMarketDayHigh,
+      dayLow: meta?.regularMarketDayLow,
+      fiftyTwoWeekHigh: meta?.fiftyTwoWeekHigh,
+      fiftyTwoWeekLow: meta?.fiftyTwoWeekLow,
+      historyCount: finalPoints.length,
+      historicalSeries: finalPoints,
+      relatedQuotes: relatedQuotes.length > 0 ? relatedQuotes : undefined,
+      note,
+    };
+  } catch (err) {
+    return {
+      symbol,
+      name: clean,
+      currency: "INR",
+      regularMarketPrice: 0,
+      historyCount: 0,
+      historicalSeries: [],
+      error: `Market lookup failed: ${err instanceof Error ? err.message : String(err)}`,
+      note,
+    };
+  }
 }
 
 const PO_STATUSES = ["DRAFT", "OPEN", "PARTIALLY_RECEIVED", "FULLY_RECEIVED", "SHORT_CLOSED", "CANCELLED"] as const;
@@ -3774,19 +3944,287 @@ const TOOLS: CopilotTool[] = [
       return executeWebSearch(query, maxResults);
     },
   },
+  {
+    name: "get_market_quote",
+    description:
+      "Fetch real-time stock prices, LTP (Last Traded Price), market valuation, indices (Nifty, Sensex), commodities (Gold, Silver, Sugar, Crude), or equities across Indian (NSE/BSE) and global exchanges. Returns real historical session closing prices (up to 125 sessions) to plot interactive trend charts.",
+    permission: "stock.view",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "Company name, ticker symbol, commodity, or market index (e.g. 'Jio', 'Reliance', 'JIOFIN', 'Tata Motors', 'Sugar', 'Nifty 50', 'Gold').",
+        },
+        range: {
+          type: "string",
+          enum: ["1mo", "3mo", "6mo", "1y", "2y"],
+          description: "Historical data range. Default '6mo' (approx 125 trading sessions).",
+          default: "6mo",
+        },
+        count: {
+          type: "number",
+          description: "Number of historical data points to return (e.g. 50 or 100 for plotting). Default 100.",
+          default: 100,
+        },
+      },
+      required: ["query"],
+    },
+    async execute(args) {
+      const { query, range, count } = marketQuoteArgs.parse(args);
+      return executeMarketQuote(query, range, count);
+    },
+  },
+  {
+    name: "propose_action",
+    description:
+      "Prepare and propose an operational action or ledger transaction (create purchase order, register new SKU with proper HSN/UOM, stock adjustment, post dispatch, cancel order/invoice) for user confirmation. Returns an interactive confirmation card that allows the user to review all specifications and 1-click execute.",
+    permission: "dashboard.view",
+    parameters: {
+      type: "object",
+      properties: {
+        actionType: {
+          type: "string",
+          enum: [
+            "CREATE_PO",
+            "CREATE_SKU",
+            "STOCK_ADJUSTMENT",
+            "POST_DISPATCH",
+            "CANCEL_INVOICE",
+            "CANCEL_PO",
+            "SHORT_CLOSE_PO",
+            "REVERSE_LEDGER",
+          ],
+          description: "Type of operational action to propose.",
+        },
+        title: { type: "string", description: "Brief title of the action, e.g. 'Create Purchase Order: Sugar (100 BAG)'." },
+        description: {
+          type: "string",
+          description: "Clear commercial summary of the action to be performed upon user confirmation.",
+        },
+        payload: {
+          type: "object",
+          description:
+            "Parameters required to execute the action (e.g. for CREATE_PO: supplierId/supplierName, items: [{ productName/skuId, orderedQty, rate }], submit: true).",
+        },
+        destructive: {
+          type: "boolean",
+          description: "Whether the action is destructive (e.g. cancellation or reversal). Default false.",
+          default: false,
+        },
+        confirmLabel: { type: "string", description: "Label for the confirmation button, e.g. 'Confirm & Create PO'." },
+      },
+      required: ["actionType", "title", "description", "payload"],
+    },
+    async execute(args, context) {
+      const parsed = proposeActionArgs.parse(args);
+      const confirmationId = randomUUID();
+      const confirmation: CopilotConfirmation = {
+        id: confirmationId,
+        title: parsed.title,
+        description: parsed.description,
+        actionType: parsed.actionType,
+        payload: parsed.payload,
+        destructive: parsed.destructive,
+        confirmLabel: parsed.confirmLabel || "Confirm & Execute",
+        cancelLabel: "Cancel",
+        status: "pending",
+      };
+
+      if (context.onProposeConfirmation) {
+        context.onProposeConfirmation(confirmation);
+      }
+
+      return {
+        success: true,
+        confirmationId,
+        message: `Action proposal prepared: "${parsed.title}". An interactive confirmation card has been presented to the user to review and execute.`,
+      };
+    },
+  },
 ];
 
 const TOOL_BY_NAME = new Map(TOOLS.map((tool) => [tool.name, tool]));
 
-export function copilotToolsForRole(role: RoleCode): OpenAiTool[] {
-  return TOOLS.filter((tool) => can(role, tool.permission)).map((tool) => ({
-    type: "function",
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    },
-  }));
+export function copilotToolsForRole(role: RoleCode, query?: string, route?: string): OpenAiTool[] {
+  const permitted = TOOLS.filter((tool) => can(role, tool.permission));
+  if (!query || !query.trim()) {
+    return permitted.map((tool) => ({
+      type: "function",
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      },
+    }));
+  }
+
+  const q = query.toLowerCase();
+  const r = (route || "").toLowerCase();
+
+  // Universal core tools always included for planning, catalog, and context
+  const selectedNames = new Set([
+    "get_workspace_summary",
+    "search_products",
+    "check_stock",
+    "propose_action",
+    "web_research",
+    "get_market_quote",
+  ]);
+
+  // Intent / Domain detection:
+  const isPurchasing =
+    /\b(purchase|po\b|procure|supplier|vendor|grn|buy|bought|inward|receipt|order)\b/i.test(q) ||
+    r.startsWith("/purchasing") ||
+    r.startsWith("/suppliers");
+
+  const isSales =
+    /\b(sale|sales|invoice|bill|dispatch|outward|customer|buyer|client|revenue|turnover|sold|deliver)\b/i.test(q) ||
+    r.startsWith("/invoices") ||
+    r.startsWith("/dispatches") ||
+    r.startsWith("/customers") ||
+    r.startsWith("/analytics");
+
+  const isInventory =
+    (/\b(inventory|godown|warehouse|batch|batches|expiry|expire|fefo|transfer|adjust|adjustment|idle|movement|ledger|balance)\b/i.test(q) ||
+      (/\bstock\b/i.test(q) && !/\bstock\s*(price|quote|chart|market|exchange|ticker|ltp)\b/i.test(q))) ||
+    r.startsWith("/inventory") ||
+    r.startsWith("/godowns") ||
+    r.startsWith("/batches") ||
+    r.startsWith("/transfers") ||
+    r.startsWith("/adjustments");
+
+  const isCatalog =
+    /\b(sku|product|catalog|category|uom|unit|hsn|tax|gst|rate|bag|kg|item)\b/i.test(q) ||
+    r.startsWith("/products");
+
+  const isSystem =
+    /\b(return|reverse|tally|sync|audit|user|health|checklist|notification|alert|opening)\b/i.test(q) ||
+    r.startsWith("/tally") ||
+    r.startsWith("/audit") ||
+    r.startsWith("/admin");
+
+  const isMarket =
+    /\b(stock\s*price|ltp|quote|share|equity|market|nifty|sensex|jio|reliance|tata|commodity|gold|silver|sugar\s*price|chart|trading)\b/i.test(q);
+
+  if (isPurchasing) {
+    [
+      "list_purchase_orders",
+      "get_purchase_order_detail",
+      "list_suppliers",
+      "get_supplier_detail",
+      "list_grns",
+      "get_grn_detail",
+      "get_pending_po_receipts",
+      "get_purchase_analytics",
+      "get_reorder_recommendations",
+      "get_godowns",
+      "list_uoms",
+      "list_hsn_codes",
+    ].forEach((name) => selectedNames.add(name));
+  }
+
+  if (isSales) {
+    [
+      "list_invoices",
+      "get_invoice_detail",
+      "list_dispatches",
+      "get_dispatch_detail",
+      "list_customers",
+      "get_customer_detail",
+      "get_sales_analytics",
+      "check_dispatch_readiness",
+      "get_pending_invoices_for_dispatch",
+      "get_godowns",
+    ].forEach((name) => selectedNames.add(name));
+  }
+
+  if (isInventory) {
+    [
+      "get_inventory_overview",
+      "list_batches",
+      "get_batch_detail",
+      "get_godowns",
+      "get_godown_detail",
+      "check_stock_by_godown",
+      "check_expiring_batches",
+      "get_fefo_pick_list",
+      "list_stock_adjustments",
+      "get_adjustment_detail",
+      "list_transfers",
+      "get_transfer_detail",
+      "list_stock_balances",
+      "get_idle_stock",
+      "get_stock_summary_report",
+      "get_inventory_analytics",
+      "list_stock_alerts",
+      "get_low_stock_alerts",
+      "get_recent_ledger_movements",
+    ].forEach((name) => selectedNames.add(name));
+  }
+
+  if (isCatalog) {
+    [
+      "list_skus",
+      "get_sku_detail",
+      "list_categories",
+      "get_category_detail",
+      "list_uoms",
+      "list_hsn_codes",
+      "get_hsn_detail",
+      "get_godowns",
+    ].forEach((name) => selectedNames.add(name));
+  }
+
+  if (isSystem) {
+    [
+      "list_returns",
+      "get_sales_return_detail",
+      "get_purchase_return_detail",
+      "check_reversal_eligibility",
+      "get_tally_sync_status",
+      "list_tally_queue",
+      "get_tally_job_detail",
+      "get_audit_trail",
+      "get_audit_log_detail",
+      "list_users",
+      "get_user_detail",
+      "get_system_health",
+      "get_daily_checklist",
+      "list_my_notifications",
+      "get_notification_delivery_status",
+      "list_documents",
+      "get_document_status",
+      "search_help",
+      "list_opening_stock",
+      "get_opening_balance_detail",
+    ].forEach((name) => selectedNames.add(name));
+  }
+
+  // If no specific domain matched (general prompt), supply common high-level tools
+  if (!isPurchasing && !isSales && !isInventory && !isCatalog && !isSystem && !isMarket) {
+    [
+      "get_inventory_overview",
+      "list_purchase_orders",
+      "list_invoices",
+      "get_daily_checklist",
+      "get_godowns",
+      "list_suppliers",
+      "list_customers",
+    ].forEach((name) => selectedNames.add(name));
+  }
+
+  return permitted
+    .filter((tool) => selectedNames.has(tool.name))
+    .map((tool) => ({
+      type: "function",
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      },
+    }));
 }
 
 /**

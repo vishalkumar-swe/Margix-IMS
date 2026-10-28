@@ -20,8 +20,10 @@ import { createSku } from "@/server/modules/masters/masters.service";
 import { cancelInvoice } from "@/server/modules/invoices/invoice.service";
 import {
   cancelPurchaseOrder,
+  createPurchaseOrder,
   shortClosePurchaseOrder,
 } from "@/server/modules/purchasing/purchase-order.service";
+import { createAdjustment } from "@/server/modules/adjustments/adjustments.service";
 import { reverseEntry } from "@/server/modules/reversals/reversals.service";
 import {
   purgeSandboxData,
@@ -1099,6 +1101,18 @@ function synthesizeCommercialDeepResearch(params: {
  * actions, state transitions, and automated FEFO dispatching.
  */
 export class AutonomousAgentService {
+  /**
+   * Checks whether the user's message is an explicit confirmation reply (e.g. yes, ha, proceed, cancel, abort)
+   * to an active pending confirmation card.
+   */
+  static isPendingConfirmationReply(
+    message: string,
+    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
+  ): boolean {
+    const plan = AutonomousAgentService.planIntent(message, undefined, history);
+    return plan.intent === "execute_pending_confirmation" || plan.intent === "cancel_pending_confirmation";
+  }
+
   /**
    * Checks whether the user's message is an operational action or a confirmation reply.
    */
@@ -2578,15 +2592,230 @@ export class AutonomousAgentService {
             isBatchTracked,
           });
 
+          let initialStockNotice = "";
+          const initialQty = Number(params.payload.initialStockQty || 0);
+          if (initialQty > 0) {
+            const firstGodown = await prisma.godown.findFirst({
+              where: { isActive: true },
+              orderBy: { name: "asc" },
+            });
+            if (firstGodown) {
+              try {
+                const adj = await createAdjustment(actor, {
+                  godownId: firstGodown.id,
+                  reasonCode: "COUNTING_ERROR",
+                  reasonNote: `Initial stock for ${created.name} registered via Copilot`,
+                  items: [{
+                    skuId: created.id,
+                    quantity: String(initialQty),
+                    batchNumber: `INIT-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
+                  }],
+                  idempotencyKey: `${params.confirmationId}-initial-stock`,
+                });
+                initialStockNotice = ` and added ${initialQty} ${baseUomCode} stock to ${firstGodown.name} (Adjustment ${adj.adjustmentNumber})`;
+              } catch {}
+            }
+          }
+
           return {
             success: true,
             data: {
               status: "executed",
-              message: `SKU ${created.code} ("${created.name}") created successfully in your product catalog.`,
+              message: `SKU ${created.code} ("${created.name}") created successfully in your product catalog${initialStockNotice}.`,
               actions: [
                 { label: "Create Purchase Order", route: "/purchase-orders/new", permission: "po.manage" },
                 { label: "View Products", route: "/masters/skus", permission: "master.view" },
                 { label: "Add Opening Stock", route: "/opening-stock", permission: "opening.post" },
+              ],
+            },
+          };
+        }
+
+        case "CREATE_PO": {
+          if (!can(actor.role, "po.manage")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot create purchase orders.`,
+              },
+            };
+          }
+          let supplierId = params.payload.supplierId as string | undefined;
+          if (!supplierId) {
+            const firstSupplier = await prisma.supplier.findFirst({
+              where: { isActive: true },
+              orderBy: { name: "asc" },
+            });
+            if (!firstSupplier) {
+              return {
+                success: false,
+                data: {
+                  status: "failed",
+                  message: "No active supplier found in database. Please register a supplier first.",
+                },
+              };
+            }
+            supplierId = firstSupplier.id;
+          }
+
+          const rawItems = (params.payload.items as Array<Record<string, unknown>>) || [];
+          if (rawItems.length === 0 && (params.payload.skuId || params.payload.productName)) {
+            rawItems.push({
+              skuId: params.payload.skuId,
+              productName: params.payload.productName,
+              orderedQty: params.payload.orderedQty || params.payload.quantity || 100,
+              rate: params.payload.rate,
+              uomId: params.payload.uomId,
+            });
+          }
+
+          if (rawItems.length === 0) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: "A purchase order requires at least one product line.",
+              },
+            };
+          }
+
+          const itemsToCreate = [];
+          for (const item of rawItems) {
+            let skuId = item.skuId as string | undefined;
+            if (!skuId && item.productName) {
+              const foundSku = await prisma.sku.findFirst({
+                where: { name: { contains: String(item.productName), mode: "insensitive" } },
+              });
+              if (foundSku) skuId = foundSku.id;
+            }
+            if (!skuId) {
+              const prodName = String(item.productName || "New Product");
+              let defaultUom = await prisma.uom.findFirst({ where: { code: "BAG" } });
+              if (!defaultUom) defaultUom = await prisma.uom.findFirst({ orderBy: { code: "asc" } });
+              if (!defaultUom) {
+                defaultUom = await prisma.uom.create({ data: { code: "BAG", name: "BAG", decimalPlaces: 0 } });
+              }
+              const newSku = await createSku(actor, {
+                name: prodName,
+                baseUomId: defaultUom.id,
+                isBatchTracked: true,
+              });
+              skuId = newSku.id;
+            }
+            itemsToCreate.push({
+              skuId,
+              orderedQty: String(item.orderedQty || item.quantity || 1),
+              rate: item.rate || item.unitPrice ? String(item.rate || item.unitPrice) : undefined,
+              uomId: item.uomId as string | undefined,
+            });
+          }
+
+          const orderDate = (params.payload.orderDate as string) || todayIst();
+          const po = await createPurchaseOrder(actor, {
+            supplierId,
+            orderDate,
+            expectedDate: params.payload.expectedDate as string | undefined,
+            remarks: (params.payload.remarks as string) || "Created via Margix AI Copilot",
+            items: itemsToCreate,
+            submit: params.payload.submit !== false,
+            idempotencyKey: params.confirmationId,
+          });
+
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `Purchase Order ${po.poNumber} created successfully in status ${po.status}.`,
+              actions: [
+                { label: `Open PO ${po.poNumber}`, route: `/purchase-orders/${po.id}`, permission: "po.view" },
+                { label: "Receive Goods (GRN)", route: `/grns/new?purchaseOrderId=${po.id}`, permission: "grn.create" },
+                { label: "View All Orders", route: "/purchase-orders", permission: "po.view" },
+              ],
+            },
+          };
+        }
+
+        case "STOCK_ADJUSTMENT": {
+          if (!can(actor.role, "adjustment.request")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot request stock adjustments.`,
+              },
+            };
+          }
+          let godownId = params.payload.godownId as string | undefined;
+          if (!godownId) {
+            const firstGodown = await prisma.godown.findFirst({
+              where: { isActive: true },
+              orderBy: { name: "asc" },
+            });
+            if (!firstGodown) {
+              return {
+                success: false,
+                data: {
+                  status: "failed",
+                  message: "No active godown found in database.",
+                },
+              };
+            }
+            godownId = firstGodown.id;
+          }
+
+          const rawItems = (params.payload.items as Array<Record<string, unknown>>) || [];
+          if (rawItems.length === 0 && (params.payload.skuId || params.payload.productName)) {
+            rawItems.push({
+              skuId: params.payload.skuId,
+              productName: params.payload.productName,
+              quantity: params.payload.quantity || params.payload.orderedQty || 100,
+              type: params.payload.type || "INCREASE",
+            });
+          }
+
+          const itemsToAdjust = [];
+          for (const item of rawItems) {
+            let skuId = item.skuId as string | undefined;
+            if (!skuId && item.productName) {
+              const foundSku = await prisma.sku.findFirst({
+                where: { name: { contains: String(item.productName), mode: "insensitive" } },
+              });
+              if (foundSku) skuId = foundSku.id;
+            }
+            if (!skuId) {
+              return {
+                success: false,
+                data: {
+                  status: "failed",
+                  message: `Cannot adjust stock: Product "${item.productName || "item"}" was not found in catalog.`,
+                },
+              };
+            }
+            itemsToAdjust.push({
+              skuId,
+              quantity: String(item.quantity || 1),
+              batchNumber: item.batchNumber ? String(item.batchNumber) : `ADJ-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
+              batchId: item.batchId ? String(item.batchId) : undefined,
+            });
+          }
+
+          const adj = await createAdjustment(actor, {
+            godownId,
+            reasonCode: (params.payload.reasonCode as "DAMAGE" | "THEFT" | "EXPIRY" | "COUNTING_ERROR" | "OTHER") || "COUNTING_ERROR",
+            reasonNote: (params.payload.reason as string) || (params.payload.reasonNote as string) || "Stock count adjustment via Copilot",
+            items: itemsToAdjust,
+            idempotencyKey: params.confirmationId,
+          });
+
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `Stock Adjustment ${adj.adjustmentNumber} created successfully in status ${adj.status}.`,
+              actions: [
+                { label: `View Adjustment ${adj.adjustmentNumber}`, route: `/adjustments/${adj.id}`, permission: "adjustment.view" },
+                { label: "View Stock Ledger", route: "/ledger", permission: "ledger.view" },
               ],
             },
           };
