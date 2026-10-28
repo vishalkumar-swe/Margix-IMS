@@ -37,6 +37,7 @@ export function Dialog({
   }, []);
 
   useEffect(() => {
+    if (!mounted) return;
     const dialog = ref.current;
     if (!dialog) return;
     if (open && !dialog.open) {
@@ -60,7 +61,7 @@ export function Dialog({
         // Safe fallback
       }
     }
-  }, [open]);
+  }, [open, mounted]);
 
   const handleClose = (e: SyntheticEvent<HTMLDialogElement>) => {
     e.stopPropagation();
@@ -74,6 +75,20 @@ export function Dialog({
     onClose();
   };
 
+  const handleBackdropClick = (e: React.MouseEvent<HTMLDialogElement>) => {
+    const dialog = ref.current;
+    if (!dialog || e.target !== dialog) return;
+    const rect = dialog.getBoundingClientRect();
+    const isInDialog =
+      rect.top <= e.clientY &&
+      e.clientY <= rect.top + rect.height &&
+      rect.left <= e.clientX &&
+      e.clientX <= rect.left + rect.width;
+    if (!isInDialog) {
+      onClose();
+    }
+  };
+
   if (!mounted || typeof document === "undefined") {
     return null;
   }
@@ -83,6 +98,7 @@ export function Dialog({
       ref={ref}
       onClose={handleClose}
       onCancel={handleCancel}
+      onClick={handleBackdropClick}
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
       className={cn(

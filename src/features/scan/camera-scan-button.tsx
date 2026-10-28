@@ -28,6 +28,7 @@ export function CameraScanButton({ onScan, title = "Scan with camera" }: { onSca
               setOpen(false);
               onScan(code.trim());
             }}
+            onClose={() => setOpen(false)}
           />
         )}
       </Dialog>

@@ -105,6 +105,7 @@ export function ScanInput({
                 setCameraOpen(false);
                 onScan(code.trim());
               }}
+              onClose={() => setCameraOpen(false)}
             />
           )}
         </Dialog>

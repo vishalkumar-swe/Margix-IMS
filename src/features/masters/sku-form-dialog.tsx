@@ -114,12 +114,12 @@ export function SkuFormDialog({
   const onAutoFill = useCallback((details: AutoFillCatalogDetails) => {
     setForm((prev) => ({
       ...prev,
-      name: prev.name && prev.name !== details.name ? prev.name : details.name,
-      description: prev.description ? prev.description : (details.description ?? prev.description),
-      categoryId: prev.categoryId ? prev.categoryId : (details.suggestedCategoryId ?? prev.categoryId),
-      baseUomId: prev.baseUomId ? prev.baseUomId : (details.suggestedBaseUomId ?? prev.baseUomId),
-      hsnCode: prev.hsnCode ? prev.hsnCode : (details.suggestedHsnCode ?? prev.hsnCode),
-      gstRate: prev.gstRate ? prev.gstRate : (details.suggestedGstRate ?? prev.gstRate),
+      name: details.name || prev.name,
+      description: details.description ?? prev.description,
+      categoryId: details.suggestedCategoryId ?? prev.categoryId,
+      baseUomId: details.suggestedBaseUomId ?? prev.baseUomId,
+      hsnCode: details.suggestedHsnCode ?? prev.hsnCode,
+      gstRate: details.suggestedGstRate ?? prev.gstRate,
     }));
     if (details.suggestedGstRate) {
       setHsnRate(details.suggestedGstRate);
@@ -185,7 +185,8 @@ export function SkuFormDialog({
     }
   }
 
-  const set = <K extends keyof SkuFormValues>(key: K, value: SkuFormValues[K]) => setForm({ ...form, [key]: value });
+  const set = <K extends keyof SkuFormValues>(key: K, value: SkuFormValues[K]) =>
+    setForm((prev) => ({ ...prev, [key]: value }));
   const id = (field: string) => `${skuId ?? "new"}-sku-${field}`;
 
   return (
@@ -263,10 +264,10 @@ export function SkuFormDialog({
                 onChange={(choice) => {
                   if ("gstRate" in choice) {
                     // Picking a code applies its rate; the rate can still be overridden below.
-                    setForm({ ...form, hsnCode: choice.code, gstRate: choice.gstRate });
+                    setForm((prev) => ({ ...prev, hsnCode: choice.code, gstRate: choice.gstRate }));
                     setHsnRate(choice.gstRate);
                   } else {
-                    setForm({ ...form, hsnCode: choice.code });
+                    setForm((prev) => ({ ...prev, hsnCode: choice.code }));
                     setHsnRate(null);
                   }
                 }}
@@ -328,7 +329,7 @@ export function SkuFormDialog({
                   <CameraScanButton
                     title="Scan barcode with camera"
                     onScan={(code) => {
-                      set("barcode", code);
+                      setForm((prev) => ({ ...prev, barcode: code }));
                       if (!editing) {
                         lookupBarcode(code, true);
                       }
@@ -351,8 +352,8 @@ export function SkuFormDialog({
                   )}
                 </div>
                 {barcodeStatus && !editing && (
-                  <p
-                    className={cn("text-xs flex items-center gap-1.5 font-medium", {
+                  <div
+                    className={cn("text-xs flex flex-wrap items-center gap-1.5 font-medium", {
                       "text-emerald-700": barcodeStatus.tone === "success",
                       "text-amber-700": barcodeStatus.tone === "warning",
                       "text-blue-700": barcodeStatus.tone === "info",
@@ -362,7 +363,17 @@ export function SkuFormDialog({
                     {lookingUp && <Loader2 className="size-3 animate-spin inline shrink-0" />}
                     {!lookingUp && barcodeStatus.tone === "success" && <Sparkles className="size-3 text-emerald-600 inline shrink-0" />}
                     <span>{barcodeStatus.text}</span>
-                  </p>
+                    {barcodeStatus.existingSkuId && (
+                      <a
+                        href={`/masters/products/${barcodeStatus.existingSkuId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline font-semibold ml-1 text-amber-800 hover:text-amber-900 inline-flex items-center gap-0.5"
+                      >
+                        View SKU {barcodeStatus.existingSkuCode} →
+                      </a>
+                    )}
+                  </div>
                 )}
               </div>
             </Field>
