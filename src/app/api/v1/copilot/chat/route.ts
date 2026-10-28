@@ -71,10 +71,14 @@ export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSc
     userAgent: request.headers.get("user-agent") || undefined,
   };
 
-  // If message is an operational command (e.g. cancel, reverse, dispatch, short-close, seed/purge)
-  // or a conversational reply to a pending confirmation card (yes, no, kardo, cancel),
-  // dispatch directly to the autonomous agent engine with confirmation protocol & DB tools.
-  if (AutonomousAgentService.isOperationalOrConfirmation(body.message, body.history) || !llmConfigured()) {
+  // 1. Pending confirmation replies and every intent that produces a write
+  // confirmation card must run through the deterministic human-in-the-loop
+  // engine. That includes dispatch, SKU registration, invoice/PO cancellation,
+  // short-close, ledger reversal, and sandbox seed/purge. Read-only analytics,
+  // greetings, and research continue to the normal LLM path.
+  const isWriteIntent = AutonomousAgentService.isWriteIntent(body.message, context, body.history);
+
+  if (isWriteIntent || !llmConfigured()) {
     return sse(AutonomousAgentService.executeAutonomousAgentStream(body.message, context, actor, body.history));
   }
 
@@ -98,9 +102,9 @@ export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSc
     logger.warn("copilot llm unavailable; engaging autonomous database agent", {
       err: errText,
     });
-    const isFundsIssue = /insufficient.*funds|402|quota/i.test(errText);
+    const isFundsIssue = /insufficient.*funds|402|prepayment.*depleted|quota/i.test(errText);
     const llmNotice = isFundsIssue
-      ? "AI provider account (opencode.ai) has insufficient funds. Running Margix Autonomous Deep Research & DB Engine directly with live data."
+      ? "The configured AI provider has insufficient credit or exhausted its quota. Running the Margix Autonomous Deep Research & DB Engine directly with live market data."
       : undefined;
     // Seamlessly execute via Autonomous Multi-Step Agent using live database tools
     return sse(AutonomousAgentService.executeAutonomousAgentStream(body.message, context, actor, body.history, llmNotice));

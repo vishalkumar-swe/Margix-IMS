@@ -1,9 +1,38 @@
 import { getEnv } from "@/server/config/env";
 
-/** True when the Copilot should stream from a configured OpenAI-compatible endpoint. */
+/** True when the Copilot should stream from a configured OpenAI-compatible or Google Gemini endpoint. */
 export function llmConfigured(): boolean {
   const env = getEnv();
-  return env.AI_PROVIDER === "openai" && Boolean(env.AI_API_KEY);
+  if (env.AI_PROVIDER === "openai") return Boolean(env.AI_API_KEY);
+  if (env.AI_PROVIDER === "google" || env.AI_PROVIDER === "gemini") {
+    return Boolean(env.GEMINI_API_KEY || env.AI_API_KEY);
+  }
+  return false;
+}
+
+export function getActiveLlmConfig(sessionId?: string): CompletionConfig {
+  const env = getEnv();
+  const provider = env.AI_PROVIDER;
+
+  if (provider === "google" || provider === "gemini") {
+    const apiKey = env.GEMINI_API_KEY || env.AI_API_KEY || "";
+    const model = env.AI_MODEL.startsWith("gemini") ? env.AI_MODEL : "gemini-1.5-flash";
+    return {
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      apiKey,
+      model,
+      timeoutMs: env.AI_TIMEOUT_MS,
+      sessionId,
+    };
+  }
+
+  return {
+    baseUrl: env.AI_BASE_URL,
+    apiKey: env.AI_API_KEY ?? "",
+    model: env.AI_MODEL,
+    timeoutMs: env.AI_TIMEOUT_MS,
+    sessionId,
+  };
 }
 
 export interface LlmToolCall {
@@ -49,7 +78,7 @@ interface StreamOptions {
 }
 
 const MAX_TOOL_ROUNDS = 3;
-const MAX_TOKENS = 600;
+const MAX_TOKENS = 2048;
 const encoder = new TextEncoder();
 
 function clampHistory(messages: LlmMessage[]): LlmMessage[] {
@@ -338,18 +367,59 @@ export async function streamChatCompletion(options: {
   executeTool?: LlmToolExecutor;
   sessionId?: string;
 }): Promise<ReadableStream<Uint8Array>> {
-  const env = getEnv();
   const { sessionId, ...rest } = options;
   return streamCompletion({
-    config: {
-      baseUrl: env.AI_BASE_URL,
-      apiKey: env.AI_API_KEY ?? "",
-      model: env.AI_MODEL,
-      timeoutMs: env.AI_TIMEOUT_MS,
-      sessionId,
-    },
+    config: getActiveLlmConfig(sessionId),
     ...rest,
   });
+}
+
+/**
+ * Executes a full non-streaming chat completion with automated tool invocation rounds.
+ * Returns the final content, collected tool calls, and execution rounds.
+ */
+export async function executeLlmChat(options: {
+  messages: LlmMessage[];
+  tools?: LlmTool[];
+  executeTool?: LlmToolExecutor;
+  signal?: AbortSignal;
+  sessionId?: string;
+  maxRounds?: number;
+}): Promise<{ content: string; toolCalls: LlmToolCall[]; toolRounds: number }> {
+  const config = getActiveLlmConfig(options.sessionId);
+  const maxRounds = options.maxRounds ?? MAX_TOOL_ROUNDS;
+  let messages = clampHistory(options.messages);
+  let currentTools = options.tools && options.tools.length > 0 ? options.tools : undefined;
+  let toolRounds = 0;
+  const allToolCalls: LlmToolCall[] = [];
+  let finalContent = "";
+
+  while (true) {
+    const round = await openRound(messages, currentTools, config, options.signal);
+    const result = await consumeRound(round, () => {});
+    finalContent = result.content;
+    allToolCalls.push(...result.toolCalls);
+
+    if (result.toolCalls.length === 0 || !currentTools || !options.executeTool || toolRounds >= maxRounds) {
+      break;
+    }
+
+    const toolMessages: LlmMessage[] = [];
+    for (const call of result.toolCalls) {
+      const output = await options.executeTool(call.function.name, call.function.arguments);
+      toolMessages.push({ role: "tool", tool_call_id: call.id, content: output });
+    }
+
+    messages = [
+      ...messages,
+      { role: "assistant", content: result.content || null, tool_calls: result.toolCalls },
+      ...toolMessages,
+    ];
+    toolRounds += 1;
+    currentTools = toolRounds < maxRounds ? options.tools : undefined;
+  }
+
+  return { content: finalContent, toolCalls: allToolCalls, toolRounds };
 }
 
 /** Parses `data:` events from our own SSE response. */

@@ -2,13 +2,15 @@ import { randomUUID } from "node:crypto";
 import type { RoleCode } from "@prisma/client";
 import type { Actor } from "@/server/actor";
 import { prisma } from "@/server/db/client";
-import { Decimal, toDecimal } from "@/server/db/decimal";
+import { Decimal, ZERO } from "@/server/db/decimal";
 import { can } from "@/lib/permissions";
+import { formatEntryNo } from "@/lib/format";
+import { dateOnlyToUtc, todayIst } from "@/lib/dates";
+import { dispatchCreateSchema } from "@/lib/validation/dispatch";
 import type {
   CopilotAction,
   CopilotConfirmation,
   CopilotActionType,
-  AgentExecutionStep,
   AgentStepStatus,
 } from "@/lib/copilot/types";
 import { executeCopilotToolData, type WebSearchResult } from "./tools";
@@ -80,6 +82,7 @@ interface DispatchReadinessResult {
   invoiceStatus: string;
   overallReadiness: string;
   recommendedGodown?: string | null;
+  recommendedGodownId?: string | null;
   lines: Array<{
     product: string;
     billed: string;
@@ -377,6 +380,63 @@ const STATUTORY_COMMODITY_SPECS: StatutoryCommoditySpec[] = [
     seasonSummary: "Nizamabad, Erode, and Unjha mandi trading volumes reflect robust export inquiries and steady domestic masala mill buying.",
     baselineEstimateQtl: 13500,
   },
+  {
+    aliases: ["fox nut", "foxnut", "fox nuts", "makhana", "phool makhana", "lotus seed", "lotus seeds", "euryale ferox", "makhane"],
+    displayName: "Fox Nut / Phool Makhana (Mithila GI Grade)",
+    category: "Dry Fruits & Edible Seeds",
+    hsnCode: "1904 10",
+    gstRate: "5%",
+    unit: "KG",
+    standardPackKg: 10,
+    wholesaleMarkupPct: 14,
+    retailMarkupPct: 35,
+    moistureLimitPct: 9.0,
+    brokenTolerancePct: 3.0,
+    seasonSummary: "Bihar produces over 85-90% of global fox nuts, centered around Darbhanga, Madhubani, Katihar, and Purnia. Graded quality (4-Suta to 6-Suta Jumbo) commands premium distribution pricing across Delhi, Mumbai, and Bengaluru.",
+    baselineEstimateQtl: 95000,
+  },
+  {
+    aliases: ["almond", "badam", "cashew", "kaju", "walnut", "akhrot", "pistachio", "pista", "raisin", "kishmish", "dry fruits", "dry fruit"],
+    displayName: "Premium Dry Fruits & Nuts (Cashew / Almond / Walnut)",
+    category: "Dry Fruits & Nuts",
+    hsnCode: "0801 31",
+    gstRate: "12%",
+    unit: "KG",
+    standardPackKg: 10,
+    wholesaleMarkupPct: 12,
+    retailMarkupPct: 30,
+    moistureLimitPct: 6.0,
+    seasonSummary: "Trading is centered around Delhi Khari Baoli, Mumbai APMC Vashi, and direct import landings. Graded kernels command premium pricing.",
+    baselineEstimateQtl: 85000,
+  },
+  {
+    aliases: ["cardamom", "elaichi", "clove", "laung", "black pepper", "kali mirch"],
+    displayName: "Whole Spices (Cardamom / Black Pepper / Clove)",
+    category: "Spices & Condiments",
+    hsnCode: "0908 31",
+    gstRate: "5%",
+    unit: "KG",
+    standardPackKg: 10,
+    wholesaleMarkupPct: 15,
+    retailMarkupPct: 35,
+    moistureLimitPct: 10.0,
+    seasonSummary: "Kochi, Bodinayakanur, and Vandanmedu auction centers determine national benchmarks.",
+    baselineEstimateQtl: 180000,
+  },
+  {
+    aliases: ["tmt", "steel", "iron rod", "rebar", "structural steel", "ms angle"],
+    displayName: "TMT Steel Bars & Construction Rebar (Fe 500D / Fe 550D)",
+    category: "Metals & Construction Supplies",
+    hsnCode: "7214 20",
+    gstRate: "18%",
+    unit: "KG",
+    standardPackKg: 1000,
+    wholesaleMarkupPct: 8,
+    retailMarkupPct: 18,
+    moistureLimitPct: 0,
+    seasonSummary: "Primary mills (SAIL, Tata, JSW) and secondary re-rollers across Raipur, Mandi Gobindgarh, and Durgapur determine wholesale B2B spreads.",
+    baselineEstimateQtl: 5400,
+  },
 ];
 
 function getCurrentDateInfo() {
@@ -400,7 +460,12 @@ function getCurrentDateInfo() {
 function matchCommoditySpec(query: string, rawMessage: string): StatutoryCommoditySpec {
   const combined = `${query} ${rawMessage}`.toLowerCase();
   for (const spec of STATUTORY_COMMODITY_SPECS) {
-    if (spec.aliases.some((alias) => combined.includes(alias))) {
+    if (
+      spec.aliases.some((alias) => {
+        const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(`\\b${escaped}\\b`, "i").test(combined);
+      })
+    ) {
       return spec;
     }
   }
@@ -409,27 +474,32 @@ function matchCommoditySpec(query: string, rawMessage: string): StatutoryCommodi
     .replace(/\b(?:market|price|mandi|rate|buy|sell|india|across|what|is|the|of|for|wholesale|today|daily|b2b|manufacturer|supplier)\b/gi, "")
     .trim();
   const displayName = cleanTitle ? cleanTitle.charAt(0).toUpperCase() + cleanTitle.slice(1) : "Commercial Goods & Supplies";
-  const isAgri = /\b(rice|chawal|dhan|paddy|basmati|wheat|gehu|atta|mustard|sarson|sugar|chini|dal|pulses|chana|toor|arhar|moong|urad|spices|haldi|jeera|onion|potato|mandi|apmc|agmarknet)\b/i.test(
+  const isDryFruitOrSeed = /\b(fox\s*nut|makhana|dry\s*fruit|nut|almond|cashew|walnut|seed)\b/i.test(combined);
+  const isAgri = /\b(rice|chawal|dhan|paddy|basmati|wheat|gehu|atta|mustard|sarson|sugar|chini|dal|pulses|chana|toor|arhar|moong|urad|spices|haldi|jeera|onion|potato|mandi|apmc|agmarknet|fox\s*nut|makhana)\b/i.test(
     `${cleanTitle} ${displayName} ${query} ${rawMessage}`,
   );
 
   return {
     aliases: [],
     displayName,
-    category: isAgri ? "Grains & Agricultural Produce" : "Commercial & Industrial Goods",
-    hsnCode: isAgri ? "1006 30" : "8471 30",
-    gstRate: isAgri ? "5%" : "18%",
+    category: isDryFruitOrSeed
+      ? "Dry Fruits & Edible Seeds"
+      : isAgri
+      ? "Grains & Agricultural Produce"
+      : "Commercial & Industrial Goods",
+    hsnCode: isDryFruitOrSeed ? "1904 10" : isAgri ? "1008 90" : "9983 99",
+    gstRate: isDryFruitOrSeed ? "5%" : isAgri ? "5%" : "18%",
     unit: /\b(box|carton|piece|pcs|unit|units|meter|mtr|liter|ltr|mt|tonne)\b/i.test(combined)
       ? (combined.match(/\b(box|carton|piece|pcs|unit|units|meter|mtr|liter|ltr|mt|tonne)\b/i)?.[0]?.toUpperCase() ?? "PCS")
       : (isAgri ? "KG" : "PCS"),
     standardPackKg: isAgri ? 50 : 1,
     wholesaleMarkupPct: 12,
     retailMarkupPct: 28,
-    moistureLimitPct: 12.0,
+    moistureLimitPct: isDryFruitOrSeed ? 9.0 : 12.0,
     seasonSummary: isAgri
       ? "Market trading reflects active regional movement with standard wholesale spreads."
       : "Active B2B wholesale trade with consistent manufacturer supply and regional distribution.",
-    baselineEstimateQtl: isAgri ? 3800 : 0,
+    baselineEstimateQtl: isDryFruitOrSeed ? 85000 : isAgri ? 3500 : 0,
   };
 }
 
@@ -443,7 +513,12 @@ function extractCommodityTarget(
   isExplicitSearch: boolean;
   isMarketPrice: boolean;
 } {
-  const text = rawMessage.toLowerCase();
+  // Normalize typical typos in wholesale prompts
+  const normalized = rawMessage
+    .replace(/\b(wholeprice|wholesaleprice|wholsale\s*price|holesale\s*price)\b/gi, "wholesale price")
+    .replace(/\b(wholeprice|wholesalerate|wholsale\s*rate)\b/gi, "wholesale rate");
+  const text = normalized.toLowerCase();
+
   const isStateWise =
     /\b(all\s*(?:the\s*)?states?|state[- ]?wise|across\s*india|every\s*state|state\s*list|list\s*of\s*(?:all\s*)?(?:the\s*)?states?|each\s*state|per\s*state|all\s*state)\b/i.test(
       text,
@@ -458,7 +533,7 @@ function extractCommodityTarget(
     );
   const isMarketPrice =
     !/\b(gst\s*rates?|tax\s*rates?|interest\s*rates?|conversion\s*rates?|exchange\s*rates?)\b/i.test(text) &&
-    /\b(market\s*prices?|market\s*rates?|mandi\s*rates?|mandi\s*prices?|mandi\s*bhav|bazar\s*bhav|apmc\s*rates?|apmc\s*prices?|commodity\s*rates?|commodity\s*prices?|wholesale\s*rates?|wholesale\s*prices?|rates?\s*across\s*india|prices?\s*across\s*india|price\s*discovery|procurement\s*price|selling\s*price\s*recommendation|avg\s*price|average\s*price|high\s*price|highest\s*price|low\s*price|lowest\s*price)\b/i.test(
+    /\b(market\s*prices?|market\s*rates?|mandi\s*rates?|mandi\s*prices?|mandi\s*bhav|bazar\s*bhav|apmc\s*rates?|apmc\s*prices?|commodity\s*rates?|commodity\s*prices?|wholesale\s*rates?|wholesale\s*prices?|wholeprice|rates?\s*across\s*india|prices?\s*across\s*india|price\s*discovery|procurement\s*price|selling\s*price\s*recommendation|avg\s*price|average\s*price|high\s*price|highest\s*price|low\s*price|lowest\s*price)\b/i.test(
       text,
     );
 
@@ -470,7 +545,13 @@ function extractCommodityTarget(
     return { commodity: "", isStateWise: false, isBuySell: false, isExplicitSearch: false, isMarketPrice: false };
   }
 
+  // A city/state-only follow-up ("what about Delhi market price?") inherits the
+  // commodity from history instead of becoming a product called "what about delhi".
+  const locationOnly =
+    /\b(delhi|mumbai|kolkata|bengaluru|bangalore|chennai|hyderabad|pune|ahmedabad|jaipur|lucknow|patna|bhopal|chandigarh|nagpur|surat|indore|gurugram|noida)\b/i;
+
   const COMMODITY_PATTERNS: Array<{ pattern: RegExp; canonical: string }> = [
+    { pattern: /\b(fox\s*nuts?|foxnut|makhana|phool\s*makhana|lotus\s*seeds?|euryale\s*ferox|makhane)\b/i, canonical: "fox nut" },
     { pattern: /\b(basmati\s*(?:rice|1121|1509|pusa|chawal)?|1121\s*basmati|1509\s*basmati|pusa\s*basmati)\b/i, canonical: "basmati rice" },
     { pattern: /\b(sona\s*masoori|parmal|kolam|ir-?64|non[- ]?basmati(?:\s*rice)?|broken\s*rice)\b/i, canonical: "non-basmati rice" },
     { pattern: /\b(rice|chawal|dhan|paddy)\b/i, canonical: "rice" },
@@ -482,8 +563,10 @@ function extractCommodityTarget(
     { pattern: /\b(toor\s*dal|toor|arhar\s*dal|arhar|tuvar|pigeon\s*pea)\b/i, canonical: "toor dal" },
     { pattern: /\b(moong\s*dal|moong|green\s*gram)\b/i, canonical: "moong dal" },
     { pattern: /\b(urad\s*dal|urad|black\s*gram)\b/i, canonical: "urad dal" },
+    { pattern: /\b(cardamom|elaichi|clove|laung|black\s*pepper|kali\s*mirch)\b/i, canonical: "whole spices" },
     { pattern: /\b(turmeric|haldi|jeera|cumin|chilli|mirch|dhaniya|coriander)\b/i, canonical: "spices" },
-    { pattern: /\b(onion|pyaz|potato|aloo|tomato|tamatar)\b/i, canonical: "vegetables" },
+    { pattern: /\b(almonds?|badam|cashews?|kaju|walnuts?|akhrot|pistachios?|pista|raisins?|kishmish|dry\s*fruits?)\b/i, canonical: "dry fruits" },
+    { pattern: /\b(onion|pyaz|potato|aloo|tomato|tamatar|garlic|lahsun|ginger|adrak)\b/i, canonical: "vegetables" },
     { pattern: /\b(steel|iron|tmt\s*bars?|rebar|pipes?|wire\s*mesh)\b/i, canonical: "steel" },
     { pattern: /\b(copper|copper\s*wire|cables?)\b/i, canonical: "copper" },
     { pattern: /\b(cement|concrete)\b/i, canonical: "cement" },
@@ -492,14 +575,73 @@ function extractCommodityTarget(
     { pattern: /\b(packaging|corrugated\s*box|boxes|cartons?)\b/i, canonical: "packaging" },
   ];
 
-  // 1. Direct match on current message
+  // 1. Direct match on CURRENT message via COMMODITY_PATTERNS
   for (const { pattern, canonical } of COMMODITY_PATTERNS) {
     if (pattern.test(text)) {
       return { commodity: canonical, isStateWise, isBuySell, isExplicitSearch, isMarketPrice };
     }
   }
 
-  // 2. Check conversation history in reverse order (inheriting commodity from prior turn)
+  // 1b. Linguistic pattern extraction from current message:
+  // e.g. "wholesale price of fox nut across india", "price of tmt bar", "cost of copper"
+  const phraseTargetRx =
+    /(?:latest\s*)?(?:wholesale\s*price|wholesale\s*rate|market\s*price|market\s*rate|mandi\s*price|mandi\s*rate|mandi\s*bhav|bazar\s*bhav|price|prices|rate|rates|cost|bhav)s?\s+(?:of|for)\s+([a-zA-Z0-9\s/&-]+?)(?:\s+(?:across\s*india|in\s*india|across|all\s*state|state[- ]?wise|today|daily|at|for)|$|[?!.,])/i;
+  const pMatch = text.match(phraseTargetRx);
+  if (pMatch && pMatch[1]) {
+    const candidate = pMatch[1]
+      .replace(/\b(?:what|how)\s*about\b/gi, " ")
+      .replace(/\b(the|a|an|all|any|our|my|current|latest|new)\b/gi, "")
+      .trim();
+    if (
+      candidate.length >= 2 &&
+      !locationOnly.test(candidate) &&
+      !/\b(state|india|market|mandi|price|rate|list|avg|high|low)\b/i.test(candidate)
+    ) {
+      return { commodity: candidate, isStateWise, isBuySell, isExplicitSearch, isMarketPrice };
+    }
+  }
+
+  const reverseTargetRx =
+    /([a-zA-Z0-9\s/&-]+?)\s+(?:wholesale\s*price|wholesale\s*rate|market\s*price|market\s*rate|mandi\s*price|mandi\s*rate|mandi\s*bhav|bazar\s*bhav)(?:\s+(?:across\s*india|in\s*india|across|all\s*state|state[- ]?wise|today|daily|at|for)|$|[?!.,])/i;
+  const rMatch = text.match(reverseTargetRx);
+  if (rMatch && rMatch[1]) {
+    const candidate = rMatch[1]
+      .replace(/\b(?:what|how)\s*about\b/gi, " ")
+      .replace(/\b(the|a|an|all|any|our|my|current|latest|new|find|get|tell\s*me|check)\b/gi, "")
+      .trim();
+    if (
+      candidate.length >= 2 &&
+      !locationOnly.test(candidate) &&
+      !/\b(state|india|market|mandi|price|rate|list|avg|high|low)\b/i.test(candidate)
+    ) {
+      return { commodity: candidate, isStateWise, isBuySell, isExplicitSearch, isMarketPrice };
+    }
+  }
+
+  // 1c. Strip out prompt framing phrases and evaluate residuals from CURRENT message
+  const cleaned = text
+    .replace(/\b(?:can\s*you\s*)?(?:create|make|give|show|generate|display|provide|fetch|get|find|tell\s*me|check)\s*(?:me\s*)?(?:a\s*)?list(?: of)?\b/gi, " ")
+    .replace(/\b(?:all\s*(?:the\s*)?states?(?:\s*of\s*india)?|across\s*india|in\s*india|for\s*india|of\s*india)\b/gi, " ")
+    .replace(/\b(?:and\s*)?(?:the\s*)?(?:avg|average|high|highest|low|lowest|modal|min|max)\s*(?:prices?|rates?)\b/gi, " ")
+    .replace(/\b(?:of|for|in)\s*(?:each|every|all)\s*states?\b/gi, " ")
+    .replace(/\b(?:do\s*)?(?:a\s*)?web\s*search\s*(?:for|about|to\s*get|to\s*find|to)?/gi, " ")
+    .replace(/\b(?:search\s*(?:the\s*)?web\s*(?:for|about|to\s*get|to\s*find|to)?|websearch|google|look\s*up\s*online|find\s*online)/gi, " ")
+    .replace(/\b(?:prices?\s*of|rates?\s*of|market\s*rates?\s*of|market\s*prices?\s*of|mandi\s*rates?\s*of|mandi\s*prices?\s*of|bhav\s*of|wholesale\s*prices?\s*of|wholesale\s*rates?\s*of)/gi, " ")
+    .replace(/\b(?:today|latest|current|can\s*you|could\s*you|please|tell\s*me|check|batao|kya\s*hai|what\s*is|what\s*are|what\s*about|how\s*about)/gi, " ")
+    .replace(/\b(?:should\s*we\s*buy\s*or\s*sell|buy\s*or\s*sell|wholesale\s*price|market\s*price)\b/gi, " ")
+    .replace(/[?!.,;:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const isNonsenseOrSentence =
+    cleaned.length > 28 ||
+    locationOnly.test(cleaned) ||
+    /\b(list|create|state|india|price|avg|high|low|each|what|how|about)\b/i.test(cleaned);
+  if (!isNonsenseOrSentence && cleaned.length >= 2) {
+    return { commodity: cleaned, isStateWise, isBuySell, isExplicitSearch, isMarketPrice };
+  }
+
+  // 2. ONLY if current message has no commodity, check conversation history in reverse order
   if (history && history.length > 0) {
     for (let i = history.length - 1; i >= 0; i--) {
       const prevText = history[i].content?.toLowerCase() || "";
@@ -517,52 +659,69 @@ function extractCommodityTarget(
     return { commodity: "basmati rice", isStateWise, isBuySell, isExplicitSearch, isMarketPrice };
   }
 
-  // 4. Strip out prompt framing phrases and evaluate residuals
-  const cleaned = rawMessage
-    .replace(/\b(?:can\s*you\s*)?(?:create|make|give|show|generate|display|provide|fetch|get)\s*(?:me\s*)?(?:a\s*)?list(?: of)?\b/gi, " ")
-    .replace(/\b(?:all\s*(?:the\s*)?states?(?:\s*of\s*india)?|across\s*india|in\s*india|for\s*india|of\s*india)\b/gi, " ")
-    .replace(/\b(?:and\s*)?(?:the\s*)?(?:avg|average|high|highest|low|lowest|modal|min|max)\s*(?:prices?|rates?)\b/gi, " ")
-    .replace(/\b(?:of|for|in)\s*(?:each|every|all)\s*states?\b/gi, " ")
-    .replace(/\b(?:do\s*)?(?:a\s*)?web\s*search\s*(?:for|about|to\s*get|to\s*find|to)?/gi, " ")
-    .replace(/\b(?:search\s*(?:the\s*)?web\s*(?:for|about|to\s*get|to\s*find|to)?|websearch|google|look\s*up\s*online|find\s*online)/gi, " ")
-    .replace(/\b(?:prices?\s*of|rates?\s*of|market\s*rates?\s*of|market\s*prices?\s*of|mandi\s*rates?\s*of|mandi\s*prices?\s*of|bhav\s*of)/gi, " ")
-    .replace(/\b(?:today|latest|current|can\s*you|could\s*you|please|tell\s*me|check|batao|kya\s*hai|what\s*is|what\s*are)/gi, " ")
-    .replace(/\b(?:should\s*we\s*buy\s*or\s*sell|buy\s*or\s*sell)\b/gi, " ")
-    .replace(/[?!.,;:]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const isNonsenseOrSentence = cleaned.length > 28 || /\b(list|create|state|india|price|avg|high|low|each)\b/i.test(cleaned);
-  const validCommodity = !isNonsenseOrSentence && cleaned.length >= 2 ? cleaned : "";
-
-  return { commodity: validCommodity, isStateWise, isBuySell, isExplicitSearch, isMarketPrice };
+  return { commodity: "", isStateWise, isBuySell, isExplicitSearch, isMarketPrice };
 }
 
-function extractPriceNumbersFromCorpus(corpus: string): {
+function extractPriceNumbersFromCorpus(corpus: string, defaultKg = false): {
   minQtl: number;
   modalQtl: number;
   maxQtl: number;
   extractedCount: number;
   liveRatesFound: number[];
 } {
+  // 1. Quintal patterns: ₹[number]/qtl or quintal
   const qtlRegex = /(?:₹|Rs\.?|INR)\s*([0-9,]+(?:\.[0-9]+)?)\s*(?:\/|\s*per\s*)?\s*(?:qtl|quintal|100\s*kg)/gi;
   const qtlMatches = [...corpus.matchAll(qtlRegex)]
     .map((m) => parseFloat(m[1].replace(/,/g, "")))
-    .filter((n) => n >= 1000 && n <= 50000);
+    .filter((n) => n >= 500 && n <= 500000);
 
-  const phraseRegex = /(?:mandi rate|mandi price|modal rate|modal price|average rate|average price|price today)[^₹\d\n]{0,35}(?:₹|Rs\.?|INR)\s*([0-9,]+(?:\.[0-9]+)?)/gi;
+  // 1b. Per-tonne patterns: ₹[number]/tonne (1 tonne = 10 quintals)
+  const tonneRegex = /(?:₹|Rs\.?|INR)\s*([0-9,]+(?:\.[0-9]+)?)\s*(?:\/|\s*per\s*)?\s*(?:ton|tonne|mt)\b/gi;
+  const tonneMatches = [...corpus.matchAll(tonneRegex)]
+    .map((m) => parseFloat(m[1].replace(/,/g, "")))
+    .filter((n) => n >= 500 && n <= 5000000)
+    .map((n) => Math.round(n * 10));
+
+  // 2. General mandi phrase patterns
+  const phraseRegex = /(?:mandi rate|mandi price|modal rate|modal price|average rate|average price|price today|wholesale price)[^₹\d\n]{0,35}(?:₹|Rs\.?|INR)\s*([0-9,]+(?:\.[0-9]+)?)/gi;
   const phraseMatches = [...corpus.matchAll(phraseRegex)]
     .map((m) => parseFloat(m[1].replace(/,/g, "")))
-    .filter((n) => n >= 1000 && n <= 50000);
+    .filter((n) => n >= 500 && n <= 500000);
 
+  // 3. Per KG patterns (converted to quintal equivalent: 1 quintal = 100 kg)
+  // Accommodate commodities from ₹10/kg up to ₹25,000/kg (covers fox nuts ₹700-1700/kg, dry fruits, spices)
   const kgRegex = /(?:₹|Rs\.?|INR)\s*([0-9,]+(?:\.[0-9]+)?)\s*(?:\/|\s*per\s*)?\s*(?:kg|kilo|kilogram)/gi;
   const kgMatches = [...corpus.matchAll(kgRegex)]
     .map((m) => parseFloat(m[1].replace(/,/g, "")))
-    .filter((n) => n >= 15 && n <= 600);
+    .filter((n) => n >= 10 && n <= 25000);
+
+  // 4. Range patterns: Rs. 700 to Rs. 1,700 per kg
+  // When the unit is omitted, fall back to the commodity's normal quote unit
+  // instead of guessing from the number (₹800-1,500 is per quintal for onion
+  // but per kg for makhana).
+  const rangeRegex = /(?:Rs\.?|₹|INR)\s*([0-9,]+(?:\.[0-9]+)?)\s*(?:to|-)\s*(?:Rs\.?|₹|INR)?\s*([0-9,]+(?:\.[0-9]+)?)\s*(?:\/|\s*per\s*)?\s*(kg|kilo|kilogram|qtl|quintal|ton|tonne|mt)?/gi;
+  const rangeMatches: number[] = [];
+  for (const m of corpus.matchAll(rangeRegex)) {
+    const low = parseFloat(m[1].replace(/,/g, ""));
+    const high = parseFloat(m[2].replace(/,/g, ""));
+    const unit = (m[3] || "").toLowerCase();
+    const hasKg = /kg|kilo/.test(unit);
+    const hasTon = /ton|tonne|mt/.test(unit);
+    const hasQtl = /qtl|quintal/.test(unit);
+    if (low <= 0 || high < low) continue;
+
+    const toQtl = (value: number) =>
+      Math.round(hasKg || (!hasQtl && !hasTon && defaultKg) ? value * 100 : hasTon ? value * 10 : value);
+
+    if (hasKg || hasTon || (hasQtl && low >= 500) || (!hasQtl && !hasTon && (defaultKg || low >= 500))) {
+      rangeMatches.push(toQtl(low));
+      rangeMatches.push(toQtl(high));
+      rangeMatches.push(toQtl((low + high) / 2));
+    }
+  }
 
   const convertedKg = kgMatches.map((k) => Math.round(k * 100));
-
-  const allRates = Array.from(new Set([...qtlMatches, ...phraseMatches, ...convertedKg])).sort((a, b) => a - b);
+  const allRates = Array.from(new Set([...qtlMatches, ...tonneMatches, ...phraseMatches, ...convertedKg, ...rangeMatches])).sort((a, b) => a - b);
 
   if (allRates.length > 0) {
     const minQtl = allRates[0];
@@ -588,22 +747,26 @@ interface RegionalTradingHubConfig {
   spreadPct: number;
 }
 
-const REGIONAL_TRADING_HUBS: RegionalTradingHubConfig[] = [
+const ALL_REGIONAL_TRADING_HUBS: RegionalTradingHubConfig[] = [
+  { state: "Bihar", aliases: ["bihar", "darbhanga", "madhubani", "purnia", "katihar", "patna", "saharsa", "mithila", "muzaffarpur"], mandiHub: "Mithila / Darbhanga Mandi", commercialHub: "Patna Commercial Terminal", marketRole: "🌾 Primary Origin & GI Production (90% Supply)", commercialRole: "🏭 Processing & Origin", spreadPct: -0.15 },
   { state: "Punjab", aliases: ["punjab", "amritsar", "tarn taran", "khanna", "kotkapura", "ludhiana"], mandiHub: "Amritsar Mandi", commercialHub: "Ludhiana Industrial Hub", marketRole: "🌾 Major Producer", commercialRole: "🏭 Manufacturing Origin", spreadPct: -0.01 },
   { state: "Haryana", aliases: ["haryana", "karnal", "kaithal", "taraori", "kurukshetra", "gurugram", "panipat"], mandiHub: "Karnal APMC", commercialHub: "Panipat / Gurugram Hub", marketRole: "🌾 Milling Hub", commercialRole: "🏭 Manufacturing Basin", spreadPct: 0.01 },
-  { state: "Uttar Pradesh", aliases: ["uttar pradesh", "up mandi", "western up", "meerut", "saharanpur", "bareilly", "noida", "kanpur"], mandiHub: "Western UP (Meerut)", commercialHub: "Noida / Kanpur Terminal", marketRole: "🌾 Origin Mandi", commercialRole: "🏭 Production Center", spreadPct: -0.04 },
-  { state: "Madhya Pradesh", aliases: ["madhya pradesh", "mp mandi", "raisen", "vidisha", "sehore", "indore", "bhopal"], mandiHub: "Raisen Mandi", commercialHub: "Indore Commercial Hub", marketRole: "🌾 Bulk Procurement", commercialRole: "🚚 Central Transit Hub", spreadPct: -0.06 },
-  { state: "Rajasthan", aliases: ["rajasthan", "kota", "bundi", "hadoti", "baran", "jaipur"], mandiHub: "Kota APMC", commercialHub: "Jaipur Wholesale Market", marketRole: "🌾 Irrigated Basin", commercialRole: "🏭 Processing Hub", spreadPct: -0.02 },
-  { state: "Delhi NCR", aliases: ["delhi", "naya bazar", "khari baoli", "azadpur", "lawrence road", "delhi ncr"], mandiHub: "Naya Bazar", commercialHub: "Delhi National Trade Center", marketRole: "🚚 Wholesale Benchmark", commercialRole: "🚚 Wholesale Benchmark", spreadPct: 0.07 },
+  { state: "Uttar Pradesh", aliases: ["uttar pradesh", "up mandi", "western up", "meerut", "saharanpur", "bareilly", "noida", "kanpur", "varanasi"], mandiHub: "Western UP (Meerut)", commercialHub: "Kanpur / Noida Wholesale Terminal", marketRole: "🌾 Origin Mandi", commercialRole: "🏭 Production & Transit Hub", spreadPct: -0.04 },
+  { state: "Madhya Pradesh", aliases: ["madhya pradesh", "mp mandi", "raisen", "vidisha", "sehore", "indore", "bhopal", "neemuch"], mandiHub: "Raisen Mandi", commercialHub: "Indore Commercial Hub", marketRole: "🌾 Bulk Procurement", commercialRole: "🚚 Central Transit Hub", spreadPct: -0.06 },
+  { state: "Rajasthan", aliases: ["rajasthan", "kota", "bundi", "hadoti", "baran", "jaipur", "jodhpur"], mandiHub: "Kota APMC", commercialHub: "Jaipur Wholesale Market", marketRole: "🌾 Irrigated Basin", commercialRole: "🏭 Processing Hub", spreadPct: -0.02 },
+  { state: "Delhi NCR", aliases: ["delhi", "naya bazar", "khari baoli", "azadpur", "lawrence road", "delhi ncr"], mandiHub: "Khari Baoli / Naya Bazar", commercialHub: "Delhi National Trade Center", marketRole: "🚚 Wholesale Benchmark", commercialRole: "🚚 National Distribution Benchmark", spreadPct: 0.07 },
   { state: "Maharashtra", aliases: ["maharashtra", "mumbai", "vashi", "pune", "nagpur"], mandiHub: "Navi Mumbai (Vashi APMC)", commercialHub: "Mumbai Industrial Terminal", marketRole: "🏬 Major Consumption", commercialRole: "🏬 Major Commercial Terminal", spreadPct: 0.15 },
-  { state: "West Bengal", aliases: ["west bengal", "kolkata", "posta bazar", "burdwan"], mandiHub: "Kolkata (Posta Bazar)", commercialHub: "Kolkata Commercial Port", marketRole: "🏬 Eastern Hub", commercialRole: "🏬 Eastern Terminal", spreadPct: 0.09 },
+  { state: "West Bengal", aliases: ["west bengal", "kolkata", "posta bazar", "burdwan", "siliguri"], mandiHub: "Kolkata (Posta Bazar)", commercialHub: "Kolkata Commercial Port", marketRole: "🏬 Eastern Hub", commercialRole: "🏬 Eastern Terminal", spreadPct: 0.09 },
   { state: "Karnataka", aliases: ["karnataka", "bengaluru", "bangalore", "yeshwanthpur", "mysuru"], mandiHub: "Bengaluru APMC", commercialHub: "Bengaluru Tech & Trade Hub", marketRole: "🏬 South Terminal", commercialRole: "🏬 Southern Distribution Hub", spreadPct: 0.16 },
+  { state: "Gujarat", aliases: ["gujarat", "ahmedabad", "surat", "rajkot", "unjha"], mandiHub: "Unjha / Rajkot APMC", commercialHub: "Ahmedabad Trade Gateway", marketRole: "🌾 Commercial Processing Hub", commercialRole: "🏬 Major Trade Corridor", spreadPct: 0.05 },
 ];
 
 function extractDynamicStateRates(
   results: Array<{ title: string; url: string; snippet: string }>,
   modalQtl: number,
   isAgricultural = true,
+  commodityQuery = "",
+  defaultKg = false,
 ): Array<{
   state: string;
   mandiHub: string;
@@ -613,8 +776,28 @@ function extractDynamicStateRates(
   sourceNote: string;
   isDirectSnippet: boolean;
 }> {
-  return REGIONAL_TRADING_HUBS.map((cfg) => {
-    let directRate: number | null = null;
+  const comm = commodityQuery.toLowerCase();
+  const isFoxNut = /\b(fox\s*nut|foxnut|makhana|phool\s*makhana|lotus\s*seed)\b/i.test(comm);
+
+  // Determine active candidate states
+  let candidateConfigs: RegionalTradingHubConfig[];
+  if (isFoxNut) {
+    // For Fox Nut, Bihar is the undisputed world capital & GI origin; key distribution is UP, WB, Delhi, Maharashtra, Karnataka, Gujarat
+    const targetStates = ["Bihar", "Uttar Pradesh", "Delhi NCR", "West Bengal", "Maharashtra", "Karnataka", "Gujarat"];
+    candidateConfigs = targetStates
+      .map((s) => ALL_REGIONAL_TRADING_HUBS.find((c) => c.state === s)!)
+      .filter(Boolean);
+  } else {
+    // Standard national benchmark states (Punjab, Haryana, UP, MP, Rajasthan, Delhi, Maharashtra, WB, Karnataka)
+    const targetStates = ["Punjab", "Haryana", "Uttar Pradesh", "Madhya Pradesh", "Rajasthan", "Delhi NCR", "Maharashtra", "West Bengal", "Karnataka"];
+    candidateConfigs = targetStates
+      .map((s) => ALL_REGIONAL_TRADING_HUBS.find((c) => c.state === s)!)
+      .filter(Boolean);
+  }
+
+  // Scan snippets for direct matches in all candidate states
+  return candidateConfigs.map((cfg) => {
+    let directRateQtl: number | null = null;
     let directSource: string | null = null;
     const hubName = isAgricultural ? cfg.mandiHub : cfg.commercialHub;
     const roleName = isAgricultural ? cfg.marketRole : cfg.commercialRole;
@@ -622,29 +805,71 @@ function extractDynamicStateRates(
     for (const res of results) {
       const blob = `${res.title} ${res.snippet}`;
       for (const alias of cfg.aliases) {
-        const rx = new RegExp(
-          alias + "[^\\d]{0,25}(?:₹|Rs\\.?|INR)?\\s*([0-9]{1,2}(?:,[0-9]{3})*(?:\\.[0-9]+)?|[0-9]+(?:\\.[0-9]+)?)",
+        // Pattern 1: [alias] ... ₹[rate] (/kg or /qtl)
+        const rxAfter = new RegExp(
+          alias + "[^.!?\\n]{0,40}(?:₹|Rs\\.?|INR)\\s*([0-9]+(?:,[0-9]+)*(?:\\.[0-9]+)?)\\s*(?:\\/|per)?\\s*(kg|kilo|kilogram|qtl|quintal|ton|tonne|mt)?",
           "i",
         );
-        const m = blob.match(rx);
+        // Pattern 2: ₹[rate] (/kg or /qtl) ... in/at [alias]
+        const rxBefore = new RegExp(
+          "(?:₹|Rs\\.?|INR)\\s*([0-9]+(?:,[0-9]+)*(?:\\.[0-9]+)?)\\s*(?:\\/|per)?\\s*(kg|kilo|kilogram|qtl|quintal|ton|tonne|mt)?[^.!?\\n]{0,40}" + alias,
+          "i",
+        );
+        // Pattern 3: Range e.g. Rs. 700 to Rs. 1700 per kg in [alias]
+        const rxRange = new RegExp(
+          "(?:Rs\\.?|₹)\\s*([0-9,]+)\\s*(?:to|-)\\s*(?:Rs\\.?|₹)?\\s*([0-9,]+)\\s*(?:\\/|per)?\\s*(kg|kilo|kilogram|qtl|quintal|ton|tonne|mt)?[^.!?\\n]{0,40}" + alias,
+          "i",
+        );
+
+        const mRange = blob.match(rxRange);
+        if (mRange) {
+          const low = parseFloat(mRange[1].replace(/,/g, ""));
+          const high = parseFloat(mRange[2].replace(/,/g, ""));
+          const unit = (mRange[3] || "").toLowerCase();
+          const hasKg = /kg|kilo/.test(unit);
+          const hasTon = /ton|tonne|mt/.test(unit);
+          const hasQtl = /qtl|quintal/.test(unit);
+          const isKg = hasKg || (!hasQtl && !hasTon && defaultKg);
+          const avg = isFoxNut && cfg.state === "Bihar" ? low : (low + high) / 2;
+          directRateQtl = Math.round(hasTon ? avg * 10 : isKg ? avg * 100 : avg);
+          directSource = res.title.split("-")[0].split("|")[0].trim();
+          break;
+        }
+
+        const mAfter = blob.match(rxAfter);
+        const mBefore = blob.match(rxBefore);
+        const m = mAfter || mBefore;
         if (m) {
           const val = parseFloat(m[1].replace(/,/g, ""));
-          if (val >= 1000 && val <= 18000) {
-            directRate = Math.round(val);
+          const unit = m[2] ? m[2].toLowerCase() : "";
+          const hasKg = /kg|kilo/.test(unit);
+          const hasTon = /ton|tonne|mt/.test(unit);
+          const hasQtl = /qtl|quintal/.test(unit);
+          const isKg = hasKg || (!hasQtl && !hasTon && defaultKg);
+          if (hasTon && val >= 500 && val <= 5000000) {
+            directRateQtl = Math.round(val * 10);
+            directSource = res.title.split("-")[0].split("|")[0].trim();
+            break;
+          } else if (isKg && val >= 10 && val <= 25000) {
+            directRateQtl = Math.round(val * 100);
+            directSource = res.title.split("-")[0].split("|")[0].trim();
+            break;
+          } else if (!isKg && val >= 500 && val <= 500000) {
+            directRateQtl = Math.round(val);
             directSource = res.title.split("-")[0].split("|")[0].trim();
             break;
           }
         }
       }
-      if (directRate) break;
+      if (directRateQtl) break;
     }
 
-    if (directRate) {
+    if (directRateQtl) {
       return {
         state: cfg.state,
         mandiHub: hubName,
-        modalQtl: directRate,
-        rateKg: (directRate / 100).toFixed(2),
+        modalQtl: directRateQtl,
+        rateKg: (directRateQtl / 100).toFixed(2),
         marketRole: roleName,
         sourceNote: directSource || (isAgricultural ? "Live Mandi Auction" : "Live Wholesale Trading"),
         isDirectSnippet: true,
@@ -681,7 +906,12 @@ function synthesizeCommercialDeepResearch(params: {
 }): string {
   const { rawMessage, searchQuery, results, provider, catalogProducts, actions, isStateWise } = params;
   const spec = matchCommoditySpec(searchQuery, rawMessage);
-  const isAgri = /\b(rice|chawal|dhan|paddy|basmati|wheat|gehu|atta|mustard|sarson|sugar|chini|dal|pulses|chana|toor|arhar|moong|urad|spices|haldi|jeera|onion|potato|mandi|apmc|agmarknet)\b/i.test(
+  const isAgri = /\b(rice|chawal|dhan|paddy|basmati|wheat|gehu|atta|mustard|sarson|sugar|chini|dal|pulses|chana|toor|arhar|moong|urad|spices|haldi|jeera|onion|potato|mandi|apmc|agmarknet|fox\s*nut|makhana)\b/i.test(
+    `${rawMessage} ${searchQuery} ${spec.displayName}`,
+  );
+  // Commodities conventionally quoted per kilogram in wholesale trade. Only
+  // used when the source omits an explicit unit; explicit kg/qtl/tonne always wins.
+  const perKgCommodity = /\b(fox\s*nut|foxnut|makhana|lotus\s*seed|dry\s*fruit|almond|badam|cashew|kaju|walnut|akhrot|pistachio|pista|raisin|kishmish|cardamom|elaichi|clove|laung|pepper|mirch|saffron|spices|haldi|jeera|cumin|turmeric|chilli|steel|tmt|rebar|copper)\b/i.test(
     `${rawMessage} ${searchQuery} ${spec.displayName}`,
   );
   const { formattedDate } = getCurrentDateInfo();
@@ -689,7 +919,7 @@ function synthesizeCommercialDeepResearch(params: {
   // Extract live prices from full search corpus
   const textCorpus = results.map((r) => `${r.title} ${r.snippet}`).join(" \n ");
   const { minQtl: extractedMin, modalQtl: extractedModal, maxQtl: extractedMax, extractedCount } =
-    extractPriceNumbersFromCorpus(textCorpus);
+    extractPriceNumbersFromCorpus(textCorpus, perKgCommodity);
 
   let minQtl = extractedMin;
   let modalQtl = extractedModal;
@@ -712,7 +942,7 @@ function synthesizeCommercialDeepResearch(params: {
   const wholesaleSellKg = (parseFloat(landedCostKg) * (1 + spec.wholesaleMarkupPct / 100)).toFixed(2);
   const retailSellKg = (parseFloat(landedCostKg) * (1 + spec.retailMarkupPct / 100)).toFixed(2);
 
-  const stateRates = extractDynamicStateRates(results, modalQtl, isAgri);
+  const stateRates = extractDynamicStateRates(results, modalQtl, isAgri, `${searchQuery} ${rawMessage} ${spec.displayName}`, perKgCommodity);
   const sortedByPrice = [...stateRates].sort((a, b) => a.modalQtl - b.modalQtl);
   const lowestState = sortedByPrice[0];
   const highestState = sortedByPrice[sortedByPrice.length - 1];
@@ -734,11 +964,21 @@ function synthesizeCommercialDeepResearch(params: {
     md += `> - **Highest Rates (Best to SELL):** **${highestState.state}** at ~**₹${highestState.rateKg}/${spec.unit}** (₹${highestState.modalQtl.toLocaleString("en-IN")}/Qtl)\n`;
     md += `> - **Gross Arbitrage Spread:** ~**₹${spreadKg}/${spec.unit}** (~${spreadPct}% gross margin) by procuring from origin and selling into consumption terminals!\n\n`;
 
+    const isPerKgPrimary = perKgCommodity || parseFloat(modalKg) >= 80;
+    const chartUnit = isPerKgPrimary ? `₹/${spec.unit}` : "₹/Qtl";
+    const chartTitle = isPerKgPrimary
+      ? `State-Wise Benchmark Rates (₹/${spec.unit})`
+      : "State-Wise Benchmark Rates (₹/Quintal)";
+
     md += `\`\`\`chart:bar\n`;
-    md += `title: State-Wise Benchmark Rates (₹/Quintal)\n`;
-    md += `unit: ₹/Qtl\n`;
+    md += `title: ${chartTitle}\n`;
+    md += `unit: ${chartUnit}\n`;
     for (const st of stateRates) {
-      md += `${st.state}: ${st.modalQtl} | ₹${st.modalQtl.toLocaleString("en-IN")}/Qtl | ${st.mandiHub}\n`;
+      const displayVal = isPerKgPrimary ? parseFloat(st.rateKg) : st.modalQtl;
+      const displayLabel = isPerKgPrimary
+        ? `₹${st.rateKg}/${spec.unit}`
+        : `₹${st.modalQtl.toLocaleString("en-IN")}/Qtl`;
+      md += `${st.state}: ${displayVal} | ${displayLabel} | ${st.mandiHub}\n`;
     }
     md += `\`\`\`\n\n`;
 
@@ -806,14 +1046,24 @@ function synthesizeCommercialDeepResearch(params: {
     md += `- **Batch Rotation Protocol:** Allocate earliest-expiring lots first using Margix Automated FEFO Pick.\n\n`;
   }
 
-  // Catalog & Inventory status
-  if (catalogProducts && catalogProducts.length > 0) {
-    const p = catalogProducts[0];
+  // Catalog & Inventory status - only claim matching if product name actually aligns
+  const matchedSku = catalogProducts?.find((p) => {
+    const pName = p.name.toLowerCase();
+    const qName = searchQuery.toLowerCase();
+    const raw = rawMessage.toLowerCase();
+    return (
+      (qName.length >= 3 && pName.includes(qName)) ||
+      spec.aliases.some((a) => a.length >= 3 && pName.includes(a)) ||
+      (raw.includes("rice") && pName.includes("rice"))
+    );
+  });
+
+  if (matchedSku) {
     md += `### 🏢 Warehouse Inventory in Margix IMS\n`;
-    md += `Matching SKU in catalog: **${p.name}** (\`${p.code}\`) · HSN \`${p.hsnCode || spec.hsnCode}\` (${String(p.gstRate ?? spec.gstRate)}% GST). Ready to issue Purchase Orders or bill immediate Sales Invoices.\n\n`;
+    md += `Matching SKU in catalog: **${matchedSku.name}** (\`${matchedSku.code}\`) · HSN \`${matchedSku.hsnCode || spec.hsnCode}\` (${String(matchedSku.gstRate ?? spec.gstRate)}% GST). Ready to issue Purchase Orders or bill immediate Sales Invoices.\n\n`;
   } else {
     md += `### 🏢 Warehouse Inventory in Margix IMS\n`;
-    md += `_This commodity is not yet cataloged in your SKU master. Use **Register Master SKU** below to set it up before issuing POs or Invoices._\n\n`;
+    md += `_This commodity (**${spec.displayName}**) is not yet cataloged in your active SKU master. Use **Register Master SKU** below to set it up before issuing POs or Invoices._\n\n`;
   }
 
   md += `### ⚖️ GST & Compliance Specifications\n`;
@@ -893,6 +1143,26 @@ export class AutonomousAgentService {
       plan.intent === "list_batches" ||
       plan.intent === "my_notifications" ||
       plan.intent === "reversal_check"
+    );
+  }
+
+  /**
+   * True only when the message must run through the deterministic autonomous
+   * engine: a pending confirmation reply or an intent that produces a write
+   * confirmation card. Read-only analytics, greetings and research stay on
+   * the normal LLM path.
+   */
+  static isWriteIntent(
+    message: string,
+    context?: AgentContext,
+    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
+  ): boolean {
+    const plan = AutonomousAgentService.planIntent(message, context, history);
+    return (
+      plan.intent.startsWith("propose_") ||
+      plan.intent === "execute_pending_confirmation" ||
+      plan.intent === "cancel_pending_confirmation" ||
+      plan.intent === "execute_seed_sandbox"
     );
   }
 
@@ -1010,7 +1280,28 @@ export class AutonomousAgentService {
       );
 
     if ((isExplicitSearch || isBuySell || isMarketPrice || isStateWise || isChartQuery) && commodity.length >= 2) {
-      // If asking for a chart or state-wise, execute full state comparison web research
+      const isFoxNut = /\b(fox\s*nut|foxnut|makhana|phool\s*makhana|lotus\s*seed)\b/i.test(commodity);
+      const isSpices = /\b(cardamom|elaichi|clove|laung|pepper|mirch|jeera|cumin|haldi|turmeric|spices)\b/i.test(commodity);
+      const isGrain = /\b(rice|wheat|chawal|gehu|paddy|dhan|basmati|parmal)\b/i.test(commodity);
+      const isSteel = /\b(steel|iron|rebar|tmt)\b/i.test(commodity);
+
+      let originQuery = `${commodity} wholesale market mandi price state wise major producing regions India`;
+      let terminalQuery = `${commodity} wholesale rate Delhi Mumbai Bengaluru Kolkata trade benchmark per kg`;
+
+      if (isFoxNut) {
+        originQuery = `${commodity} makhana price per kg Bihar Darbhanga Madhubani mandi wholesale rate`;
+        terminalQuery = `${commodity} wholesale rate Delhi Khari Baoli Mumbai Bengaluru per kg`;
+      } else if (isGrain) {
+        originQuery = `${commodity} mandi rate Punjab Haryana Uttar Pradesh Rajasthan average price per quintal`;
+        terminalQuery = `${commodity} wholesale rate Delhi Naya Bazar Mumbai Maharashtra Kolkata West Bengal per kg`;
+      } else if (isSpices) {
+        originQuery = `${commodity} mandi rate Kerala Kochi Gujarat Unjha Andhra Guntur average price`;
+        terminalQuery = `${commodity} wholesale rate Delhi Khari Baoli Mumbai Vashi APMC per kg`;
+      } else if (isSteel) {
+        originQuery = `${commodity} price Raipur Mandi Gobindgarh Rourkela wholesale rate per ton`;
+        terminalQuery = `${commodity} wholesale price Delhi Mumbai Gujarat Chennai per kg`;
+      }
+
       return {
         intent: "execute_web_research",
         steps: [
@@ -1018,28 +1309,30 @@ export class AutonomousAgentService {
             name: "Stage 1: National Mandi Benchmark",
             toolName: "web_research",
             arguments: {
-              query: `${commodity} mandi price today India APMC Agmarknet daily rates`,
+              query: isGrain
+                ? `${commodity} mandi price today India APMC Agmarknet daily rates`
+                : `${commodity} wholesale price today India latest market rate per kg quintal`,
               maxResults: 5,
             },
-            description: `Stage 1: Fetching National APMC Agmarknet benchmark for ${commodity}`,
+            description: `Stage 1: Fetching National benchmark for ${commodity}`,
           },
           {
             name: "Stage 2: Origin Producing Mandis",
             toolName: "web_research",
             arguments: {
-              query: `${commodity} mandi rate Punjab Haryana Uttar Pradesh Rajasthan average price per quintal`,
+              query: originQuery,
               maxResults: 5,
             },
-            description: `Stage 2: Discovering auction rates in origin agricultural mandis (Punjab, Haryana, UP, Rajasthan)`,
+            description: `Stage 2: Discovering auction rates in origin production hubs for ${commodity}`,
           },
           {
             name: "Stage 3: Consumption & Terminal Hubs",
             toolName: "web_research",
             arguments: {
-              query: `${commodity} wholesale rate Delhi Naya Bazar Mumbai Maharashtra Kolkata West Bengal per kg`,
+              query: terminalQuery,
               maxResults: 5,
             },
-            description: `Stage 3: Analyzing wholesale trading rates in major consumption hubs (Delhi, Mumbai, Kolkata)`,
+            description: `Stage 3: Analyzing wholesale trading rates in major consumption and distribution terminals for ${commodity}`,
           },
           {
             name: "Stage 4: Internal Inventory Cross-Reference",
@@ -2199,7 +2492,26 @@ export class AutonomousAgentService {
               },
             };
           }
-          const outward = await postDispatch(actor, params.payload as unknown as Parameters<typeof postDispatch>[1]);
+
+          // The confirmation payload is client-supplied. Validate it with the
+          // exact same schema as the dispatch API and bind the idempotency
+          // key to the server-issued confirmation id so a repeated click or
+          // replay cannot post the same delivery twice.
+          const dispatchInput = dispatchCreateSchema.parse({
+            ...params.payload,
+            idempotencyKey: params.confirmationId,
+          });
+          if (!dispatchInput.invoiceId) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: "A dispatch confirmation must reference an invoice.",
+              },
+            };
+          }
+
+          const outward = await postDispatch(actor, dispatchInput);
           return {
             success: true,
             data: {
@@ -2563,6 +2875,161 @@ export class AutonomousAgentService {
       };
     }
 
+    // Destructive Intent: Propose Short-Close of a Partially Received PO
+    if (intent === "propose_short_close_po") {
+      if (!can(context.role, "po.manage")) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `⚠️ **Permission Denied**\n\nYour current role (**${context.role}**) does not have permission to short-close purchase orders (\`po.manage\`).`,
+          actions: [{ label: "View Purchase Orders", route: "/purchase-orders", permission: "po.view" }],
+          sources: ["RBAC Enforcement Matrix"],
+        };
+      }
+
+      const poMatch = message.match(/((?:DEMO-)?PO-[A-Za-z0-9-]+)/i) || message.match(/#?(\d+)/);
+      const poNumber = poMatch ? poMatch[1].toUpperCase() : null;
+      const po = poNumber
+        ? await prisma.purchaseOrder.findFirst({
+            where: {
+              OR: [{ poNumber }, { poNumber: { contains: poNumber, mode: "insensitive" } }],
+            },
+            include: { supplier: true, items: true },
+          })
+        : await prisma.purchaseOrder.findFirst({
+            where: { status: "PARTIALLY_RECEIVED" },
+            orderBy: { createdAt: "desc" },
+            include: { supplier: true, items: true },
+          });
+
+      if (!po) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `Could not locate a partially received purchase order to short-close. Please specify the PO number (for example \`PO-2026-0001\`).`,
+          actions: [{ label: "Browse Purchase Orders", route: "/purchase-orders", permission: "po.view" }],
+          sources: ["Purchasing Registry"],
+        };
+      }
+
+      if (po.status !== "PARTIALLY_RECEIVED") {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `### Short-Close Not Applicable\n\nPurchase order **\`${po.poNumber}\`** is \`${po.status}\`. Only partially received orders can be short-closed.`,
+          actions: [{ label: "Open Purchase Order", route: `/purchase-orders/${po.id}`, permission: "po.view" }],
+          sources: ["Procurement Lifecycle Invariants"],
+        };
+      }
+
+      const pendingLines = po.items
+        .map((item) => ({ ordered: item.orderedQty, received: item.receivedQty, pending: item.orderedQty.minus(item.receivedQty) }))
+        .filter((line) => line.pending.gt(0));
+      const pendingTotal = pendingLines.reduce((sum, line) => sum.plus(line.pending), ZERO);
+
+      confirmation = {
+        id: randomUUID(),
+        title: `Short-Close Purchase Order ${po.poNumber}`,
+        description: `Close the remaining unreceived balance on PO ${po.poNumber} from ${po.supplier.name}. Existing receipts stay intact.`,
+        actionType: "SHORT_CLOSE_PO",
+        payload: {
+          poId: po.id,
+          poNumber: po.poNumber,
+          reason: "Short-closed via Copilot confirmation",
+        },
+        destructive: true,
+        confirmLabel: "Yes, Short-Close Order",
+        cancelLabel: "Keep Order Open",
+        status: "pending",
+      };
+
+      return {
+        stepsExecuted: [],
+        markdownAnswer: `### ⚠️ Confirmation Required: Short-Close Purchase Order\n\nPO **\`${po.poNumber}\`** from **${po.supplier.name}** is \`${po.status}\` with **${po.items.length}** line(s).\n\n- **Remaining Unreceived Quantity:** **${pendingTotal.toString()}** across ${pendingLines.length} line(s)\n- **Effect:** The order becomes \`SHORT_CLOSED\`; already received stock and GRNs are untouched, and no further receipts will be accepted.\n\nClick **"Yes, Short-Close Order"** or reply **"yes" / "no"**.`,
+        actions: [{ label: "Open PO Details", route: `/purchase-orders/${po.id}`, permission: "po.view" }],
+        sources: ["Purchasing Registry & Receipt Invariants"],
+        confirmation,
+      };
+    }
+
+    // Destructive / Financial Intent: Propose Ledger Reversal
+    if (intent === "propose_reverse_ledger") {
+      if (!can(context.role, "ledger.reverse")) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `⚠️ **Permission Denied**\n\nYour current role (**${context.role}**) does not have permission to reverse ledger movements (\`ledger.reverse\`).`,
+          actions: [{ label: "View Stock Ledger", route: "/ledger", permission: "ledger.view" }],
+          sources: ["RBAC Enforcement Matrix"],
+        };
+      }
+
+      const entryMatch =
+        message.match(/\bLE-(\d{1,12})\b/i) ||
+        message.match(/\bentry(?:\s*(?:no|number|#))?\s*(\d{1,12})\b/i);
+
+      // A reversal is financially material: never guess which movement the
+      // user meant. Require an explicit LE- number.
+      if (!entryMatch) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `Please specify the ledger entry to reverse (for example \`LE-000123\`). I will show the movement, product, godown, and batch for confirmation before anything is posted.`,
+          actions: [{ label: "Open Stock Ledger", route: "/ledger", permission: "ledger.view" }],
+          sources: ["Immutable Ledger Registry"],
+        };
+      }
+
+      const entry = await prisma.inventoryLedger.findUnique({
+        where: { entryNo: BigInt(entryMatch[1]) },
+        include: {
+          sku: { select: { code: true, name: true } },
+          godown: { select: { code: true, name: true } },
+          batch: { select: { batchNumber: true } },
+          reversedBy: { select: { id: true } },
+        },
+      });
+
+      if (!entry) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `Could not locate the ledger entry to reverse. Please specify the entry number (for example \`LE-000123\`).`,
+          actions: [{ label: "Open Stock Ledger", route: "/ledger", permission: "ledger.view" }],
+          sources: ["Immutable Ledger Registry"],
+        };
+      }
+
+      if (entry.movementType === "REVERSAL" || entry.reversedBy) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `### Reversal Not Available\n\nLedger entry **\`${formatEntryNo(entry.entryNo)}\`** is ${entry.movementType === "REVERSAL" ? "itself a reversal" : "already reversed"}. A reversal entry cannot be reversed again.`,
+          actions: [{ label: "Open Stock Ledger", route: "/ledger", permission: "ledger.view" }],
+          sources: ["Immutable Ledger Reversal Guard"],
+        };
+      }
+
+      const entryLabel = formatEntryNo(entry.entryNo);
+
+      confirmation = {
+        id: randomUUID(),
+        title: `Reverse Ledger Entry ${entryLabel}`,
+        description: `Append a counter-entry for ${entry.movementType} of ${entry.quantity.toString()} ${entry.sku.code} in ${entry.godown.code}, then release the linked document's fulfillment.`,
+        actionType: "REVERSE_LEDGER",
+        payload: {
+          entryId: entry.id,
+          entryNo: entryLabel,
+          reason: "Reversed via Copilot confirmation",
+        },
+        destructive: true,
+        confirmLabel: "Yes, Reverse Entry",
+        cancelLabel: "Keep Entry",
+        status: "pending",
+      };
+
+      return {
+        stepsExecuted: [],
+        markdownAnswer: `### ⚠️ Confirmation Required: Reverse Ledger Entry\n\n- **Entry:** **\`${entryLabel}\`** (${entry.movementType})\n- **Product:** ${entry.sku.code} — ${entry.sku.name}\n- **Godown / Batch:** \`${entry.godown.code}\` / \`${entry.batch.batchNumber}\`\n- **Signed Quantity:** **${entry.quantity.toString()}**\n- **Document:** ${entry.referenceType} ${entry.referenceNo}\n\nThe original entry is never edited. A balancing counter-entry is appended, and linked invoice/PO effects are released atomically. This action appears in the audit trail.\n\nClick **"Yes, Reverse Entry"** or reply **"yes" / "no"**.`,
+        actions: [{ label: "Open Stock Ledger", route: "/ledger", permission: "ledger.view" }],
+        sources: ["Immutable Double-Entry Ledger & Reversal Guard"],
+        confirmation,
+      };
+    }
+
     // Destructive Intent: Propose Sandbox Purge
     if (intent === "propose_purge_sandbox") {
       if (!can(context.role, "settings.manage")) {
@@ -2597,6 +3064,14 @@ export class AutonomousAgentService {
 
     // Operational: Seed Sandbox
     if (intent === "execute_seed_sandbox") {
+      if (!can(context.role, "settings.manage")) {
+        return {
+          stepsExecuted: [],
+          markdownAnswer: `⚠️ **Permission Denied**\n\nOnly Administrators (\`settings.manage\`) can seed demo sandbox test data.`,
+          actions: [{ label: "View Live Stock", route: "/stock", permission: "stock.view" }],
+          sources: ["RBAC Enforcement Matrix"],
+        };
+      }
       const activeActor: Actor = actor ?? { userId: "SYSTEM", role: context.role };
       const seedResult = await seedSandboxData(activeActor);
       return {
@@ -2662,44 +3137,77 @@ export class AutonomousAgentService {
         };
       }
 
-      // Resolve godown and batch lines
-      const activeGodown = await prisma.godown.findFirst({ where: { isActive: true } });
+      // Resolve the godown the readiness engine actually validated, then build
+      // a FEFO allocation across every batch in that godown.
+      const recommendedGodownId = readinessData.recommendedGodownId ?? null;
+      const activeGodown = recommendedGodownId
+        ? await prisma.godown.findFirst({ where: { id: recommendedGodownId, isActive: true } })
+        : null;
       if (!activeGodown) {
         return {
           stepsExecuted: [],
-          markdownAnswer: `No active warehouse godowns found to dispatch from.`,
-          actions: [{ label: "Manage Godowns", route: "/masters/godowns", permission: "master.view" }],
-          sources: ["Godown Master"],
+          markdownAnswer: `### Dispatch Cannot Be Completed\n\nThe readiness check did not identify an active godown that covers every invoice line. No dispatch was posted.`,
+          actions: [
+            { label: "Open Invoice", route: `/invoices/${invoice.id}`, permission: "invoice.view" },
+            { label: "Check Stock Balances", route: "/stock", permission: "stock.view" },
+          ],
+          sources: ["FEFO Stock Readiness Evaluator"],
         };
       }
 
-      const dispatchLines: Array<{ skuId: string; batchId: string; quantity: string }> = [];
+      // Aggregate remaining quantities per SKU. The same SKU can appear on
+      // several invoice lines, and each batch must be picked only once.
+      const remainingBySku = new Map<string, Decimal>();
       for (const item of invoice.items) {
-        const remaining = Number(item.quantity) - Number(item.dispatchedQty);
-        if (remaining <= 0) continue;
-        const availableBatch = await prisma.stockBalance.findFirst({
+        const remaining = item.quantity.minus(item.dispatchedQty);
+        if (remaining.lte(0)) continue;
+        remainingBySku.set(item.skuId, (remainingBySku.get(item.skuId) ?? ZERO).plus(remaining));
+      }
+
+      const notBefore = dateOnlyToUtc(todayIst());
+      const dispatchLines: Array<{ skuId: string; batchId: string; quantity: string }> = [];
+      const shortfalls: string[] = [];
+
+      for (const [skuId, required] of remainingBySku) {
+        const invoiceItem = invoice.items.find((item) => item.skuId === skuId);
+        const productLabel = invoiceItem
+          ? `${invoiceItem.sku.code} — ${invoiceItem.sku.name}`
+          : skuId;
+
+        const batches = await prisma.stockBalance.findMany({
           where: {
-            skuId: item.skuId,
-            quantity: { gte: toDecimal(remaining) },
+            skuId,
+            godownId: activeGodown.id,
+            quantity: { gt: 0 },
+            OR: [{ batch: { expiryDate: null } }, { batch: { expiryDate: { gte: notBefore } } }],
           },
-          include: { batch: true },
-          orderBy: { batch: { expiryDate: "asc" } },
+          orderBy: [{ batch: { expiryDate: { sort: "asc", nulls: "last" } } }, { quantity: "desc" }],
+          select: { batchId: true, quantity: true },
         });
 
-        if (availableBatch) {
-          dispatchLines.push({
-            skuId: item.skuId,
-            batchId: availableBatch.batchId,
-            quantity: String(remaining),
-          });
+        let needed = required;
+        for (const batch of batches) {
+          if (needed.lte(0)) break;
+          const pick = Decimal.min(batch.quantity, needed);
+          if (pick.lte(0)) continue;
+          dispatchLines.push({ skuId, batchId: batch.batchId, quantity: pick.toString() });
+          needed = needed.minus(pick);
+        }
+
+        if (needed.gt(0)) {
+          const available = required.minus(needed);
+          shortfalls.push(
+            `- **${productLabel}:** need \`${required.toString()}\`, only \`${available.toString()}\` available across unexpired batches in \`${activeGodown.code}\`.`,
+          );
         }
       }
 
-      if (dispatchLines.length === 0) {
+      if (shortfalls.length > 0 || dispatchLines.length === 0) {
         return {
           stepsExecuted: [],
-          markdownAnswer: `Stock allocation could not find single batch covering lines. Please allocate manually via the dispatch form.`,
+          markdownAnswer: `### Dispatch Cannot Be Completed\n\nStock changed since the readiness check, so a full FEFO allocation is no longer possible from **\`${activeGodown.code}\` — ${activeGodown.name}**:\n\n${shortfalls.join("\n") || "- No allocatable batch balances were found."}\n\nNo partial dispatch was posted. Transfer stock or allocate manually from the dispatch form.`,
           actions: [
+            { label: "Open Invoice", route: `/invoices/${invoice.id}`, permission: "invoice.view" },
             {
               label: "Create Manual Dispatch",
               route: "/dispatches/new",
@@ -2711,14 +3219,16 @@ export class AutonomousAgentService {
         };
       }
 
+      const confirmationId = randomUUID();
       confirmation = {
-        id: randomUUID(),
+        id: confirmationId,
         title: `Confirm Outward Dispatch: ${invoice.invoiceNumber}`,
         description: `Dispatch invoice ${invoice.invoiceNumber} to ${invoice.customer.name} from ${activeGodown.name} using automated FEFO batch allocation.`,
         actionType: "POST_DISPATCH",
         payload: {
           invoiceId: invoice.id,
           godownId: activeGodown.id,
+          idempotencyKey: confirmationId,
           items: dispatchLines,
         },
         destructive: false,
@@ -2729,7 +3239,7 @@ export class AutonomousAgentService {
 
       return {
         stepsExecuted: [],
-        markdownAnswer: `### ⚡ FEFO Dispatch Allocation Prepared\n\nOptimal batch picking calculated for **\`${invoice.invoiceNumber}\`** (${invoice.customer.name}):\n\n- **Source Godown:** \`${activeGodown.code}\` — ${activeGodown.name}\n- **Allocated Lines:** ${dispatchLines.length} item(s) mapped to earliest-expiring unexpired batches.\n\nPosting this will deduct inventory from the signed ledger and generate Delivery Challan.\n\nClick **"Confirm & Post Dispatch"** or reply **"confirm / yes"** to proceed.`,
+        markdownAnswer: `### ⚡ FEFO Dispatch Allocation Prepared\n\nOptimal batch picking calculated for **\`${invoice.invoiceNumber}\`** (${invoice.customer.name}):\n\n- **Source Godown:** \`${activeGodown.code}\` — ${activeGodown.name}\n- **Allocated Lines:** ${dispatchLines.length} batch line(s) across ${remainingBySku.size} SKU(s), earliest-expiring batches first.\n\nPosting this will deduct inventory from the signed ledger and generate Delivery Challan.\n\nClick **"Confirm & Post Dispatch"** or reply **"confirm / yes"** to proceed.`,
         actions: [
           { label: "Inspect Invoice", route: `/invoices/${invoice.id}`, permission: "invoice.view" },
         ],

@@ -169,6 +169,22 @@ describe("AutonomousAgentService", () => {
       expect(AutonomousAgentService.isOperationalOrConfirmation("what is the GST rate on basmati rice?")).toBe(false);
     });
 
+    it("routes every confirmation-producing intent through the deterministic write path", () => {
+      expect(AutonomousAgentService.isWriteIntent("dispatch invoice INV-2026-0001", context)).toBe(true);
+      expect(AutonomousAgentService.isWriteIntent("bhai inv-001 cancel kar do", context)).toBe(true);
+      expect(AutonomousAgentService.isWriteIntent("cancel PO-2026-0001", context)).toBe(true);
+      expect(AutonomousAgentService.isWriteIntent("short close PO-2026-0001", context)).toBe(true);
+      expect(AutonomousAgentService.isWriteIntent("reverse ledger entry LE-000123", context)).toBe(true);
+      expect(AutonomousAgentService.isWriteIntent("add a new product to the catalog", context)).toBe(true);
+      expect(AutonomousAgentService.isWriteIntent("seed demo sandbox data", context)).toBe(true);
+      expect(AutonomousAgentService.isWriteIntent("ha kardo", context, historyWithPending)).toBe(true);
+
+      // Read-only analysis stays on the LLM path.
+      expect(AutonomousAgentService.isWriteIntent("can we dispatch invoice INV-2026-0001?", context)).toBe(false);
+      expect(AutonomousAgentService.isWriteIntent("show me the stock summary", context)).toBe(false);
+      expect(AutonomousAgentService.isWriteIntent("what is the GST rate on basmati rice?", context)).toBe(false);
+    });
+
     it("executes confirmation cancellation safely without mutating records", async () => {
       const actor = { userId: "user-1", role: "ADMIN" as const };
       const result = await AutonomousAgentService.executeConfirmation(actor, {
@@ -481,6 +497,23 @@ describe("AutonomousAgentService", () => {
       expect(plan.steps[0].arguments.query).not.toContain("create me a list");
     });
 
+    it("inherits the commodity for a city-only follow-up instead of inventing a product", () => {
+      const history = [
+        { role: "user" as const, content: "What is the market price of basmati rice across India?" },
+        { role: "assistant" as const, content: "Here are the live basmati rice mandi rates." },
+      ];
+
+      const plan = AutonomousAgentService.planIntent("what about Delhi market price?", context, history);
+      expect(plan.intent).toBe("execute_web_research");
+      expect(plan.steps[0].arguments.query).toContain("basmati rice");
+    });
+
+    it("still extracts a new commodity from a follow-up phrase", () => {
+      const plan = AutonomousAgentService.planIntent("what about saffron market price?", context);
+      expect(plan.intent).toBe("execute_web_research");
+      expect(plan.steps[0].arguments.query).toContain("saffron");
+    });
+
     it("plans and executes visual architecture graph when requested", async () => {
       const prompt = "please can you creaet a graph representation";
       const plan = AutonomousAgentService.planIntent(prompt, context);
@@ -509,6 +542,24 @@ describe("AutonomousAgentService", () => {
       expect(result.markdownAnswer).toContain("Plain Language Summary");
       expect(result.markdownAnswer).toContain("Punjab");
       expect(result.markdownAnswer).toContain("Haryana");
+    });
+
+    it("plans and executes wholesale price research for fox nut across India with authentic Bihar origin", async () => {
+      const prompt = "please find the latest wholeprice of fox nut across india";
+      const plan = AutonomousAgentService.planIntent(prompt, context);
+      expect(plan.intent).toBe("execute_web_research");
+      expect(plan.steps).toHaveLength(4);
+      expect(plan.steps[0].arguments.query).toContain("fox nut");
+      expect(plan.steps[1].arguments.query).toContain("Bihar");
+
+      const result = await AutonomousAgentService.executePlan(prompt, context);
+      expect(result.markdownAnswer).toContain("Fox Nut / Phool Makhana");
+      expect(result.markdownAnswer).toContain("Bihar");
+      expect(result.markdownAnswer).toContain("Mithila / Darbhanga Mandi");
+      expect(result.markdownAnswer).toContain("₹/KG");
+      expect(result.markdownAnswer).toContain("chart:bar");
+      expect(result.markdownAnswer).not.toContain("Royal Basmati Rice");
+      expect(result.markdownAnswer).toContain("1904 10");
     });
   });
 });

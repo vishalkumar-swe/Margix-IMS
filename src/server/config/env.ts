@@ -67,11 +67,13 @@ const envSchema = z
      * Copilot LLM. "none" keeps the Copilot fully offline: curated knowledge
      * retrieval answers every question without an external call. "openai"
      * uses any OpenAI-compatible /chat/completions endpoint (OpenAI, Groq,
-     * Together, a local vLLM, etc.).
+     * OpenRouter, Together, a local vLLM, etc.). "google" or "gemini" uses
+     * Google Gemini via official OpenAI-compatible endpoint or Gemini API.
      */
-    AI_PROVIDER: z.enum(["none", "openai"]).default("none"),
+    AI_PROVIDER: z.enum(["none", "openai", "google", "gemini"]).default("none"),
     AI_BASE_URL: z.url().default("https://api.openai.com/v1"),
     AI_API_KEY: z.string().trim().min(1).optional(),
+    GEMINI_API_KEY: z.string().trim().min(1).optional(),
     AI_MODEL: z.string().trim().min(1).default("gpt-4o-mini"),
     AI_TIMEOUT_MS: z.coerce.number().int().positive().max(120_000).default(30_000),
   })

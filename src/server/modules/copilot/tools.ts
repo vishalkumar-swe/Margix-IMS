@@ -1337,6 +1337,7 @@ const TOOLS: CopilotTool[] = [
           where: {
             skuId,
             quantity: { gt: 0 },
+            godown: { isActive: true },
             OR: [{ batch: { expiryDate: null } }, { batch: { expiryDate: { gte: now } } }],
           },
           select: {
@@ -1358,13 +1359,13 @@ const TOOLS: CopilotTool[] = [
       }
 
       // Intersect godowns that can cover every required SKU.
-      let eligibleGodowns: Map<string, { code: string; name: string }> | null = null;
+      let eligibleGodowns: Map<string, { id: string; code: string; name: string }> | null = null;
       for (const [skuId, required] of requiredBySku) {
         const byGodown = stockBySku.get(skuId) ?? new Map();
         const eligible = new Map(
           [...byGodown.entries()]
             .filter(([, entry]) => entry.quantity.gte(required))
-            .map(([id, entry]) => [id, { code: entry.code, name: entry.name }]),
+            .map(([id, entry]) => [id, { id, code: entry.code, name: entry.name }]),
         );
         if (eligibleGodowns === null) {
           eligibleGodowns = eligible;
@@ -1431,6 +1432,7 @@ const TOOLS: CopilotTool[] = [
         recommendedGodown: recommendedGodown
           ? `${recommendedGodown.code} — ${recommendedGodown.name}`
           : null,
+        recommendedGodownId: recommendedGodown?.id ?? null,
         lines: lineChecks,
         recommendedAction: cancelled
           ? `Invoice ${detail.invoiceNumber} is cancelled. Do not dispatch against it.`
