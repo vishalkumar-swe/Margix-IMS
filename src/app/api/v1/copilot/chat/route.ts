@@ -42,7 +42,8 @@ function withFinalEvent(
       const { done, value } = await reader.read();
       if (done) {
         const confirmation = getConfirmation?.();
-        controller.enqueue(event({ done: true, actions, sources, confirmation }));
+        const finalActions = confirmation ? [] : actions;
+        controller.enqueue(event({ done: true, actions: finalActions, sources, confirmation }));
         controller.close();
         return;
       }

@@ -166,9 +166,31 @@ const KB: KnowledgeEntry[] = [
     ],
   },
   {
+    id: "suppliers",
+    title: "Supplier & vendor master",
+    keywords: ["supplier", "suppliers", "vendor", "vendors", "creditor", "procurement source"],
+    routes: ["/suppliers"],
+    body: "Suppliers represent your registered raw material vendors, farmers, millers, and trade suppliers. Use the Suppliers directory to review contact details, GSTIN, and issued purchase orders.",
+    actions: [
+      { label: "View suppliers", route: "/suppliers", permission: "master.view" },
+      { label: "New supplier", route: "/suppliers/new", permission: "master.manage" },
+    ],
+  },
+  {
+    id: "customers",
+    title: "Customer & buyer master",
+    keywords: ["customer", "customers", "buyer", "buyers", "client", "debtor"],
+    routes: ["/customers"],
+    body: "Customers represent your wholesale buyers, distributors, and retail clients. Each invoice and dispatch is linked to a customer record with their GSTIN and billing address.",
+    actions: [
+      { label: "View customers", route: "/customers", permission: "master.view" },
+      { label: "New customer", route: "/customers/new", permission: "master.manage" },
+    ],
+  },
+  {
     id: "returns",
     title: "Customer and supplier returns",
-    keywords: ["return", "credit", "note", "customer", "supplier", "damage", "reject", "reverse", "sales", "purchase"],
+    keywords: ["sales return", "purchase return", "credit note", "return stock", "damage return"],
     routes: ["/sales-returns", "/purchase-returns"],
     body: "A customer return (sales return) brings stock back against a dispatch and posts RETURN_IN. A supplier return (purchase return) sends stock back against a GRN and posts RETURN_OUT. Both keep the original document linked, prevent returning more than was supplied or dispatched, and queue an accounting document for Tally.",
     actions: [
@@ -476,6 +498,7 @@ export function buildLlmPrompt(
     "### LIVE STOCK MARKET & COMMODITY QUOTES & LTP CHARTS\nWhen asked for stock prices, Last Traded Price (LTP), historical charts, valuation, or market benchmarks for ANY company, ticker, or commodity (e.g. 'stock price of jio platform and plot their chart there for last 100 LTP', 'Reliance stock', 'Tata Motors', 'Sugar', 'Gold', 'Nifty'):\n1. Call `get_market_quote` with `{ query, count: 100 }`.\n2. Present the latest LTP, currency, day change, day high/low, and 52-week range in a clean markdown table.\n3. For unlisted subsidiaries (such as Jio Platforms Ltd), clarify that it is an unlisted subsidiary of Reliance Industries Ltd (RELIANCE.NS) alongside listed financial peer Jio Financial Services (JIOFIN.NS), and provide quotes/charts for the traded entities.\n4. To plot the trend chart, output a fenced code block with language `chart:line`:\n```chart:line\ntitle: [Asset Name] - Historical Sessions (LTP)\nYYYY-MM-DD: [Price] | ₹[Price]\n...\n```\n(Include the points from `historicalSeries` returned by `get_market_quote`).\n5. Provide concise financial commentary and trade insights.",
     "### SALES & OPERATIONAL ANALYTICS\nWhen asked to analyze sales, invoices, or revenue performance ('can you analyze my sales', 'revenue trends', 'top selling items'):\n1. Call `get_sales_analytics` and `list_invoices`.\n2. Break down revenue, billed vs. collected, pending dispatches, gross margins, and top performing SKUs.\n3. Use a ```chart:bar code block to illustrate monthly trends or top selling items:\n```chart:bar\ntitle: Sales Performance\nunit: ₹\nPeriod/Item: [Amount] | ₹[Formatted] | [Category]\n```\n4. Provide actionable insights to improve cash collections, turnover velocity, and working capital.",
     "### COMMERCIAL INTELLIGENCE & APMC BENCHMARKS\nWhen asked about wholesale prices, market rates, trade feasibility, buying, selling, or state-wise comparisons for ANY product (e.g. Fox Nut / Makhana, Spices, Dry Fruits, Grains, Steel Rebar, Polymers, Copper, Pharma, Packaging):\n1. Call `web_research` with specific queries (including producing states, major wholesale hubs, and units).\n2. Cross-reference live Margix stock using `search_products` or `get_inventory_overview`.\n3. Synthesize a professional Commercial Intelligence Report using REAL discovered facts:\n   - Clean State-Wise / Regional Price Comparison table with discovered trading hubs and roles.\n   - Visual chart using a ```chart:bar code block (format: 'State: [value] | ₹[label] | [Hub]').\n   - Plain Language Summary (सरल भाषा में सारांश) with lowest rate (Best to BUY), highest rate (Best to SELL), and gross arbitrage spread.\n   - Procurement & Invoicing recommendations (target purchase price, quality receiving protocol, wholesale & retail margin targets).\n   - Real HSN and GST classification and verified trade source citations.",
+    "### STRICT CONCISENESS & ZERO-FLUFF MANDATE\n- Give short, crisp, direct answers. Do NOT produce long confusing walls of text.\n- When the user asks for a simple lookup (e.g. 'what suppliers do we have?'):\n  Show ONLY the clean markdown table or list of the actual records from the tool. Keep commentary under 30 words total.\n  NEVER append unsolicited suggestions, hypothetical sourcing advice, or geographical trivia (DO NOT mention rice mills, Karnal, Raichur, or any locations unless explicitly asked).\n- When the user asks to remove, delete, or clean up an entity (e.g. 'remove the demo supplier'):\n  If it is demo data, immediately call `propose_action` with `actionType: 'PURGE_SANDBOX'` to let them 1-click clean it up. If it is a real entity linked to transactions, explain in ONE short sentence that linked records cannot be deleted for audit reasons, and immediately call `propose_action` with `actionType: 'DEACTIVATE_SUPPLIER'` (or customer). Never write multiple paragraphs lecturing the user.",
     "### STRICT ENTERPRISE SCOPE & OUT-OF-SCOPE REFUSAL GUARD\nYou are strictly the Margix IMS Enterprise & Operations Agent.\nYou MUST REFUSE any request for general computer programming, software code generation (Python, JavaScript, TypeScript, React, C++, Java, Rust, HTML/CSS, bash/shell scripts), algorithmic puzzles (LeetCode, sorting, trees), homework, creative fiction, or general non-business trivia.\nIf the user asks for code generation or unrelated programming, respond strictly with:\n'I am specialized exclusively as the Margix IMS Enterprise & Operations Agent. I cannot write arbitrary computer programs or assist with general software engineering. I can assist you with inventory management, purchase orders, sales invoices, warehouse godowns, APMC mandi rates, and GST compliance in Margix.'",
     "Never hardcode or invent prices, quantities, document numbers, or false facts. Extract real data from tool outputs.",
     "You are multilingual and culturally fluent. You seamlessly support English, Hindi, and Hinglish. If the user greets or speaks in Hindi or Hinglish (e.g. 'namaste', 'kya stock hai', 'hindi me baat karo', 'batao'), respond naturally and fluently in polite, clear Hindi/Hinglish.",

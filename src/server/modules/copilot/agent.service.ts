@@ -23,6 +23,8 @@ import {
   createSku,
   createSupplier,
   createUom,
+  updateCustomer,
+  updateSupplier,
 } from "@/server/modules/masters/masters.service";
 import { cancelInvoice, createInvoice } from "@/server/modules/invoices/invoice.service";
 import {
@@ -1516,8 +1518,9 @@ export class AutonomousAgentService {
 
     // 5. Destructive / Environment: Purge Sandbox
     if (
-      /\b(purge|clean|clear|reset|delete)\b.*(sandbox|demo|test data|sample)/i.test(text) ||
-      /\b(demo|sandbox)\b.*(hata|saaf|delete|purge|reset|clean)/i.test(text)
+      /\b(purge|clean|clear|reset|delete|remove|hata|hatao|nikalo)\b.*(sandbox|demo|sample|test\s*data)/i.test(text) ||
+      /\b(demo|sandbox)\b.*(hata|saaf|delete|purge|reset|clean|remove|supplier|vendor|sku|product)/i.test(text) ||
+      /\b(remove|delete|purge)\s+(the\s+)?demo\b/i.test(text)
     ) {
       return { intent: "propose_purge_sandbox", steps: [] };
     }
@@ -3212,6 +3215,86 @@ export class AutonomousAgentService {
                 { label: `View GRN ${grn.grnNumber}`, route: `/grns/${grn.id}`, permission: "grn.view" },
                 { label: "View Stock Ledger", route: "/ledger", permission: "ledger.view" },
               ],
+            },
+          };
+        }
+
+        case "DEACTIVATE_SUPPLIER": {
+          if (!can(actor.role, "master.manage")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot update supplier records.`,
+              },
+            };
+          }
+          let supplierId = params.payload.supplierId as string | undefined;
+          if (!supplierId && params.payload.supplierName) {
+            const found = await prisma.supplier.findFirst({
+              where: { name: { contains: String(params.payload.supplierName), mode: "insensitive" } },
+            });
+            if (found) supplierId = found.id;
+          }
+          if (!supplierId && params.payload.supplierCode) {
+            const found = await prisma.supplier.findFirst({
+              where: { code: { equals: String(params.payload.supplierCode), mode: "insensitive" } },
+            });
+            if (found) supplierId = found.id;
+          }
+          if (!supplierId) {
+            return {
+              success: false,
+              data: { status: "failed", message: "Supplier ID, code, or name required to deactivate." },
+            };
+          }
+          const updated = await updateSupplier(actor, supplierId, { isActive: false });
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `Supplier "${updated.name}" (${updated.code}) has been archived/deactivated. It will no longer appear in new purchase orders while preserving all historical audit records.`,
+              actions: [{ label: "View Suppliers", route: "/suppliers", permission: "master.view" }],
+            },
+          };
+        }
+
+        case "DEACTIVATE_CUSTOMER": {
+          if (!can(actor.role, "master.manage")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot update customer records.`,
+              },
+            };
+          }
+          let customerId = params.payload.customerId as string | undefined;
+          if (!customerId && params.payload.customerName) {
+            const found = await prisma.customer.findFirst({
+              where: { name: { contains: String(params.payload.customerName), mode: "insensitive" } },
+            });
+            if (found) customerId = found.id;
+          }
+          if (!customerId && params.payload.customerCode) {
+            const found = await prisma.customer.findFirst({
+              where: { code: { equals: String(params.payload.customerCode), mode: "insensitive" } },
+            });
+            if (found) customerId = found.id;
+          }
+          if (!customerId) {
+            return {
+              success: false,
+              data: { status: "failed", message: "Customer ID, code, or name required to deactivate." },
+            };
+          }
+          const updated = await updateCustomer(actor, customerId, { isActive: false });
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `Customer "${updated.name}" (${updated.code}) has been archived/deactivated. It will no longer appear in new invoices while preserving all ledger history.`,
+              actions: [{ label: "View Customers", route: "/customers", permission: "master.view" }],
             },
           };
         }

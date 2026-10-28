@@ -57,6 +57,8 @@ export type CopilotActionType =
   | "CREATE_SUPPLIER"
   | "CREATE_GODOWN"
   | "CREATE_TRANSFER"
+  | "DEACTIVATE_SUPPLIER"
+  | "DEACTIVATE_CUSTOMER"
   | "STOCK_ADJUSTMENT";
 
 export interface CopilotAlternativeOption {
