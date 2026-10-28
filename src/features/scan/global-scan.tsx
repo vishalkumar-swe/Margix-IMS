@@ -29,6 +29,10 @@ export function GlobalScan({ className }: { className?: string }) {
         router.push(`/stock/${sku.id}`);
         return;
       }
+      if (/^\d{6,14}$/.test(code.trim())) {
+        router.push(`/masters/skus/new?barcode=${encodeURIComponent(code.trim())}`);
+        return;
+      }
       setStatus({ tone: "error", text: `Nothing matches "${code}".` });
     } catch (error) {
       setStatus({ tone: "error", text: lookupErrorMessage(error) });

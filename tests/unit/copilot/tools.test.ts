@@ -79,7 +79,7 @@ describe("Copilot tools", () => {
     expect(poTools).toContain("list_purchase_orders");
     expect(poTools).toContain("list_suppliers");
     expect(poTools).toContain("propose_action");
-    expect(poTools.length).toBeLessThanOrEqual(25);
+    expect(poTools.length).toBeLessThanOrEqual(28);
 
     // Sales analytics query
     const salesTools = copilotToolsForRole("ADMIN", "can you analyze my sales").map((t) => t.function.name);

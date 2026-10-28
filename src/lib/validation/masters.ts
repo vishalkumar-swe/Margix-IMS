@@ -39,6 +39,15 @@ export const barcodeSchema = z
     if (problem) ctx.addIssue({ code: "custom", message: problem });
   });
 
+export const barcodeLookupQuerySchema = z
+  .object({
+    barcode: z.string().trim().min(1).max(100).optional(),
+    code: z.string().trim().min(1).max(100).optional(),
+  })
+  .refine((d) => Boolean(d.barcode || d.code), {
+    message: "Barcode or code is required.",
+  });
+
 export const skuCreateSchema = z.object({
   code: optionalCode,
   name: requiredText(200, "Name"),

@@ -1,8 +1,8 @@
 "use client";
 
-import { Pencil, Plus, Sparkles } from "lucide-react";
+import { Loader2, Pencil, Plus, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -10,11 +10,13 @@ import { Field } from "@/components/ui/field";
 import { Input, Select, Textarea } from "@/components/ui/form-controls";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
+import { cn } from "@/lib/cn";
 import { emitCopilotEvent } from "@/lib/copilot/runtime";
 import { humanize } from "@/lib/format";
 import { SKU_STATUSES } from "@/lib/enums";
 import { HsnPicker } from "./hsn-picker";
-import { CameraScanButton, preventEnterSubmit } from "@/features/scan/camera-scan-button";
+import { CameraScanButton } from "@/features/scan/camera-scan-button";
+import { useBarcodeLookup } from "@/features/scan/use-barcode-lookup";
 
 export interface SkuFormValues {
   code: string;
@@ -51,26 +53,95 @@ export function SkuFormDialog({
   categories,
   uoms,
   nextCode,
+  open: controlledOpen,
+  onOpenChange,
+  onCreated,
+  trigger,
 }: {
   skuId?: string;
   /** Code the next new SKU gets when left blank (from the numbering master). */
   nextCode?: string;
   initial: SkuFormValues;
-  categories: { id: string; name: string }[];
-  uoms: { id: string; code: string; name: string }[];
+  categories?: { id: string; name: string }[];
+  uoms?: { id: string; code: string; name: string }[];
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  onCreated?: (sku: { id: string; code: string; name: string; barcode?: string | null; baseUomId: string; gstRate?: string | null }) => void;
+  trigger?: React.ReactNode;
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : internalOpen;
+  const setOpen = (val: boolean) => {
+    if (isControlled) {
+      onOpenChange?.(val);
+    } else {
+      setInternalOpen(val);
+    }
+  };
+
+  const [loadedCategories, setLoadedCategories] = useState<{ id: string; name: string }[]>(categories ?? []);
+  const [loadedUoms, setLoadedUoms] = useState<{ id: string; code: string; name: string }[]>(uoms ?? []);
+
+  useEffect(() => {
+    if (categories?.length) setLoadedCategories(categories);
+  }, [categories]);
+
+  useEffect(() => {
+    if (uoms?.length) setLoadedUoms(uoms);
+  }, [uoms]);
+
+  useEffect(() => {
+    if (open && (!loadedCategories.length || !loadedUoms.length)) {
+      Promise.all([
+        !loadedCategories.length ? apiRequest<{ id: string; name: string }[]>("/categories?activeOnly=true") : Promise.resolve(null),
+        !loadedUoms.length ? apiRequest<{ id: string; code: string; name: string }[]>("/uoms") : Promise.resolve(null),
+      ])
+        .then(([cats, units]) => {
+          if (cats) setLoadedCategories(cats);
+          if (units) setLoadedUoms(units);
+        })
+        .catch(() => {});
+    }
+  }, [open, loadedCategories.length, loadedUoms.length]);
+
   const [form, setForm] = useState(initial);
   const editing = Boolean(skuId);
   /** GST rate of the HSN code last picked, to tell following it from overriding it. */
   const [hsnRate, setHsnRate] = useState<string | null>(null);
 
+  const { lookingUp, status: barcodeStatus, lookupBarcode } = useBarcodeLookup({
+    onAutoFill: (details) => {
+      setForm((prev) => ({
+        ...prev,
+        name: prev.name && prev.name !== details.name ? prev.name : details.name,
+        description: prev.description ? prev.description : (details.description ?? prev.description),
+        categoryId: prev.categoryId ? prev.categoryId : (details.suggestedCategoryId ?? prev.categoryId),
+        baseUomId: prev.baseUomId ? prev.baseUomId : (details.suggestedBaseUomId ?? prev.baseUomId),
+        hsnCode: prev.hsnCode ? prev.hsnCode : (details.suggestedHsnCode ?? prev.hsnCode),
+        gstRate: prev.gstRate ? prev.gstRate : (details.suggestedGstRate ?? prev.gstRate),
+      }));
+      if (details.suggestedGstRate) {
+        setHsnRate(details.suggestedGstRate);
+      }
+    },
+  });
+
+  useEffect(() => {
+    if (open) {
+      setForm(initial);
+      if (initial.barcode && !editing) {
+        lookupBarcode(initial.barcode, true);
+      }
+    }
+  }, [open, initial, editing, lookupBarcode]);
+
   const save = useApiMutation((values: SkuFormValues) => {
     const { code, status, ...common } = values;
     return editing
       ? apiRequest(`/skus/${skuId}`, { method: "PATCH", body: { ...common, status } })
-      : apiRequest("/skus", {
+      : apiRequest<{ id: string; code: string; name: string; barcode?: string | null; baseUomId: string; gstRate?: string | null }>("/skus", {
           body: {
             ...common,
             code,
@@ -92,14 +163,21 @@ export function SkuFormDialog({
     save.reset();
     generate.reset();
     setOpen(true);
+    if (initial.barcode && !editing) {
+      lookupBarcode(initial.barcode, true);
+    }
   }
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (await save.mutate(form)) {
+    const result = await save.mutate(form);
+    if (result) {
       setOpen(false);
       router.refresh();
-      if (!editing) emitCopilotEvent("sku.created");
+      if (!editing) {
+        emitCopilotEvent("sku.created");
+        onCreated?.(result as { id: string; code: string; name: string; barcode?: string | null; baseUomId: string; gstRate?: string | null });
+      }
     }
   }
 
@@ -108,7 +186,9 @@ export function SkuFormDialog({
 
   return (
     <>
-      {editing ? (
+      {trigger ? (
+        trigger
+      ) : editing ? (
         <Button variant="ghost" size="sm" onClick={openDialog}>
           <Pencil aria-hidden /> Edit
         </Button>
@@ -147,7 +227,7 @@ export function SkuFormDialog({
             <Field label="Category" htmlFor={id("category")} error={errors.categoryId}>
               <Select id={id("category")} value={form.categoryId} onChange={(e) => set("categoryId", e.target.value)}>
                 <option value="">None</option>
-                {categories.map((c) => (
+                {loadedCategories.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
@@ -162,7 +242,7 @@ export function SkuFormDialog({
                 onChange={(e) => set("baseUomId", e.target.value)}
               >
                 <option value="">Select unit</option>
-                {uoms.map((u) => (
+                {loadedUoms.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.code} · {u.name}
                   </option>
@@ -214,34 +294,71 @@ export function SkuFormDialog({
               hint={
                 editing
                   ? "EAN-13 or any Code 128 value. Generate replaces it with a new internal EAN-13."
-                  : "EAN-13 or any Code 128 value. Leave blank to generate an internal EAN-13."
+                  : "Scan or type a barcode to auto-detect product details. Leave blank to generate an internal EAN-13."
               }
             >
-              <div className="flex gap-2">
-                <Input
-                  id={id("barcode")}
-                  value={form.barcode}
-                  autoComplete="off"
-                  placeholder="Scan or type"
-                  onChange={(e) => set("barcode", e.target.value)}
-                  onKeyDown={preventEnterSubmit}
-                  aria-invalid={Boolean(errors.barcode)}
-                />
-                <CameraScanButton title="Scan barcode" onScan={(code) => set("barcode", code)} />
-                {editing && (
-                  <Button
-                    variant="secondary"
-                    loading={generate.pending}
-                    onClick={async () => {
-                      const sku = await generate.mutate(undefined);
-                      if (sku) {
-                        set("barcode", sku.barcode);
-                        router.refresh();
+              <div className="flex flex-col gap-1.5">
+                <div className="flex gap-2">
+                  <Input
+                    id={id("barcode")}
+                    value={form.barcode}
+                    autoComplete="off"
+                    placeholder="Scan or type barcode"
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      set("barcode", val);
+                      if (val.trim().length >= 8 && !editing) {
+                        lookupBarcode(val);
                       }
                     }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        if (form.barcode && !editing) {
+                          lookupBarcode(form.barcode, true);
+                        }
+                      }
+                    }}
+                    aria-invalid={Boolean(errors.barcode)}
+                  />
+                  <CameraScanButton
+                    title="Scan barcode with camera"
+                    onScan={(code) => {
+                      set("barcode", code);
+                      if (!editing) {
+                        lookupBarcode(code, true);
+                      }
+                    }}
+                  />
+                  {editing && (
+                    <Button
+                      variant="secondary"
+                      loading={generate.pending}
+                      onClick={async () => {
+                        const sku = await generate.mutate(undefined);
+                        if (sku) {
+                          set("barcode", sku.barcode);
+                          router.refresh();
+                        }
+                      }}
+                    >
+                      {!generate.pending && <Sparkles aria-hidden />} Generate
+                    </Button>
+                  )}
+                </div>
+                {barcodeStatus && !editing && (
+                  <p
+                    className={cn("text-xs flex items-center gap-1.5 font-medium", {
+                      "text-emerald-700": barcodeStatus.tone === "success",
+                      "text-amber-700": barcodeStatus.tone === "warning",
+                      "text-blue-700": barcodeStatus.tone === "info",
+                      "text-red-600": barcodeStatus.tone === "error",
+                    })}
                   >
-                    {!generate.pending && <Sparkles aria-hidden />} Generate
-                  </Button>
+                    {lookingUp && <Loader2 className="size-3 animate-spin inline shrink-0" />}
+                    {!lookingUp && barcodeStatus.tone === "success" && <Sparkles className="size-3 text-emerald-600 inline shrink-0" />}
+                    <span>{barcodeStatus.text}</span>
+                  </p>
                 )}
               </div>
             </Field>

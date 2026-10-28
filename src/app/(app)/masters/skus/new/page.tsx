@@ -7,8 +7,10 @@ import { SkuStandaloneForm } from "@/features/masters/sku-standalone-form";
 
 export const metadata: Metadata = { title: "New SKU" };
 
-export default async function NewSkuPage() {
+export default async function NewSkuPage({ searchParams }: PageProps<"/masters/skus/new">) {
   await requirePagePermission("master.manage");
+  const rawParams = await searchParams;
+  const initialBarcode = typeof rawParams?.barcode === "string" ? rawParams.barcode.trim() : undefined;
   const [categories, uoms, nextCode] = await Promise.all([
     listCategories({ activeOnly: true }),
     listUoms(),
@@ -25,7 +27,7 @@ export default async function NewSkuPage() {
         description="Every item starts with an immutable SKU code and descriptive name."
       />
       <div className="max-w-2xl">
-        <SkuStandaloneForm categories={categoryOptions} uoms={uoms} nextCode={nextCode} />
+        <SkuStandaloneForm categories={categoryOptions} uoms={uoms} nextCode={nextCode} initialBarcode={initialBarcode} />
       </div>
     </>
   );

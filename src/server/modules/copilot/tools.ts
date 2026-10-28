@@ -34,6 +34,7 @@ import { countDeliveriesByStatus, listMyNotifications, listRecentDeliveries } fr
 import { logger } from "@/server/observability/logger";
 import { getWorkspaceCounts } from "./copilot.queries";
 import { retrieveKnowledge } from "./knowledge";
+import { lookupBarcodeDetails } from "@/server/modules/masters/barcode-lookup.service";
 
 /**
  * Tools the Copilot model may call.
@@ -873,7 +874,7 @@ function parseStatus<T extends string>(
   return { error: `Unknown status "${status}". Use one of: ${values.join(", ")}.` };
 }
 
-const TOOLS: CopilotTool[] = [
+export const TOOLS: CopilotTool[] = [
   {
     name: "get_workspace_summary",
     description:
@@ -1006,6 +1007,24 @@ const TOOLS: CopilotTool[] = [
           batchTracked: product.isBatchTracked,
         })),
       };
+    },
+  },
+  {
+    name: "lookup_barcode",
+    description:
+      "Look up any barcode (EAN-13, UPC, Code 128). Checks if the product already exists in Margix inventory; if not registered, queries global product registries and commodity intelligence to auto-detect product name, brand, description, category, unit, HSN code, and GST rate.",
+    permission: "master.view",
+    parameters: {
+      type: "object",
+      properties: {
+        barcode: { type: "string", description: "The barcode or UPC/EAN string to look up." },
+      },
+      required: ["barcode"],
+      additionalProperties: false,
+    },
+    async execute(args) {
+      const parsed = z.object({ barcode: z.string().trim().min(1) }).parse(args);
+      return lookupBarcodeDetails(parsed.barcode);
     },
   },
   {
@@ -4460,10 +4479,12 @@ const DOMAIN_TOOL_NAMES: Record<CopilotDomain, readonly string[]> = {
     "list_stock_alerts",
     "get_low_stock_alerts",
     "get_recent_ledger_movements",
+    "lookup_barcode",
   ],
   catalog: [
     "list_skus",
     "get_sku_detail",
+    "lookup_barcode",
     "list_categories",
     "get_category_detail",
     "list_uoms",

@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { Loader2, Sparkles } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
@@ -9,23 +10,53 @@ import { Field } from "@/components/ui/field";
 import { Input, Select, Textarea } from "@/components/ui/form-controls";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
+import { cn } from "@/lib/cn";
 import { emitCopilotEvent } from "@/lib/copilot/runtime";
 import { HsnPicker } from "./hsn-picker";
-import { CameraScanButton, preventEnterSubmit } from "@/features/scan/camera-scan-button";
+import { CameraScanButton } from "@/features/scan/camera-scan-button";
+import { useBarcodeLookup } from "@/features/scan/use-barcode-lookup";
 import { EMPTY_SKU, type SkuFormValues } from "./sku-form-dialog";
 
 export function SkuStandaloneForm({
   categories,
   uoms,
   nextCode,
+  initialBarcode,
 }: {
   categories: { id: string; name: string }[];
   uoms: { id: string; code: string; name: string }[];
   nextCode?: string;
+  initialBarcode?: string;
 }) {
   const router = useRouter();
-  const [form, setForm] = useState<SkuFormValues>(EMPTY_SKU);
+  const [form, setForm] = useState<SkuFormValues>(() => ({
+    ...EMPTY_SKU,
+    barcode: initialBarcode ?? "",
+  }));
   const [hsnRate, setHsnRate] = useState<string | null>(null);
+
+  const { lookingUp, status: barcodeStatus, lookupBarcode } = useBarcodeLookup({
+    onAutoFill: (details) => {
+      setForm((prev) => ({
+        ...prev,
+        name: prev.name ? prev.name : details.name,
+        description: prev.description ? prev.description : (details.description ?? prev.description),
+        categoryId: prev.categoryId ? prev.categoryId : (details.suggestedCategoryId ?? prev.categoryId),
+        baseUomId: prev.baseUomId ? prev.baseUomId : (details.suggestedBaseUomId ?? prev.baseUomId),
+        hsnCode: prev.hsnCode ? prev.hsnCode : (details.suggestedHsnCode ?? prev.hsnCode),
+        gstRate: prev.gstRate ? prev.gstRate : (details.suggestedGstRate ?? prev.gstRate),
+      }));
+      if (details.suggestedGstRate) {
+        setHsnRate(details.suggestedGstRate);
+      }
+    },
+  });
+
+  useEffect(() => {
+    if (initialBarcode) {
+      lookupBarcode(initialBarcode, true);
+    }
+  }, [initialBarcode, lookupBarcode]);
 
   const save = useApiMutation((values: SkuFormValues) => {
     return apiRequest<{ id: string; code: string }>("/skus", {
@@ -151,19 +182,54 @@ export function SkuStandaloneForm({
               label="Barcode"
               htmlFor="sku-barcode-input"
               error={errors.barcode}
-              hint="EAN-13 or any Code 128 value. Leave blank to generate an internal EAN-13."
+              hint="Scan or type a barcode to auto-detect product details. Leave blank to generate an internal EAN-13."
             >
-              <div className="flex gap-2">
-                <Input
-                  id="sku-barcode-input"
-                  value={form.barcode}
-                  autoComplete="off"
-                  placeholder="Scan or type"
-                  onChange={(e) => set("barcode", e.target.value)}
-                  onKeyDown={preventEnterSubmit}
-                  aria-invalid={Boolean(errors.barcode)}
-                />
-                <CameraScanButton title="Scan barcode" onScan={(code) => set("barcode", code)} />
+              <div className="flex flex-col gap-1.5">
+                <div className="flex gap-2">
+                  <Input
+                    id="sku-barcode-input"
+                    value={form.barcode}
+                    autoComplete="off"
+                    placeholder="Scan or type barcode"
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      set("barcode", val);
+                      if (val.trim().length >= 8) {
+                        lookupBarcode(val);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        if (form.barcode) {
+                          lookupBarcode(form.barcode, true);
+                        }
+                      }
+                    }}
+                    aria-invalid={Boolean(errors.barcode)}
+                  />
+                  <CameraScanButton
+                    title="Scan barcode with camera"
+                    onScan={(code) => {
+                      set("barcode", code);
+                      lookupBarcode(code, true);
+                    }}
+                  />
+                </div>
+                {barcodeStatus && (
+                  <p
+                    className={cn("text-xs flex items-center gap-1.5 font-medium", {
+                      "text-emerald-700": barcodeStatus.tone === "success",
+                      "text-amber-700": barcodeStatus.tone === "warning",
+                      "text-blue-700": barcodeStatus.tone === "info",
+                      "text-red-600": barcodeStatus.tone === "error",
+                    })}
+                  >
+                    {lookingUp && <Loader2 className="size-3 animate-spin inline shrink-0" />}
+                    {!lookingUp && barcodeStatus.tone === "success" && <Sparkles className="size-3 text-emerald-600 inline shrink-0" />}
+                    <span>{barcodeStatus.text}</span>
+                  </p>
+                )}
               </div>
             </Field>
             <Field label="Tally stock item name" htmlFor="sku-tally-input" error={errors.tallyStockItemName} hint="Required for Tally sync.">

@@ -1,12 +1,13 @@
 "use client";
 
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Field } from "@/components/ui/field";
 import { Input, Select } from "@/components/ui/form-controls";
 import { Table, TBody, TD, TH, THead } from "@/components/ui/table";
+import { EMPTY_SKU, SkuFormDialog } from "@/features/masters/sku-form-dialog";
 import { ScanInput, type ScanStatus } from "@/features/scan/scan-input";
 import { resolveScannedSku } from "@/features/scan/scan-lookup";
 import { formatAmount } from "@/lib/format";
@@ -87,6 +88,9 @@ export function PricedLinesEditor({
 }) {
   const skuById = new Map(skus.map((s) => [s.id, s]));
   const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null);
+  const [unregisteredBarcode, setUnregisteredBarcode] = useState<string | null>(null);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+
   const update = (key: string, patch: Partial<PricedLine>) =>
     onChange(lines.map((line) => (line.key === key ? { ...line, ...patch } : line)));
 
@@ -105,8 +109,12 @@ export function PricedLinesEditor({
     const result = await resolveScannedSku(skus, code, "cannot be added to this document");
     if ("error" in result) {
       setScanStatus({ tone: "error", text: result.error });
+      if (code.trim().length >= 3) {
+        setUnregisteredBarcode(code.trim());
+      }
       return;
     }
+    setUnregisteredBarcode(null);
     const { sku } = result;
     const existing = lines.find((line) => line.skuId === sku.id);
     if (existing?.uomId) {
@@ -144,7 +152,58 @@ export function PricedLinesEditor({
       />
       <div className="border-b border-slate-200 px-5 py-3">
         <ScanInput label="Scan product" onScan={addScanned} status={scanStatus} className="max-w-xl" />
+        {unregisteredBarcode && (
+          <div className="mt-2.5 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-900 max-w-xl">
+            <div className="flex items-center gap-2 min-w-0">
+              <Sparkles className="size-4 text-amber-600 shrink-0" />
+              <span className="truncate">
+                Barcode <strong>{unregisteredBarcode}</strong> is not in your master catalog yet.
+              </span>
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setQuickAddOpen(true)}
+              className="bg-white hover:bg-slate-50 shrink-0 text-xs h-7 px-2.5 font-medium shadow-xs"
+            >
+              <Plus className="size-3.5 mr-1" /> Quick Add Product
+            </Button>
+          </div>
+        )}
       </div>
+      {quickAddOpen && (
+        <SkuFormDialog
+          open={quickAddOpen}
+          onOpenChange={setQuickAddOpen}
+          initial={{ ...EMPTY_SKU, barcode: unregisteredBarcode ?? "" }}
+          onCreated={(newSku) => {
+            const mappedSku: SkuOption = {
+              id: newSku.id,
+              code: newSku.code,
+              name: newSku.name,
+              unit: "PCS",
+              baseUomId: newSku.baseUomId,
+              decimalPlaces: 0,
+              isBatchTracked: true,
+              units: [],
+              hsnCode: null,
+              gstRate: newSku.gstRate ?? null,
+              barcode: newSku.barcode ?? unregisteredBarcode,
+            };
+            skus.push(mappedSku);
+            onChange((current) => {
+              const added = { skuId: newSku.id, uomId: "", quantity: "1", gstRate: newSku.gstRate ?? "" };
+              const blank = current.find((l) => !l.skuId);
+              return blank
+                ? current.map((l) => (l.key === blank.key ? { ...l, ...added } : l))
+                : [...current, { ...emptyPricedLine(), ...added }];
+            });
+            setScanStatus({ tone: "success", text: `Added new product ${newSku.code} · ${newSku.name}.` });
+            setUnregisteredBarcode(null);
+            setQuickAddOpen(false);
+          }}
+        />
+      )}
       {errors.items && <p className="px-5 pt-3 text-sm text-red-600">{errors.items}</p>}
       <Table>
         <THead>

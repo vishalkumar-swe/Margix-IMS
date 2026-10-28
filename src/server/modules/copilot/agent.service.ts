@@ -26,6 +26,7 @@ import {
   updateCustomer,
   updateSupplier,
 } from "@/server/modules/masters/masters.service";
+import { lookupBarcodeDetails, type BarcodeLookupResult } from "@/server/modules/masters/barcode-lookup.service";
 import { cancelInvoice, createInvoice } from "@/server/modules/invoices/invoice.service";
 import {
   cancelPurchaseOrder,
@@ -1561,8 +1562,13 @@ export class AutonomousAgentService {
       };
     }
 
-    // 0g. Masters & Commodity Creation / Registration (Product, SKU, Rice, etc.)
+    // 0g. Masters & Commodity Creation / Registration (Product, SKU, Rice, Barcode, etc.)
+    const isBarcodeAddOrLookup =
+      /\b(barcode|scan|ean|upc)\b/i.test(text) &&
+      (/\b(add|create|new|register|lookup|check|karo|banao|dalo|details?)\b/i.test(text) || /\b(890\d{10}|\d{8,14})\b/.test(text));
+
     const isAddProductQuery =
+      isBarcodeAddOrLookup ||
       /\b(add|create|new|register|insert|entry|banao|dalo|jodo|darj)\b.*(product|item|sku|commodity|rice|chawal|grain|wheat|sugar|oil|atta|dal|pulses)/i.test(text) ||
       /\b(product|item|sku|commodity|rice|chawal|grain|wheat|sugar|oil|atta|dal|pulses)\b.*(add|create|new|register|banao|dalo|jodo|karo)/i.test(text) ||
       /^(add|create|register|new)\s+(a\s+)?(product|item|sku|rice|chawal|grain|wheat|sugar|oil|atta|dal|pulses)\b/i.test(text);
@@ -1571,12 +1577,24 @@ export class AutonomousAgentService {
       /\b(how\s*much|how\s*many|check\s*stock|stock\s*of|available|availabe|balance|kitna|kya\s*stock)\b/i.test(text);
 
     if (isAddProductQuery && !isSimpleStockLookup) {
+      const barcodeMatch = text.match(/\bbarcode:?\s*(\w+)\b/i) || text.match(/\b(890\d{10}|\d{8,14})\b/);
+      const barcode = barcodeMatch ? barcodeMatch[1] : undefined;
       const commodityMatch = text.match(/\b(rice|chawal|basmati|sugar|wheat|grain|oil|atta|dal|pulses)\b/i);
       const commodity = commodityMatch ? commodityMatch[1] : undefined;
 
       return {
         intent: "propose_add_product",
         steps: [
+          ...(barcode
+            ? [
+                {
+                  name: "Lookup Barcode Intelligence",
+                  toolName: "lookup_barcode",
+                  arguments: { barcode },
+                  description: `Detecting product name and commodity classification for barcode ${barcode}`,
+                },
+              ]
+            : []),
           ...(commodity
             ? [
                 {
@@ -2743,12 +2761,14 @@ export class AutonomousAgentService {
           }
 
           // 3. Create the SKU via createSku
+          const barcode = params.payload.barcode ? String(params.payload.barcode).trim() : undefined;
           const created = await createSku(actor, {
             name,
             baseUomId: uom.id,
             hsnCode: hsnCode || undefined,
             gstRate: gstRate || undefined,
             isBatchTracked,
+            barcode: barcode || undefined,
           });
 
           let initialStockNotice = "";
@@ -4742,6 +4762,28 @@ export class AutonomousAgentService {
         ].join(" ");
 
         // Specific varieties: e.g. "Basmati Rice 1121", "Sona Masoori", "Brown Rice", "Kolam", etc.
+        const barcodeLookupStep = executed.find((e) => e.toolName === "lookup_barcode");
+        const barcodeData = barcodeLookupStep?.output as BarcodeLookupResult | undefined;
+
+        let scannedBarcode: string | undefined = barcodeData?.barcode;
+        if (!scannedBarcode) {
+          const barcodeMatch = allUserText.match(/\bbarcode:?\s*(\w+)\b/i) || allUserText.match(/\b(890\d{10}|\d{8,14})\b/);
+          if (barcodeMatch) scannedBarcode = barcodeMatch[1];
+        }
+
+        if (barcodeData?.foundInDatabase && barcodeData.sku) {
+          markdown = `### 📦 Product Already Registered\n\n`;
+          markdown += `A product with barcode \`${barcodeData.barcode}\` already exists in your Margix catalog:\n\n`;
+          markdown += `| Code | Product Name | Unit | HSN | Status |\n`;
+          markdown += `| :--- | :--- | :--- | :--- | :--- |\n`;
+          markdown += `| \`${barcodeData.sku.code}\` | **${barcodeData.sku.name}** | ${barcodeData.sku.uomCode} | \`${barcodeData.sku.hsnCode ?? "None"}\` | ${barcodeData.sku.status} |\n\n`;
+          markdown += `You can view its stock or issue a purchase order directly.\n`;
+          actions.push({ label: "View Product Stock", route: `/stock/${barcodeData.sku.id}`, permission: "stock.view" });
+          actions.push({ label: "New Purchase Order", route: `/purchase-orders/new?skuId=${barcodeData.sku.id}`, permission: "po.manage" });
+          actions.push({ label: "Browse Product Master", route: "/masters/skus", permission: "master.view" });
+          break;
+        }
+
         const basmatiMatch = allUserText.match(/\b(basmati(?:\s+rice)?(?:\s+(?:1121|1509|pusa|steam|sella))?)\b/i);
         const sonaMatch = allUserText.match(/\b(sona\s+masoori(?:\s+rice)?)\b/i);
         const kolamMatch = allUserText.match(/\b(kolam(?:\s+rice)?)\b/i);
@@ -4762,20 +4804,29 @@ export class AutonomousAgentService {
         // Detect HSN Code
         const explicitHsnMatch = allUserText.match(/\bhsn(?:\s*code)?:?\s*(\d{4,8})\b/i);
         const fallbackHsnMatch = allUserText.match(/\b(\d{6,8})\b/);
-        const explicitHsn = explicitHsnMatch ? explicitHsnMatch[1] : (fallbackHsnMatch ? fallbackHsnMatch[1] : undefined);
+        let explicitHsn = explicitHsnMatch ? explicitHsnMatch[1] : (fallbackHsnMatch ? fallbackHsnMatch[1] : undefined);
 
         // Detect GST Rate
         const gstMatch = allUserText.match(/\b(\d+(?:\.\d+)?)\s*%\s*(?:gst)?\b/i) || allUserText.match(/\bgst(?:\s*rate)?:?\s*(\d+(?:\.\d+)?)\b/i);
-        const explicitGst = gstMatch ? gstMatch[1] : undefined;
+        let explicitGst = gstMatch ? gstMatch[1] : undefined;
 
         // Determine resolved SKU Name
         let resolvedName: string | undefined;
-        if (basmatiMatch) resolvedName = basmatiMatch[1].trim();
-        else if (sonaMatch) resolvedName = sonaMatch[1].trim();
-        else if (kolamMatch) resolvedName = kolamMatch[1].trim();
-        else if (sugarMatch) resolvedName = sugarMatch[0].trim();
-        else if (wheatMatch) resolvedName = wheatMatch[0].trim();
-        else if (oilMatch) resolvedName = oilMatch[0].trim();
+        if (barcodeData?.catalogDetails) {
+          resolvedName = barcodeData.catalogDetails.name;
+          if (!baseUomCode && barcodeData.catalogDetails.suggestedUomCode) baseUomCode = barcodeData.catalogDetails.suggestedUomCode;
+          if (!explicitHsn && barcodeData.catalogDetails.suggestedHsnCode) explicitHsn = barcodeData.catalogDetails.suggestedHsnCode;
+          if (!explicitGst && barcodeData.catalogDetails.suggestedGstRate) explicitGst = barcodeData.catalogDetails.suggestedGstRate;
+        }
+
+        if (!resolvedName) {
+          if (basmatiMatch) resolvedName = basmatiMatch[1].trim();
+          else if (sonaMatch) resolvedName = sonaMatch[1].trim();
+          else if (kolamMatch) resolvedName = kolamMatch[1].trim();
+          else if (sugarMatch) resolvedName = sugarMatch[0].trim();
+          else if (wheatMatch) resolvedName = wheatMatch[0].trim();
+          else if (oilMatch) resolvedName = oilMatch[0].trim();
+        }
 
         if (resolvedName) {
           resolvedName = resolvedName
@@ -4804,6 +4855,7 @@ export class AutonomousAgentService {
               hsnCode: finalHsn,
               gstRate: finalGst,
               isBatchTracked: true,
+              barcode: scannedBarcode || undefined,
             },
             destructive: false,
             confirmLabel: "Confirm & Register SKU",
@@ -4816,6 +4868,9 @@ export class AutonomousAgentService {
           markdown += `| Specification | Configured Value | Commercial Rule |\n`;
           markdown += `| :--- | :--- | :--- |\n`;
           markdown += `| **Product Name** | **${resolvedName}** | Display & Billing Name |\n`;
+          if (scannedBarcode) {
+            markdown += `| **Barcode** | \`${scannedBarcode}\` | EAN / UPC Barcode |\n`;
+          }
           markdown += `| **Base Unit (UOM)** | **${finalUom}** | Warehouse inventory unit |\n`;
           markdown += `| **GST HSN Code** | **\`${finalHsn}\`** | CBIC Central Classification |\n`;
           markdown += `| **GST Rate** | **${finalGst}%** | Applied to Purchases & Invoices |\n`;

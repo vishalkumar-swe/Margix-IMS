@@ -40,7 +40,7 @@ const DOMAIN_TERMS: Record<CopilotDomain, RegExp> = {
   sales: /\b(sale\w*|invoice\w*|bill\w*|dispatch\w*|outward\w*|customer\w*|buyer\w*|client\w*|revenue\w*|turnover|sold|deliver\w*)\b/i,
   inventory:
     /\b(inventor\w*|godown\w*|warehouse\w*|batch\w*|expir\w*|fefo|transfer\w*|adjust\w*|idle|movement\w*|ledger\w*|balance\w*)\b/i,
-  catalog: /\b(sku\w*|product\w*|catalog\w*|categor\w*|uom\w*|unit\w*|hsn|tax\w*|gst|rate\w*|bag\w*|kg|item\w*)\b/i,
+  catalog: /\b(sku\w*|product\w*|catalog\w*|categor\w*|uom\w*|unit\w*|hsn|tax\w*|gst|rate\w*|bag\w*|kg|item\w*|barcode\w*|scan\w*|ean\w*|upc\w*)\b/i,
   system: /\b(return\w*|revers\w*|tally|sync\w*|audit\w*|user\w*|health|checklist\w*|notification\w*|alert\w*|opening)\b/i,
   market:
     /\b(stock\s*price|ltp|quote\w*|share\w*|equity|market\w*|nifty|sensex|commodit\w*|gold|silver|mandi\w*|apmc|arbitrage|trading)\b/i,
