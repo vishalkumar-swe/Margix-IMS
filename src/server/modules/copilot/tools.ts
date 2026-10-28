@@ -379,6 +379,12 @@ const proposeActionArgs = z
       "CREATE_PO",
       "CREATE_SKU",
       "STOCK_ADJUSTMENT",
+      "CREATE_CUSTOMER",
+      "CREATE_SUPPLIER",
+      "CREATE_GODOWN",
+      "CREATE_TRANSFER",
+      "CREATE_GRN",
+      "CREATE_INVOICE",
       "POST_DISPATCH",
       "CANCEL_INVOICE",
       "CANCEL_PO",
@@ -391,6 +397,79 @@ const proposeActionArgs = z
     destructive: z.boolean().default(false),
     confirmLabel: z.string().trim().max(40).optional(),
     cancelLabel: z.string().trim().max(40).optional(),
+  })
+  .strict();
+
+const proposePoArgs = z
+  .object({
+    supplierName: z.string().trim().min(1).max(200),
+    godownName: z.string().trim().max(200).optional(),
+    items: z
+      .array(
+        z.object({
+          productName: z.string().trim().min(1),
+          quantity: z.number().positive(),
+          rate: z.number().positive().optional(),
+        }),
+      )
+      .min(1),
+    orderDate: z.string().optional(),
+    expectedDate: z.string().optional(),
+    remarks: z.string().max(500).optional(),
+  })
+  .strict();
+
+const proposeCustomerArgs = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    gstin: z.string().trim().max(15).optional(),
+    phone: z.string().trim().max(20).optional(),
+    address: z.string().trim().max(500).optional(),
+    stateCode: z.string().trim().max(2).optional(),
+  })
+  .strict();
+
+const proposeSupplierArgs = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    gstin: z.string().trim().max(15).optional(),
+    phone: z.string().trim().max(20).optional(),
+    address: z.string().trim().max(500).optional(),
+    stateCode: z.string().trim().max(2).optional(),
+  })
+  .strict();
+
+const proposeTransferArgs = z
+  .object({
+    fromGodown: z.string().trim().min(1).max(200),
+    toGodown: z.string().trim().min(1).max(200),
+    items: z
+      .array(
+        z.object({
+          productName: z.string().trim().min(1),
+          quantity: z.number().positive(),
+          batchNumber: z.string().optional(),
+        }),
+      )
+      .min(1),
+    remarks: z.string().max(500).optional(),
+  })
+  .strict();
+
+const proposeAdjustmentArgs = z
+  .object({
+    godownName: z.string().trim().min(1),
+    items: z
+      .array(
+        z.object({
+          productName: z.string().trim().min(1),
+          quantity: z.number().positive(),
+          batchNumber: z.string().optional(),
+        }),
+      )
+      .min(1),
+    reasonCode: z.enum(["COUNTING_ERROR", "DAMAGE", "THEFT", "EXPIRY", "OTHER"]).default("COUNTING_ERROR"),
+    reasonNote: z.string().max(500).optional(),
   })
   .strict();
 
@@ -3990,6 +4069,12 @@ const TOOLS: CopilotTool[] = [
             "CREATE_PO",
             "CREATE_SKU",
             "STOCK_ADJUSTMENT",
+            "CREATE_CUSTOMER",
+            "CREATE_SUPPLIER",
+            "CREATE_GODOWN",
+            "CREATE_TRANSFER",
+            "CREATE_GRN",
+            "CREATE_INVOICE",
             "POST_DISPATCH",
             "CANCEL_INVOICE",
             "CANCEL_PO",
@@ -4040,6 +4125,289 @@ const TOOLS: CopilotTool[] = [
         success: true,
         confirmationId,
         message: `Action proposal prepared: "${parsed.title}". An interactive confirmation card has been presented to the user to review and execute.`,
+      };
+    },
+  },
+  {
+    name: "propose_purchase_order",
+    description:
+      "Direct execution tool to prepare and propose a formal Purchase Order (PO) to buy goods from a supplier. Calculates item costs, assigns destination godown, and presents a 1-click execution confirmation card to the user.",
+    permission: "po.manage",
+    parameters: {
+      type: "object",
+      properties: {
+        supplierName: { type: "string", description: "Name of the supplier / vendor to purchase goods from." },
+        godownName: { type: "string", description: "Destination warehouse / godown where goods will be received." },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              productName: { type: "string", description: "Product name (e.g. 'Sugar', 'Basmati Rice', 'Steel Rods')." },
+              quantity: { type: "number", description: "Quantity to purchase in bags, quintals, kg, or units." },
+              rate: { type: "number", description: "Unit price per item (excluding tax)." },
+            },
+            required: ["productName", "quantity"],
+          },
+          description: "List of items to order.",
+        },
+        orderDate: { type: "string", description: "Order date in YYYY-MM-DD format (defaults to today)." },
+        expectedDate: { type: "string", description: "Expected delivery date in YYYY-MM-DD format." },
+        remarks: { type: "string", description: "Optional procurement notes or terms." },
+      },
+      required: ["supplierName", "items"],
+    },
+    async execute(args, context) {
+      const parsed = proposePoArgs.parse(args);
+      const confirmationId = randomUUID();
+      const itemsDesc = parsed.items.map((i) => `${i.quantity}x ${i.productName}${i.rate ? ` @ ₹${i.rate}` : ""}`).join(", ");
+      const title = `Create Purchase Order: ${parsed.supplierName} (${parsed.items[0]?.productName || "Items"})`;
+      const description = `Issue official Purchase Order to ${parsed.supplierName} for ${itemsDesc}.`;
+
+      const confirmation: CopilotConfirmation = {
+        id: confirmationId,
+        title,
+        description,
+        actionType: "CREATE_PO",
+        payload: {
+          supplierName: parsed.supplierName,
+          godownName: parsed.godownName,
+          items: parsed.items,
+          orderDate: parsed.orderDate,
+          expectedDate: parsed.expectedDate,
+          remarks: parsed.remarks,
+        },
+        destructive: false,
+        confirmLabel: "Confirm & Create PO",
+        cancelLabel: "Cancel",
+        status: "pending",
+      };
+
+      if (context.onProposeConfirmation) {
+        context.onProposeConfirmation(confirmation);
+      }
+
+      return {
+        success: true,
+        confirmationId,
+        message: `Purchase Order proposal created for ${parsed.supplierName} (${itemsDesc}). A 1-click confirmation card is now open for review.`,
+      };
+    },
+  },
+  {
+    name: "propose_stock_adjustment",
+    description:
+      "Direct execution tool to reconcile physical inventory count discrepancies, record damaged stock, or write off expired batches with full audit trail.",
+    permission: "adjustment.request",
+    parameters: {
+      type: "object",
+      properties: {
+        godownName: { type: "string", description: "Godown / warehouse where the discrepancy occurred." },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              productName: { type: "string", description: "Product name to adjust." },
+              quantity: { type: "number", description: "Quantity to adjust (positive for count addition, negative for write-off)." },
+              batchNumber: { type: "string", description: "Specific batch number if known." },
+            },
+            required: ["productName", "quantity"],
+          },
+          description: "Items and quantities to adjust.",
+        },
+        reasonCode: {
+          type: "string",
+          enum: ["COUNTING_ERROR", "DAMAGE", "THEFT", "EXPIRY", "OTHER"],
+          description: "Reason code for audit compliance.",
+          default: "COUNTING_ERROR",
+        },
+        reasonNote: { type: "string", description: "Detailed justification for ledger auditors." },
+      },
+      required: ["godownName", "items"],
+    },
+    async execute(args, context) {
+      const parsed = proposeAdjustmentArgs.parse(args);
+      const confirmationId = randomUUID();
+      const itemsDesc = parsed.items.map((i) => `${i.quantity}x ${i.productName}`).join(", ");
+      const title = `Stock Adjustment: ${parsed.godownName} (${parsed.reasonCode})`;
+      const description = `Adjust inventory in ${parsed.godownName} for ${itemsDesc}. Reason: ${parsed.reasonNote || parsed.reasonCode}.`;
+
+      const confirmation: CopilotConfirmation = {
+        id: confirmationId,
+        title,
+        description,
+        actionType: "STOCK_ADJUSTMENT",
+        payload: {
+          godownName: parsed.godownName,
+          items: parsed.items,
+          reasonCode: parsed.reasonCode,
+          reasonNote: parsed.reasonNote,
+        },
+        destructive: false,
+        confirmLabel: "Confirm & Adjust Stock",
+        cancelLabel: "Cancel",
+        status: "pending",
+      };
+
+      if (context.onProposeConfirmation) {
+        context.onProposeConfirmation(confirmation);
+      }
+
+      return {
+        success: true,
+        confirmationId,
+        message: `Stock adjustment proposal prepared for ${parsed.godownName}. A confirmation card is ready for approval.`,
+      };
+    },
+  },
+  {
+    name: "propose_transfer",
+    description:
+      "Direct execution tool to move stock between two godowns / warehouses in an atomic transaction without risk of inventory loss.",
+    permission: "transfer.create",
+    parameters: {
+      type: "object",
+      properties: {
+        fromGodown: { type: "string", description: "Source warehouse name." },
+        toGodown: { type: "string", description: "Destination warehouse name." },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              productName: { type: "string", description: "Product name to transfer." },
+              quantity: { type: "number", description: "Quantity to transfer." },
+              batchNumber: { type: "string", description: "Optional specific batch." },
+            },
+            required: ["productName", "quantity"],
+          },
+          description: "List of products and quantities to move.",
+        },
+        remarks: { type: "string", description: "Transfer memo / transport details." },
+      },
+      required: ["fromGodown", "toGodown", "items"],
+    },
+    async execute(args, context) {
+      const parsed = proposeTransferArgs.parse(args);
+      const confirmationId = randomUUID();
+      const itemsDesc = parsed.items.map((i) => `${i.quantity}x ${i.productName}`).join(", ");
+      const title = `Stock Transfer: ${parsed.fromGodown} → ${parsed.toGodown}`;
+      const description = `Transfer ${itemsDesc} from ${parsed.fromGodown} to ${parsed.toGodown}.`;
+
+      const confirmation: CopilotConfirmation = {
+        id: confirmationId,
+        title,
+        description,
+        actionType: "CREATE_TRANSFER",
+        payload: {
+          fromGodown: parsed.fromGodown,
+          toGodown: parsed.toGodown,
+          items: parsed.items,
+          remarks: parsed.remarks,
+        },
+        destructive: false,
+        confirmLabel: "Confirm & Execute Transfer",
+        cancelLabel: "Cancel",
+        status: "pending",
+      };
+
+      if (context.onProposeConfirmation) {
+        context.onProposeConfirmation(confirmation);
+      }
+
+      return {
+        success: true,
+        confirmationId,
+        message: `Transfer proposal prepared from ${parsed.fromGodown} to ${parsed.toGodown}. Confirmation card is ready.`,
+      };
+    },
+  },
+  {
+    name: "propose_customer",
+    description: "Register a new commercial customer / wholesale client in the master registry.",
+    permission: "master.manage",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Customer / firm trade name." },
+        gstin: { type: "string", description: "15-digit GSTIN number if registered." },
+        phone: { type: "string", description: "Primary phone or mobile number." },
+        address: { type: "string", description: "Billing / shipping address." },
+        stateCode: { type: "string", description: "2-digit GST state code (e.g. '07' for Delhi, '27' for Maharashtra)." },
+      },
+      required: ["name"],
+    },
+    async execute(args, context) {
+      const parsed = proposeCustomerArgs.parse(args);
+      const confirmationId = randomUUID();
+      const title = `Register Customer: ${parsed.name}`;
+      const description = `Add customer "${parsed.name}"${parsed.gstin ? ` (GSTIN: ${parsed.gstin})` : ""} to master directory.`;
+
+      const confirmation: CopilotConfirmation = {
+        id: confirmationId,
+        title,
+        description,
+        actionType: "CREATE_CUSTOMER",
+        payload: parsed,
+        destructive: false,
+        confirmLabel: "Confirm & Register Customer",
+        cancelLabel: "Cancel",
+        status: "pending",
+      };
+
+      if (context.onProposeConfirmation) {
+        context.onProposeConfirmation(confirmation);
+      }
+
+      return {
+        success: true,
+        confirmationId,
+        message: `Customer registration card prepared for "${parsed.name}". User confirmation requested.`,
+      };
+    },
+  },
+  {
+    name: "propose_supplier",
+    description: "Register a new raw material vendor / wholesale supplier in the vendor master directory.",
+    permission: "master.manage",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Supplier / vendor enterprise name." },
+        gstin: { type: "string", description: "15-digit GSTIN number." },
+        phone: { type: "string", description: "Primary contact phone." },
+        address: { type: "string", description: "Vendor factory / office address." },
+        stateCode: { type: "string", description: "2-digit GST state code." },
+      },
+      required: ["name"],
+    },
+    async execute(args, context) {
+      const parsed = proposeSupplierArgs.parse(args);
+      const confirmationId = randomUUID();
+      const title = `Register Supplier: ${parsed.name}`;
+      const description = `Add supplier "${parsed.name}"${parsed.gstin ? ` (GSTIN: ${parsed.gstin})` : ""} to vendor directory.`;
+
+      const confirmation: CopilotConfirmation = {
+        id: confirmationId,
+        title,
+        description,
+        actionType: "CREATE_SUPPLIER",
+        payload: parsed,
+        destructive: false,
+        confirmLabel: "Confirm & Register Supplier",
+        cancelLabel: "Cancel",
+        status: "pending",
+      };
+
+      if (context.onProposeConfirmation) {
+        context.onProposeConfirmation(confirmation);
+      }
+
+      return {
+        success: true,
+        confirmationId,
+        message: `Supplier registration card prepared for "${parsed.name}". User confirmation requested.`,
       };
     },
   },
@@ -4110,6 +4478,8 @@ export function copilotToolsForRole(role: RoleCode, query?: string, route?: stri
 
   if (isPurchasing) {
     [
+      "propose_purchase_order",
+      "propose_supplier",
       "list_purchase_orders",
       "get_purchase_order_detail",
       "list_suppliers",
@@ -4127,6 +4497,7 @@ export function copilotToolsForRole(role: RoleCode, query?: string, route?: stri
 
   if (isSales) {
     [
+      "propose_customer",
       "list_invoices",
       "get_invoice_detail",
       "list_dispatches",
@@ -4142,6 +4513,8 @@ export function copilotToolsForRole(role: RoleCode, query?: string, route?: stri
 
   if (isInventory) {
     [
+      "propose_transfer",
+      "propose_stock_adjustment",
       "get_inventory_overview",
       "list_batches",
       "get_batch_detail",

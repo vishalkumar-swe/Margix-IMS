@@ -16,13 +16,22 @@ import type {
 import { executeCopilotToolData, type WebSearchResult } from "./tools";
 import { getWorkspaceCounts } from "./copilot.queries";
 import { answerFromKnowledge } from "./knowledge";
-import { createSku } from "@/server/modules/masters/masters.service";
-import { cancelInvoice } from "@/server/modules/invoices/invoice.service";
+import {
+  createCategory,
+  createCustomer,
+  createGodown,
+  createSku,
+  createSupplier,
+  createUom,
+} from "@/server/modules/masters/masters.service";
+import { cancelInvoice, createInvoice } from "@/server/modules/invoices/invoice.service";
 import {
   cancelPurchaseOrder,
   createPurchaseOrder,
   shortClosePurchaseOrder,
 } from "@/server/modules/purchasing/purchase-order.service";
+import { postGrn } from "@/server/modules/purchasing/grn.service";
+import { postTransfer } from "@/server/modules/transfers/transfer.service";
 import { createAdjustment } from "@/server/modules/adjustments/adjustments.service";
 import { reverseEntry } from "@/server/modules/reversals/reversals.service";
 import {
@@ -2815,6 +2824,392 @@ export class AutonomousAgentService {
               message: `Stock Adjustment ${adj.adjustmentNumber} created successfully in status ${adj.status}.`,
               actions: [
                 { label: `View Adjustment ${adj.adjustmentNumber}`, route: `/adjustments/${adj.id}`, permission: "adjustment.view" },
+                { label: "View Stock Ledger", route: "/ledger", permission: "ledger.view" },
+              ],
+            },
+          };
+        }
+
+        case "CREATE_CUSTOMER": {
+          if (!can(actor.role, "master.manage")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot manage customer masters.`,
+              },
+            };
+          }
+          const name = String(params.payload.name || params.payload.partyName || "").trim();
+          if (!name) {
+            return {
+              success: false,
+              data: { status: "failed", message: "Customer name is required." },
+            };
+          }
+          const customer = await createCustomer(actor, {
+            name,
+            gstin: (params.payload.gstin as string) || undefined,
+            phone: (params.payload.phone as string) || undefined,
+            address: (params.payload.address as string) || undefined,
+            stateCode: (params.payload.stateCode as any) || undefined,
+            code: (params.payload.code as string) || undefined,
+          });
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `Customer "${customer.name}" (Code: ${customer.code}) registered successfully in master directory.`,
+              actions: [
+                { label: `View Customer ${customer.name}`, route: `/customers/${customer.id}`, permission: "master.view" },
+                { label: "Create Invoice", route: `/invoices/new?customerId=${customer.id}`, permission: "invoice.manage" },
+                { label: "View All Customers", route: "/customers", permission: "master.view" },
+              ],
+            },
+          };
+        }
+
+        case "CREATE_SUPPLIER": {
+          if (!can(actor.role, "master.manage")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot manage supplier masters.`,
+              },
+            };
+          }
+          const name = String(params.payload.name || params.payload.partyName || "").trim();
+          if (!name) {
+            return {
+              success: false,
+              data: { status: "failed", message: "Supplier name is required." },
+            };
+          }
+          const supplier = await createSupplier(actor, {
+            name,
+            gstin: (params.payload.gstin as string) || undefined,
+            phone: (params.payload.phone as string) || undefined,
+            address: (params.payload.address as string) || undefined,
+            stateCode: (params.payload.stateCode as any) || undefined,
+            code: (params.payload.code as string) || undefined,
+          });
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `Supplier "${supplier.name}" (Code: ${supplier.code}) registered successfully in vendor directory.`,
+              actions: [
+                { label: `View Supplier ${supplier.name}`, route: `/suppliers/${supplier.id}`, permission: "master.view" },
+                { label: "Create Purchase Order", route: `/purchase-orders/new?supplierId=${supplier.id}`, permission: "po.manage" },
+                { label: "View All Suppliers", route: "/suppliers", permission: "master.view" },
+              ],
+            },
+          };
+        }
+
+        case "CREATE_GODOWN": {
+          if (!can(actor.role, "master.manage")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot manage godown masters.`,
+              },
+            };
+          }
+          const name = String(params.payload.name || "").trim();
+          if (!name) {
+            return {
+              success: false,
+              data: { status: "failed", message: "Godown name is required." },
+            };
+          }
+          const godown = await createGodown(actor, {
+            name,
+            code: (params.payload.code as string) || undefined,
+            address: (params.payload.address as string) || undefined,
+            tallySyncEnabled: params.payload.tallySyncEnabled !== false,
+          });
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `Godown "${godown.name}" (Code: ${godown.code}) registered successfully in warehouse registry.`,
+              actions: [
+                { label: `View Godown ${godown.name}`, route: `/godowns/${godown.id}`, permission: "master.view" },
+                { label: "Transfer Stock", route: `/transfers/new?toGodownId=${godown.id}`, permission: "transfer.create" },
+                { label: "View All Godowns", route: "/godowns", permission: "master.view" },
+              ],
+            },
+          };
+        }
+
+        case "CREATE_TRANSFER": {
+          if (!can(actor.role, "transfer.create")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot create stock transfers.`,
+              },
+            };
+          }
+          let fromGodownId = params.payload.fromGodownId as string | undefined;
+          let toGodownId = params.payload.toGodownId as string | undefined;
+
+          if (!fromGodownId && params.payload.fromGodown) {
+            const g = await prisma.godown.findFirst({
+              where: { name: { contains: String(params.payload.fromGodown), mode: "insensitive" } },
+            });
+            if (g) fromGodownId = g.id;
+          }
+          if (!toGodownId && params.payload.toGodown) {
+            const g = await prisma.godown.findFirst({
+              where: { name: { contains: String(params.payload.toGodown), mode: "insensitive" } },
+            });
+            if (g) toGodownId = g.id;
+          }
+
+          if (!fromGodownId || !toGodownId) {
+            return {
+              success: false,
+              data: { status: "failed", message: "Both source and destination godowns are required for a transfer." },
+            };
+          }
+          if (fromGodownId === toGodownId) {
+            return {
+              success: false,
+              data: { status: "failed", message: "Source and destination godowns must be different." },
+            };
+          }
+
+          const rawItems = (params.payload.items as Array<Record<string, unknown>>) || [];
+          if (rawItems.length === 0 && (params.payload.skuId || params.payload.productName)) {
+            rawItems.push({
+              skuId: params.payload.skuId,
+              productName: params.payload.productName,
+              quantity: params.payload.quantity || 1,
+              batchId: params.payload.batchId,
+              batchNumber: params.payload.batchNumber,
+            });
+          }
+
+          const itemsToTransfer = [];
+          for (const item of rawItems) {
+            let skuId = item.skuId as string | undefined;
+            if (!skuId && item.productName) {
+              const foundSku = await prisma.sku.findFirst({
+                where: { name: { contains: String(item.productName), mode: "insensitive" } },
+              });
+              if (foundSku) skuId = foundSku.id;
+            }
+            if (!skuId) {
+              return {
+                success: false,
+                data: { status: "failed", message: `Product "${item.productName || "item"}" not found in catalog.` },
+              };
+            }
+            let batchId = item.batchId as string | undefined;
+            if (!batchId) {
+              const batchBalance = await prisma.stockBalance.findFirst({
+                where: { skuId, godownId: fromGodownId, quantity: { gt: 0 } },
+                include: { batch: true },
+                orderBy: { batch: { expiryDate: "asc" } },
+              });
+              if (batchBalance) batchId = batchBalance.batchId;
+            }
+            if (!batchId) {
+              return {
+                success: false,
+                data: { status: "failed", message: `No available stock batch found in source godown for transfer.` },
+              };
+            }
+            itemsToTransfer.push({
+              skuId,
+              batchId,
+              quantity: String(item.quantity || 1),
+            });
+          }
+
+          const transfer = await postTransfer(actor, {
+            fromGodownId,
+            toGodownId,
+            items: itemsToTransfer,
+            remarks: (params.payload.remarks as string) || "Stock transfer executed via Copilot",
+            idempotencyKey: params.confirmationId,
+          });
+
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `Stock Transfer ${transfer.transferNumber} posted successfully. Inventory moved from source to destination godown.`,
+              actions: [
+                { label: `View Transfer ${transfer.transferNumber}`, route: `/transfers/${transfer.id}`, permission: "transfer.view" },
+                { label: "View Stock Ledger", route: "/ledger", permission: "ledger.view" },
+              ],
+            },
+          };
+        }
+
+        case "CREATE_INVOICE": {
+          if (!can(actor.role, "invoice.manage")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot create invoices.`,
+              },
+            };
+          }
+          let customerId = params.payload.customerId as string | undefined;
+          if (!customerId && params.payload.customerName) {
+            const c = await prisma.customer.findFirst({
+              where: { name: { contains: String(params.payload.customerName), mode: "insensitive" } },
+            });
+            if (c) customerId = c.id;
+          }
+          if (!customerId) {
+            const firstCustomer = await prisma.customer.findFirst({
+              where: { isActive: true },
+              orderBy: { name: "asc" },
+            });
+            if (!firstCustomer) {
+              return {
+                success: false,
+                data: { status: "failed", message: "No active customer found. Please register a customer first." },
+              };
+            }
+            customerId = firstCustomer.id;
+          }
+
+          const rawItems = (params.payload.items as Array<Record<string, unknown>>) || [];
+          if (rawItems.length === 0 && (params.payload.skuId || params.payload.productName)) {
+            rawItems.push({
+              skuId: params.payload.skuId,
+              productName: params.payload.productName,
+              quantity: params.payload.quantity || 1,
+              rate: params.payload.rate,
+            });
+          }
+
+          const invoiceItems = [];
+          for (const item of rawItems) {
+            let skuId = item.skuId as string | undefined;
+            if (!skuId && item.productName) {
+              const foundSku = await prisma.sku.findFirst({
+                where: { name: { contains: String(item.productName), mode: "insensitive" } },
+              });
+              if (foundSku) skuId = foundSku.id;
+            }
+            if (!skuId) {
+              return {
+                success: false,
+                data: { status: "failed", message: `Product "${item.productName || "item"}" not found in catalog.` },
+              };
+            }
+            invoiceItems.push({
+              skuId,
+              quantity: String(item.quantity || 1),
+              rate: item.rate ? String(item.rate) : undefined,
+            });
+          }
+
+          const invoice = await createInvoice(actor, {
+            customerId,
+            invoiceDate: (params.payload.invoiceDate as string) || todayIst(),
+            remarks: (params.payload.remarks as string) || "Invoice generated via Margix Copilot",
+            items: invoiceItems,
+            idempotencyKey: params.confirmationId,
+          });
+
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `Invoice ${invoice.invoiceNumber} created successfully in status ${invoice.status}.`,
+              actions: [
+                { label: `Open Invoice ${invoice.invoiceNumber}`, route: `/invoices/${invoice.id}`, permission: "invoice.view" },
+                { label: "Dispatch Goods (FEFO)", route: `/dispatches/new?invoiceId=${invoice.id}`, permission: "dispatch.create" },
+                { label: "View All Invoices", route: "/invoices", permission: "invoice.view" },
+              ],
+            },
+          };
+        }
+
+        case "CREATE_GRN": {
+          if (!can(actor.role, "grn.create")) {
+            return {
+              success: false,
+              data: {
+                status: "failed",
+                message: `Permission denied: Your role (${actor.role}) cannot receive goods (GRN).`,
+              },
+            };
+          }
+          let poId = params.payload.purchaseOrderId as string | undefined;
+          if (!poId && params.payload.poNumber) {
+            const po = await prisma.purchaseOrder.findFirst({
+              where: { poNumber: { equals: String(params.payload.poNumber), mode: "insensitive" } },
+            });
+            if (po) poId = po.id;
+          }
+          if (!poId) {
+            return {
+              success: false,
+              data: { status: "failed", message: "A valid Purchase Order (poNumber or purchaseOrderId) is required to receive goods." },
+            };
+          }
+          const poRecord = await prisma.purchaseOrder.findUnique({
+            where: { id: poId },
+            include: { items: true },
+          });
+          if (!poRecord) {
+            return {
+              success: false,
+              data: { status: "failed", message: "Purchase Order not found." },
+            };
+          }
+
+          let godownId = params.payload.godownId as string | undefined;
+          if (!godownId) {
+            const firstGodown = await prisma.godown.findFirst({
+              where: { isActive: true },
+              orderBy: { name: "asc" },
+            });
+            if (!firstGodown) {
+              return { success: false, data: { status: "failed", message: "No active godown found." } };
+            }
+            godownId = firstGodown.id;
+          }
+
+          const grnItems = [];
+          for (const item of poRecord.items) {
+            const pendingQty = String(item.orderedQty.minus(item.receivedQty));
+            grnItems.push({
+              purchaseOrderItemId: item.id,
+              receivedQty: pendingQty,
+              acceptedQty: pendingQty,
+              batchNumber: `GRN-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
+            });
+          }
+
+          const grn = await postGrn(actor, poId, {
+            godownId,
+            supplierInvoiceNo: (params.payload.supplierInvoiceNo as string) || undefined,
+            remarks: (params.payload.remarks as string) || "Goods received via Copilot confirmation",
+            items: grnItems,
+            idempotencyKey: params.confirmationId,
+          });
+
+          return {
+            success: true,
+            data: {
+              status: "executed",
+              message: `GRN ${grn.grnNumber} posted successfully. Goods received into stock ledger.`,
+              actions: [
+                { label: `View GRN ${grn.grnNumber}`, route: `/grns/${grn.id}`, permission: "grn.view" },
                 { label: "View Stock Ledger", route: "/ledger", permission: "ledger.view" },
               ],
             },

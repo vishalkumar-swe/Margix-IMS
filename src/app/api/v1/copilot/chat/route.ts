@@ -8,6 +8,7 @@ import { answerFromKnowledge, buildLlmPrompt } from "@/server/modules/copilot/kn
 import { llmConfigured, streamChatCompletion } from "@/server/modules/copilot/llm";
 import { copilotToolsForRole, executeCopilotTool } from "@/server/modules/copilot/tools";
 import { AutonomousAgentService } from "@/server/modules/copilot/agent.service";
+import { checkDomainGuard } from "@/server/modules/copilot/guard";
 import { createHash } from "node:crypto";
 
 const encoder = new TextEncoder();
@@ -72,6 +73,19 @@ export const POST = apiRoute({ permission: "dashboard.view", body: copilotChatSc
     ipAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "127.0.0.1",
     userAgent: request.headers.get("user-agent") || undefined,
   };
+
+  // 0. Domain Guardrail: Reject off-topic inquiries (e.g. general programming, code generation, non-business trivia)
+  const guard = checkDomainGuard(body.message);
+  if (guard.blocked) {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(event({ type: "token", text: guard.refusalText || "This topic is outside the Margix enterprise domain." }));
+        controller.enqueue(event({ type: "final", actions: [], sources: ["Margix Enterprise Guardrail"] }));
+        controller.close();
+      },
+    });
+    return sse(stream);
+  }
 
   // 1. Pending confirmation replies (e.g. user says "yes / confirm / ha / cancel") must execute directly
   const isPendingReply = AutonomousAgentService.isPendingConfirmationReply(body.message, body.history);

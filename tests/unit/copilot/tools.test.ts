@@ -110,4 +110,49 @@ describe("Copilot tools", () => {
     expect(capturedConfirmation).toBeDefined();
     expect((capturedConfirmation as { actionType: string }).actionType).toBe("CREATE_PO");
   });
+
+  it("executes propose_purchase_order and creates structured PO proposal", async () => {
+    let capturedConfirmation: unknown;
+    const result = (await executeCopilotToolData(
+      "propose_purchase_order",
+      JSON.stringify({
+        supplierName: "Balaji Agro Mills",
+        godownName: "Central Warehouse",
+        items: [{ productName: "Refined Sugar", quantity: 100, rate: 3800 }],
+      }),
+      {
+        ...context,
+        onProposeConfirmation: (c) => {
+          capturedConfirmation = c;
+        },
+      },
+    )) as { success: boolean; confirmationId: string; message: string };
+
+    expect(result.success).toBe(true);
+    expect(capturedConfirmation).toBeDefined();
+    expect((capturedConfirmation as { actionType: string }).actionType).toBe("CREATE_PO");
+    expect(result.message).toContain("Purchase Order proposal created");
+  });
+
+  it("executes propose_customer and creates customer registration proposal", async () => {
+    let capturedConfirmation: unknown;
+    const result = (await executeCopilotToolData(
+      "propose_customer",
+      JSON.stringify({
+        name: "Shree Krishna Traders",
+        gstin: "07AAAAA1111A1Z5",
+        phone: "9876543210",
+      }),
+      {
+        ...context,
+        onProposeConfirmation: (c) => {
+          capturedConfirmation = c;
+        },
+      },
+    )) as { success: boolean; confirmationId: string; message: string };
+
+    expect(result.success).toBe(true);
+    expect(capturedConfirmation).toBeDefined();
+    expect((capturedConfirmation as { actionType: string }).actionType).toBe("CREATE_CUSTOMER");
+  });
 });
