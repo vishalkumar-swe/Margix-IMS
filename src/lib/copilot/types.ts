@@ -41,25 +41,28 @@ export interface CopilotAction extends GuidedNavigationIntent {
   description?: string;
 }
 
-export type CopilotActionType =
-  | "CANCEL_INVOICE"
-  | "CANCEL_PO"
-  | "SHORT_CLOSE_PO"
-  | "REVERSE_LEDGER"
-  | "PURGE_SANDBOX"
-  | "SEED_SANDBOX"
-  | "POST_DISPATCH"
-  | "CREATE_PO"
-  | "CREATE_INVOICE"
-  | "CREATE_GRN"
-  | "CREATE_SKU"
-  | "CREATE_CUSTOMER"
-  | "CREATE_SUPPLIER"
-  | "CREATE_GODOWN"
-  | "CREATE_TRANSFER"
-  | "DEACTIVATE_SUPPLIER"
-  | "DEACTIVATE_CUSTOMER"
-  | "STOCK_ADJUSTMENT";
+export const COPILOT_ACTION_TYPES = [
+  "CANCEL_INVOICE",
+  "CANCEL_PO",
+  "SHORT_CLOSE_PO",
+  "REVERSE_LEDGER",
+  "PURGE_SANDBOX",
+  "SEED_SANDBOX",
+  "POST_DISPATCH",
+  "CREATE_PO",
+  "CREATE_INVOICE",
+  "CREATE_GRN",
+  "CREATE_SKU",
+  "CREATE_CUSTOMER",
+  "CREATE_SUPPLIER",
+  "CREATE_GODOWN",
+  "CREATE_TRANSFER",
+  "DEACTIVATE_SUPPLIER",
+  "DEACTIVATE_CUSTOMER",
+  "STOCK_ADJUSTMENT",
+] as const;
+
+export type CopilotActionType = (typeof COPILOT_ACTION_TYPES)[number];
 
 export interface CopilotAlternativeOption {
   label: string;

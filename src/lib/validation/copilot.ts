@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ROLE_CODES } from "@/lib/enums";
+import { COPILOT_ACTION_TYPES } from "@/lib/copilot/types";
 
 /** Browser state sent with a Copilot question (PRD §5.1). */
 export const copilotRuntimeContextSchema = z.object({
@@ -18,31 +19,15 @@ export const copilotRuntimeContextSchema = z.object({
   recentErrors: z.array(z.string().max(500)).max(5).optional(),
 });
 
-export const copilotActionTypeSchema = z.enum([
-  "CANCEL_INVOICE",
-  "CANCEL_PO",
-  "SHORT_CLOSE_PO",
-  "REVERSE_LEDGER",
-  "PURGE_SANDBOX",
-  "SEED_SANDBOX",
-  "POST_DISPATCH",
-  "CREATE_PO",
-  "CREATE_INVOICE",
-  "CREATE_GRN",
-  "CREATE_SKU",
-  "CREATE_CUSTOMER",
-  "CREATE_SUPPLIER",
-  "CREATE_GODOWN",
-  "STOCK_ADJUSTMENT",
-]);
+export const copilotActionTypeSchema = z.enum(COPILOT_ACTION_TYPES);
 
 export const copilotConfirmationSchema = z.object({
   id: z.string(),
   title: z.string(),
   description: z.string(),
-  actionType: copilotActionTypeSchema,
-  payload: z.record(z.string(), z.unknown()),
-  destructive: z.boolean(),
+  actionType: z.string(),
+  payload: z.record(z.string(), z.unknown()).default({}),
+  destructive: z.boolean().default(false),
   confirmLabel: z.string().optional(),
   cancelLabel: z.string().optional(),
   alternatives: z
@@ -54,7 +39,7 @@ export const copilotConfirmationSchema = z.object({
       }),
     )
     .optional(),
-  status: z.enum(["pending", "confirmed", "cancelled", "executed", "failed"]),
+  status: z.enum(["pending", "confirmed", "cancelled", "executed", "failed"]).default("pending"),
   resultMessage: z.string().optional(),
 });
 
@@ -65,7 +50,7 @@ export const copilotChatSchema = z.object({
       z.object({
         role: z.enum(["user", "assistant"]),
         content: z.string().max(64000),
-        confirmation: copilotConfirmationSchema.nullable().optional(),
+        confirmation: z.record(z.string(), z.unknown()).nullable().optional(),
       }),
     )
     .max(24)

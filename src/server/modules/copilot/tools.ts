@@ -12,7 +12,7 @@ import {
   type TallySyncStatus,
 } from "@prisma/client";
 import { z } from "zod";
-import type { CopilotConfirmation } from "@/lib/copilot/types";
+import { COPILOT_ACTION_TYPES, type CopilotConfirmation } from "@/lib/copilot/types";
 import { presetPeriod } from "@/lib/analytics";
 import { dateOnlyToUtc, todayIst } from "@/lib/dates";
 import { can, ROLE_LABELS, type Permission } from "@/lib/permissions";
@@ -375,25 +375,7 @@ const marketQuoteArgs = z
 
 const proposeActionArgs = z
   .object({
-    actionType: z.enum([
-      "CREATE_PO",
-      "CREATE_SKU",
-      "STOCK_ADJUSTMENT",
-      "CREATE_CUSTOMER",
-      "CREATE_SUPPLIER",
-      "CREATE_GODOWN",
-      "CREATE_TRANSFER",
-      "CREATE_GRN",
-      "CREATE_INVOICE",
-      "POST_DISPATCH",
-      "CANCEL_INVOICE",
-      "CANCEL_PO",
-      "SHORT_CLOSE_PO",
-      "REVERSE_LEDGER",
-      "PURGE_SANDBOX",
-      "DEACTIVATE_SUPPLIER",
-      "DEACTIVATE_CUSTOMER",
-    ]),
+    actionType: z.enum(COPILOT_ACTION_TYPES),
     title: z.string().trim().min(1).max(120),
     description: z.string().trim().min(1).max(500),
     payload: z.record(z.string(), z.unknown()),
@@ -4068,25 +4050,7 @@ const TOOLS: CopilotTool[] = [
       properties: {
         actionType: {
           type: "string",
-          enum: [
-            "CREATE_PO",
-            "CREATE_SKU",
-            "STOCK_ADJUSTMENT",
-            "CREATE_CUSTOMER",
-            "CREATE_SUPPLIER",
-            "CREATE_GODOWN",
-            "CREATE_TRANSFER",
-            "CREATE_GRN",
-            "CREATE_INVOICE",
-            "POST_DISPATCH",
-            "CANCEL_INVOICE",
-            "CANCEL_PO",
-            "SHORT_CLOSE_PO",
-            "REVERSE_LEDGER",
-            "PURGE_SANDBOX",
-            "DEACTIVATE_SUPPLIER",
-            "DEACTIVATE_CUSTOMER",
-          ],
+          enum: [...COPILOT_ACTION_TYPES],
           description: "Type of operational action to propose.",
         },
         title: { type: "string", description: "Brief title of the action, e.g. 'Create Purchase Order: Sugar (100 BAG)'." },

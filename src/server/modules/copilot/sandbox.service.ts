@@ -12,6 +12,8 @@ export interface SandboxStatus {
   demoGrnCount: number;
   demoInvoiceCount: number;
   demoStockBags: number;
+  demoSupplierCount: number;
+  demoCustomerCount: number;
 }
 
 const DEMO_SKU_CODE = "DEMO-BASMATI-01";
@@ -25,19 +27,27 @@ const DEMO_BATCH_NUMBER = "DEMO-BATCH-2026A";
 const DEMO_HSN_CODE = "100630";
 
 export async function getSandboxStatus(): Promise<SandboxStatus> {
-  const [sku, po, grn, inv, stock] = await Promise.all([
+  const [sku, po, grn, inv, stock, supplier, customer] = await Promise.all([
     prisma.sku.findUnique({ where: { code: DEMO_SKU_CODE } }),
-    prisma.purchaseOrder.findUnique({ where: { poNumber: DEMO_PO_NUMBER } }),
-    prisma.grn.findUnique({ where: { grnNumber: DEMO_GRN_NUMBER } }),
-    prisma.invoice.findUnique({ where: { invoiceNumber: DEMO_INV_NUMBER } }),
+    prisma.purchaseOrder.findFirst({
+      where: { OR: [{ poNumber: DEMO_PO_NUMBER }, { supplier: { code: DEMO_SUPPLIER_CODE } }] },
+    }),
+    prisma.grn.findFirst({
+      where: { OR: [{ grnNumber: DEMO_GRN_NUMBER }, { purchaseOrder: { supplier: { code: DEMO_SUPPLIER_CODE } } }] },
+    }),
+    prisma.invoice.findFirst({
+      where: { OR: [{ invoiceNumber: DEMO_INV_NUMBER }, { customer: { code: DEMO_CUSTOMER_CODE } }] },
+    }),
     prisma.stockBalance.aggregate({
       where: { sku: { code: DEMO_SKU_CODE }, quantity: { gt: 0 } },
       _sum: { quantity: true },
     }),
+    prisma.supplier.findUnique({ where: { code: DEMO_SUPPLIER_CODE } }),
+    prisma.customer.findUnique({ where: { code: DEMO_CUSTOMER_CODE } }),
   ]);
 
   const demoStockBags = Number(stock._sum.quantity ?? 0);
-  const hasDemoData = Boolean(sku || po || grn || inv || demoStockBags > 0);
+  const hasDemoData = Boolean(sku || po || grn || inv || supplier || customer || demoStockBags > 0);
   return {
     hasDemoData,
     demoSkuCount: sku ? 1 : 0,
@@ -45,6 +55,8 @@ export async function getSandboxStatus(): Promise<SandboxStatus> {
     demoGrnCount: grn ? 1 : 0,
     demoInvoiceCount: inv ? 1 : 0,
     demoStockBags,
+    demoSupplierCount: supplier ? 1 : 0,
+    demoCustomerCount: customer ? 1 : 0,
   };
 }
 
@@ -321,10 +333,12 @@ export async function purgeSandboxData(actor: Actor): Promise<{ success: boolean
     await tx.$executeRawUnsafe("SET LOCAL margix.sandbox_purge = 'on'");
     let purged = 0;
 
-    // 1. Find demo SKU & Godown
-    const [sku, godown] = await Promise.all([
+    // 1. Find demo SKU & Godown & Supplier & Customer
+    const [sku, godown, demoSupplier, demoCustomer] = await Promise.all([
       tx.sku.findUnique({ where: { code: DEMO_SKU_CODE } }),
       tx.godown.findUnique({ where: { code: DEMO_GODOWN_CODE } }),
+      tx.supplier.findUnique({ where: { code: DEMO_SUPPLIER_CODE } }),
+      tx.customer.findUnique({ where: { code: DEMO_CUSTOMER_CODE } }),
     ]);
 
     // 2. Delete Outward / Dispatches
@@ -332,6 +346,7 @@ export async function purgeSandboxData(actor: Actor): Promise<{ success: boolean
       where: {
         OR: [
           { outwardNumber: { startsWith: "DEMO-" } },
+          ...(demoCustomer ? [{ customerId: demoCustomer.id }] : []),
           ...(sku ? [{ items: { some: { skuId: sku.id } } }] : []),
         ],
       },
@@ -363,6 +378,7 @@ export async function purgeSandboxData(actor: Actor): Promise<{ success: boolean
       where: {
         OR: [
           { invoiceNumber: { startsWith: "DEMO-" } },
+          ...(demoCustomer ? [{ customerId: demoCustomer.id }] : []),
           ...(sku ? [{ items: { some: { skuId: sku.id } } }] : []),
         ],
       },
@@ -380,6 +396,7 @@ export async function purgeSandboxData(actor: Actor): Promise<{ success: boolean
       where: {
         OR: [
           { grnNumber: { startsWith: "DEMO-" } },
+          ...(demoSupplier ? [{ purchaseOrder: { supplierId: demoSupplier.id } }] : []),
           ...(sku ? [{ items: { some: { skuId: sku.id } } }] : []),
         ],
       },
@@ -411,6 +428,7 @@ export async function purgeSandboxData(actor: Actor): Promise<{ success: boolean
       where: {
         OR: [
           { poNumber: { startsWith: "DEMO-" } },
+          ...(demoSupplier ? [{ supplierId: demoSupplier.id }] : []),
           ...(sku ? [{ items: { some: { skuId: sku.id } } }] : []),
         ],
       },
@@ -475,11 +493,24 @@ export async function purgeSandboxData(actor: Actor): Promise<{ success: boolean
     }
 
     // 7. Delete Customer & Supplier
-    const [delCust, delSupp] = await Promise.all([
-      tx.customer.deleteMany({ where: { code: DEMO_CUSTOMER_CODE } }),
-      tx.supplier.deleteMany({ where: { code: DEMO_SUPPLIER_CODE } }),
-    ]);
-    purged += delCust.count + delSupp.count;
+    if (demoCustomer) {
+      try {
+        await tx.customer.delete({ where: { id: demoCustomer.id } });
+        purged += 1;
+      } catch {
+        await tx.customer.update({ where: { id: demoCustomer.id }, data: { isActive: false } });
+        purged += 1;
+      }
+    }
+    if (demoSupplier) {
+      try {
+        await tx.supplier.delete({ where: { id: demoSupplier.id } });
+        purged += 1;
+      } catch {
+        await tx.supplier.update({ where: { id: demoSupplier.id }, data: { isActive: false } });
+        purged += 1;
+      }
+    }
 
     // 8. Delete Godown when no stock or document still references it
     if (godown) {

@@ -37,6 +37,7 @@ import { postTransfer } from "@/server/modules/transfers/transfer.service";
 import { createAdjustment } from "@/server/modules/adjustments/adjustments.service";
 import { reverseEntry } from "@/server/modules/reversals/reversals.service";
 import {
+  getSandboxStatus,
   purgeSandboxData,
   seedSandboxData,
 } from "@/server/modules/copilot/sandbox.service";
@@ -47,6 +48,12 @@ export interface AgentContext {
   route: string;
   userId?: string;
 }
+
+export type AgentChatHistoryItem = {
+  role: "user" | "assistant";
+  content: string;
+  confirmation?: CopilotConfirmation | Record<string, unknown> | null;
+};
 
 export interface AgentPlanStep {
   name: string;
@@ -518,7 +525,7 @@ function matchCommoditySpec(query: string, rawMessage: string): StatutoryCommodi
 
 function extractCommodityTarget(
   rawMessage: string,
-  history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
+  history?: AgentChatHistoryItem[],
 ): {
   commodity: string;
   isStateWise: boolean;
@@ -1118,7 +1125,7 @@ export class AutonomousAgentService {
    */
   static isPendingConfirmationReply(
     message: string,
-    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
+    history?: AgentChatHistoryItem[],
   ): boolean {
     const plan = AutonomousAgentService.planIntent(message, undefined, history);
     return plan.intent === "execute_pending_confirmation" || plan.intent === "cancel_pending_confirmation";
@@ -1129,7 +1136,7 @@ export class AutonomousAgentService {
    */
   static isOperationalOrConfirmation(
     message: string,
-    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
+    history?: AgentChatHistoryItem[],
   ): boolean {
     const plan = AutonomousAgentService.planIntent(message, undefined, history);
     return (
@@ -1180,7 +1187,7 @@ export class AutonomousAgentService {
   static isWriteIntent(
     message: string,
     context?: AgentContext,
-    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
+    history?: AgentChatHistoryItem[],
   ): boolean {
     const plan = AutonomousAgentService.planIntent(message, context, history);
     return (
@@ -1198,7 +1205,7 @@ export class AutonomousAgentService {
   static planIntent(
     message: string,
     context?: AgentContext,
-    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
+    history?: AgentChatHistoryItem[],
   ): { intent: string; steps: AgentPlanStep[]; pendingConfirmation?: CopilotConfirmation } {
     const text = message.toLowerCase().trim();
     const onInvoiceRoute = Boolean(context?.route?.startsWith("/invoices"));
@@ -1212,9 +1219,10 @@ export class AutonomousAgentService {
     const lastAssistantMsg = history
       ?.slice()
       .reverse()
-      .find((m) => m.role === "assistant" && m.confirmation && m.confirmation.status === "pending");
+      .find((m) => m.role === "assistant" && m.confirmation && (m.confirmation as Record<string, unknown>).status === "pending");
 
     if (lastAssistantMsg?.confirmation) {
+      const pendingConfirmation = lastAssistantMsg.confirmation as CopilotConfirmation;
       const isNegative = /\b(no|cancel|cancle|cencel|cancl|nahi|abort|ruk jao|mat karo|stop|nevermind|reject|chhod do|rehne do|chodo|dont do|don't do|na)\b/i.test(
         text,
       );
@@ -1226,14 +1234,14 @@ export class AutonomousAgentService {
         return {
           intent: "cancel_pending_confirmation",
           steps: [],
-          pendingConfirmation: lastAssistantMsg.confirmation,
+          pendingConfirmation,
         };
       }
       if (isAffirmative) {
         return {
           intent: "execute_pending_confirmation",
           steps: [],
-          pendingConfirmation: lastAssistantMsg.confirmation,
+          pendingConfirmation,
         };
       }
     }
@@ -1514,6 +1522,26 @@ export class AutonomousAgentService {
       /\b(ledger|entry|movement|wrong entry|galat entry)\b.*(reverse|revurse|revers|undo|ulta|wapas)/i.test(text)
     ) {
       return { intent: "propose_reverse_ledger", steps: [] };
+    }
+
+    // 4b. Status check: Is demo / sandbox data or demo supplier/user removed?
+    const isDemoStatusInquiry =
+      /\b(is|was|has|are|kya)\b.*(demo|sandbox).*(removed|deleted|purged|cleaned|cleared|hata|gaya)/i.test(text) ||
+      /\b(demo|sandbox)\b.*(is|was|has\s+been)\s+(removed|deleted|purged|cleared)/i.test(text) ||
+      /\b(status|check)\b.*(demo|sandbox)/i.test(text);
+
+    if (isDemoStatusInquiry) {
+      return {
+        intent: "check_demo_status",
+        steps: [
+          {
+            name: "Check Sandbox Demo Status",
+            toolName: "get_sandbox_status",
+            arguments: {},
+            description: "Checking whether demo SKUs, suppliers, or transactions still exist in database",
+          },
+        ],
+      };
     }
 
     // 5. Destructive / Environment: Purge Sandbox
@@ -3357,7 +3385,7 @@ export class AutonomousAgentService {
     message: string,
     context: AgentContext,
     actor?: Actor,
-    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
+    history?: AgentChatHistoryItem[],
     llmNotice?: string,
     onStepProgress?: (
       stepIndex: number,
@@ -3734,6 +3762,55 @@ export class AutonomousAgentService {
         actions: [{ label: "Open Stock Ledger", route: "/ledger", permission: "ledger.view" }],
         sources: ["Immutable Double-Entry Ledger & Reversal Guard"],
         confirmation,
+      };
+    }
+
+    // Status Check: Is Demo Data / Supplier Removed?
+    if (intent === "check_demo_status") {
+      const status = await getSandboxStatus();
+      const demoSupplier = await prisma.supplier.findUnique({
+        where: { code: "DEMO-SUPPLIER-01" },
+        select: { id: true, name: true, code: true, isActive: true },
+      });
+      const demoPoCount = await prisma.purchaseOrder.count({
+        where: { OR: [{ poNumber: { startsWith: "DEMO-" } }, { supplier: { code: "DEMO-SUPPLIER-01" } }] },
+      });
+
+      const isSupplierActive = Boolean(demoSupplier && demoSupplier.isActive);
+
+      if (isSupplierActive || status.hasDemoData) {
+        let md = `No, the demo supplier **Apex Agri Commodities Pvt Ltd** (\`DEMO-SUPPLIER-01\`) has not been removed yet.`;
+        if (demoPoCount > 0) {
+          md += ` It currently has **${demoPoCount} linked purchase order(s)** in the system.`;
+        }
+        md += `\n\nClick **"Purge Demo Data"** below to remove it completely.`;
+
+        confirmation = {
+          id: randomUUID(),
+          title: "Purge Demo Supplier: Apex Agri Commodities Pvt Ltd",
+          description: "Remove the demo supplier Apex Agri Commodities Pvt Ltd and its associated demo purchase orders.",
+          actionType: "PURGE_SANDBOX",
+          payload: { supplierCode: "DEMO-SUPPLIER-01" },
+          destructive: true,
+          confirmLabel: "Confirm & Purge",
+          cancelLabel: "Cancel",
+          status: "pending",
+        };
+
+        return {
+          stepsExecuted: [],
+          markdownAnswer: md,
+          actions: [{ label: "View Suppliers", route: "/suppliers", permission: "master.view" }],
+          sources: ["Database Vendor Master"],
+          confirmation,
+        };
+      }
+
+      return {
+        stepsExecuted: [],
+        markdownAnswer: `Yes, all demo records (including the demo supplier and associated sample transactions) have been completely removed. Your directory contains only production records.`,
+        actions: [{ label: "View Suppliers", route: "/suppliers", permission: "master.view" }],
+        sources: ["Database Vendor Master"],
       };
     }
 
@@ -5520,7 +5597,7 @@ export class AutonomousAgentService {
     message: string,
     context: AgentContext,
     actor?: Actor,
-    history?: Array<{ role: "user" | "assistant"; content: string; confirmation?: CopilotConfirmation | null }>,
+    history?: AgentChatHistoryItem[],
     llmNotice?: string,
   ): ReadableStream<Uint8Array> {
     return new ReadableStream<Uint8Array>({
