@@ -7,6 +7,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/form-controls";
 import { cn } from "@/lib/cn";
 import { CameraScanner, useCameraScanSupported } from "./camera-scanner";
+import { PhoneScanButton } from "./phone-scan-button";
 
 export interface ScanStatus {
   tone: "success" | "error" | "info";
@@ -91,6 +92,7 @@ export function ScanInput({
             <Camera aria-hidden /> {!compact && "Use camera"}
           </Button>
         )}
+        <PhoneScanButton onScan={onScan} compact={compact} />
       </div>
       {status && (
         <p role="status" className={cn("mt-1 text-xs", STATUS_CLASS[status.tone])}>

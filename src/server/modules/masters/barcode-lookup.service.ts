@@ -38,6 +38,47 @@ export interface BarcodeLookupResult {
   catalogDetails?: CatalogProductDetails;
 }
 
+export function cleanCategoryName(raw: string): string {
+  return raw
+    .trim()
+    .replace(/[_/]/g, " ")
+    .replace(/\s+/g, " ")
+    .split(" ")
+    .map((w) =>
+      w.length <= 2 && w.toLowerCase() !== "in" && w.toLowerCase() !== "of"
+        ? w.toUpperCase()
+        : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase(),
+    )
+    .join(" ");
+}
+
+export function cleanCommercialProductName(rawName: string, brand?: string): string {
+  let name = rawName.trim().replace(/\s+/g, " ");
+
+  if (brand && brand.trim()) {
+    const b = brand.trim();
+    const escapedBrand = b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const duplicateBrandRegex = new RegExp(`^(${escapedBrand})\\s+(${escapedBrand})\\b`, "i");
+    name = name.replace(duplicateBrandRegex, "$1");
+  }
+
+  if (name === name.toUpperCase() && name.length > 3) {
+    name = name
+      .toLowerCase()
+      .split(" ")
+      .map((word) => {
+        if (["kg", "gm", "g", "ltr", "l", "ml", "pcs", "pack", "fmcg", "gs1", "hsn", "gst", "sku"].includes(word)) {
+          return word.toUpperCase();
+        }
+        return word.charAt(0).toUpperCase() + word.slice(1);
+      })
+      .join(" ");
+  }
+
+  name = name.replace(/[\s,.-]+$/, "").trim();
+  return name;
+}
+
 /** Queries public Open Food Facts registry for FMCG / food / commodity barcode metadata */
 async function fetchFromOpenRegistry(barcode: string): Promise<{ name?: string; brand?: string; description?: string; uom?: string } | null> {
   try {
@@ -58,7 +99,7 @@ async function fetchFromOpenRegistry(barcode: string): Promise<{ name?: string; 
         const fullName = brand && !cleanName.toLowerCase().includes(brand.toLowerCase()) ? `${brand} ${cleanName}` : cleanName;
         const uomMatch = quantity ? quantity.match(/\b(kg|gm?|g|ltr?|l|ml|pcs|pack)\b/i)?.[0].toUpperCase() : undefined;
         return {
-          name: fullName,
+          name: cleanCommercialProductName(fullName, brand),
           brand,
           description: quantity ? `${fullName} (${quantity})` : fullName,
           uom: uomMatch,
@@ -115,11 +156,12 @@ Respond strictly in JSON with these keys:
       if (match) {
         const parsed = JSON.parse(match[0]);
         if (parsed.name && typeof parsed.name === "string" && parsed.name.trim()) {
+          const brand = parsed.brand ? String(parsed.brand).trim() : undefined;
           return {
-            name: parsed.name.trim(),
-            brand: parsed.brand ? String(parsed.brand).trim() : undefined,
+            name: cleanCommercialProductName(parsed.name.trim(), brand),
+            brand,
             description: parsed.description ? String(parsed.description).trim() : undefined,
-            category: parsed.category ? String(parsed.category).trim() : undefined,
+            category: parsed.category ? cleanCategoryName(String(parsed.category)) : undefined,
             uom: parsed.uom ? String(parsed.uom).trim() : undefined,
             hsnCode: parsed.hsnCode ? String(parsed.hsnCode).replace(/\D/g, "") : undefined,
             gstRate: parsed.gstRate !== undefined ? String(parsed.gstRate).replace("%", "").trim() : undefined,
@@ -212,10 +254,10 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
     }
   }
 
-  // 5. Match category against existing DB categories
+  // 5. Match or Auto-Create Category in Database
   let matchedCategoryId: string | undefined;
   if (suggestedCategoryName && categories.length > 0) {
-    const sCat = suggestedCategoryName.toLowerCase();
+    const sCat = suggestedCategoryName.toLowerCase().trim();
     const matched = categories.find(
       (c) => c.name.toLowerCase() === sCat || sCat.includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(sCat),
     );
@@ -227,8 +269,35 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
       }
     }
   }
-  if (!matchedCategoryId && categories.length > 0) {
-    // If no direct category match, pick the first active category as default fallback
+
+  // If no direct category match in DB, auto-create it so the SKU has the correct classification!
+  if (!matchedCategoryId && suggestedCategoryName && suggestedCategoryName.trim()) {
+    const formattedCatName = cleanCategoryName(suggestedCategoryName);
+    const validCategoryHsn = suggestedHsn && hsnCodes.some((h) => h.code === suggestedHsn) ? suggestedHsn : null;
+    try {
+      const createdCategory = await prisma.category.create({
+        data: {
+          name: formattedCatName,
+          isActive: true,
+          hsnCode: validCategoryHsn,
+        },
+      });
+      matchedCategoryId = createdCategory.id;
+      suggestedCategoryName = createdCategory.name;
+    } catch {
+      // Handle collision or concurrent creation
+      const found = await prisma.category.findFirst({
+        where: { name: { equals: formattedCatName, mode: "insensitive" } },
+      });
+      if (found) {
+        matchedCategoryId = found.id;
+        suggestedCategoryName = found.name;
+      } else if (categories.length > 0) {
+        matchedCategoryId = categories[0].id;
+        suggestedCategoryName = categories[0].name;
+      }
+    }
+  } else if (!matchedCategoryId && categories.length > 0) {
     matchedCategoryId = categories[0].id;
     suggestedCategoryName = categories[0].name;
   }

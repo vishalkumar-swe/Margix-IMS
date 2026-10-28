@@ -13,6 +13,7 @@ const SESSION_COOKIE_NAME = "margix_session";
 const PUBLIC_PATHS = new Set([
   "/",
   "/login",
+  "/scan-remote",
   "/api/v1/auth/login",
   "/api/v1/auth/logout",
   "/api/health",
@@ -27,7 +28,7 @@ export function proxy(request: NextRequest) {
   // a cookie can be present but expired, and bouncing it to a page that sends
   // invalid sessions back to /login would loop forever. The login page itself
   // sends signed-in users on after checking the session in the database.
-  if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
+  if (PUBLIC_PATHS.has(pathname) || pathname.startsWith("/api/v1/scan-session/")) return NextResponse.next();
 
   if (hasSession) return NextResponse.next();
 

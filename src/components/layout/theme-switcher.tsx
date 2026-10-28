@@ -17,6 +17,8 @@ const FADE_MS = 300;
 
 /** Applies a theme to every themed scope on the page and remembers it for a year. */
 function applyTheme(theme: Theme): void {
+  document.documentElement.setAttribute("data-theme", theme);
+  document.body.setAttribute("data-theme", theme);
   document.querySelectorAll<HTMLElement>("[data-theme]").forEach((el) => el.setAttribute("data-theme", theme));
   document.cookie = `${THEME_COOKIE}=${theme}; path=/; max-age=31536000; samesite=lax`;
 }

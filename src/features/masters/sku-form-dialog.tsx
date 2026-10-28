@@ -16,6 +16,7 @@ import { humanize } from "@/lib/format";
 import { SKU_STATUSES } from "@/lib/enums";
 import { HsnPicker } from "./hsn-picker";
 import { CameraScanButton } from "@/features/scan/camera-scan-button";
+import { PhoneScanButton } from "@/features/scan/phone-scan-button";
 import { useBarcodeLookup, type AutoFillCatalogDetails } from "@/features/scan/use-barcode-lookup";
 
 export interface SkuFormValues {
@@ -111,7 +112,18 @@ export function SkuFormDialog({
   /** GST rate of the HSN code last picked, to tell following it from overriding it. */
   const [hsnRate, setHsnRate] = useState<string | null>(null);
 
+  const [newCatOpen, setNewCatOpen] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
+  const [creatingCat, setCreatingCat] = useState(false);
+
   const onAutoFill = useCallback((details: AutoFillCatalogDetails) => {
+    if (details.suggestedCategoryId && details.suggestedCategoryName) {
+      setLoadedCategories((prev) => {
+        if (prev.some((c) => c.id === details.suggestedCategoryId)) return prev;
+        return [...prev, { id: details.suggestedCategoryId!, name: details.suggestedCategoryName! }];
+      });
+    }
+
     setForm((prev) => ({
       ...prev,
       name: details.name || prev.name,
@@ -125,6 +137,26 @@ export function SkuFormDialog({
       setHsnRate(details.suggestedGstRate);
     }
   }, []);
+
+  const handleQuickCreateCategory = async () => {
+    const name = newCatName.trim();
+    if (!name) return;
+    setCreatingCat(true);
+    try {
+      const created = await apiRequest<{ id: string; name: string }>("/categories", {
+        method: "POST",
+        body: { name },
+      });
+      setLoadedCategories((prev) => [...prev, created]);
+      setForm((prev) => ({ ...prev, categoryId: created.id }));
+      setNewCatName("");
+      setNewCatOpen(false);
+    } catch {
+      // Handled
+    } finally {
+      setCreatingCat(false);
+    }
+  };
 
   const { lookingUp, status: barcodeStatus, lookupBarcode } = useBarcodeLookup({
     onAutoFill,
@@ -229,15 +261,56 @@ export function SkuFormDialog({
                 onChange={(e) => set("name", e.target.value)}
               />
             </Field>
-            <Field label="Category" htmlFor={id("category")} error={errors.categoryId}>
-              <Select id={id("category")} value={form.categoryId} onChange={(e) => set("categoryId", e.target.value)}>
-                <option value="">None</option>
-                {loadedCategories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
+            <Field
+              label="Category"
+              htmlFor={id("category")}
+              error={errors.categoryId}
+              hint={
+                <button
+                  type="button"
+                  onClick={() => setNewCatOpen((v) => !v)}
+                  className="text-brand-600 hover:text-brand-700 underline text-xs font-semibold ml-1 inline-flex items-center gap-0.5"
+                >
+                  <Plus className="size-3 inline" /> {newCatOpen ? "Cancel" : "Add category"}
+                </button>
+              }
+            >
+              <div className="space-y-1.5">
+                <Select id={id("category")} value={form.categoryId} onChange={(e) => set("categoryId", e.target.value)}>
+                  <option value="">None</option>
+                  {loadedCategories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </Select>
+                {newCatOpen && (
+                  <div className="flex gap-2 pt-1 animate-in fade-in duration-150">
+                    <Input
+                      value={newCatName}
+                      placeholder="New category name"
+                      onChange={(e) => setNewCatName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void handleQuickCreateCategory();
+                        }
+                      }}
+                      className="h-8 text-xs"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={handleQuickCreateCategory}
+                      loading={creatingCat}
+                      disabled={!newCatName.trim()}
+                      className="h-8 text-xs shrink-0"
+                    >
+                      Save
+                    </Button>
+                  </div>
+                )}
+              </div>
             </Field>
             <Field label="Unit" htmlFor={id("uom")} error={errors.baseUomId} required hint="Cannot change once stock has moved.">
               <Select
@@ -328,6 +401,15 @@ export function SkuFormDialog({
                   />
                   <CameraScanButton
                     title="Scan barcode with camera"
+                    onScan={(code) => {
+                      setForm((prev) => ({ ...prev, barcode: code }));
+                      if (!editing) {
+                        lookupBarcode(code, true);
+                      }
+                    }}
+                  />
+                  <PhoneScanButton
+                    title="Connect mobile phone as scanner"
                     onScan={(code) => {
                       setForm((prev) => ({ ...prev, barcode: code }));
                       if (!editing) {

@@ -93,9 +93,15 @@ export function Dialog({
     return null;
   }
 
+  const currentTheme =
+    typeof document !== "undefined"
+      ? (document.documentElement.getAttribute("data-theme") || undefined)
+      : undefined;
+
   const content = (
     <dialog
       ref={ref}
+      data-theme={currentTheme}
       onClose={handleClose}
       onCancel={handleCancel}
       onClick={handleBackdropClick}

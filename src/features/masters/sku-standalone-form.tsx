@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
-import { Loader2, Sparkles } from "lucide-react";
+import { Loader2, Plus, Sparkles } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import { cn } from "@/lib/cn";
 import { emitCopilotEvent } from "@/lib/copilot/runtime";
 import { HsnPicker } from "./hsn-picker";
 import { CameraScanButton } from "@/features/scan/camera-scan-button";
+import { PhoneScanButton } from "@/features/scan/phone-scan-button";
 import { useBarcodeLookup } from "@/features/scan/use-barcode-lookup";
 import { EMPTY_SKU, type SkuFormValues } from "./sku-form-dialog";
 
@@ -35,8 +36,24 @@ export function SkuStandaloneForm({
   }));
   const [hsnRate, setHsnRate] = useState<string | null>(null);
 
+  const [loadedCategories, setLoadedCategories] = useState<{ id: string; name: string }[]>(categories);
+  const [newCatOpen, setNewCatOpen] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
+  const [creatingCat, setCreatingCat] = useState(false);
+
+  useEffect(() => {
+    if (categories?.length) setLoadedCategories(categories);
+  }, [categories]);
+
   const { lookingUp, status: barcodeStatus, lookupBarcode } = useBarcodeLookup({
     onAutoFill: (details) => {
+      if (details.suggestedCategoryId && details.suggestedCategoryName) {
+        setLoadedCategories((prev) => {
+          if (prev.some((c) => c.id === details.suggestedCategoryId)) return prev;
+          return [...prev, { id: details.suggestedCategoryId!, name: details.suggestedCategoryName! }];
+        });
+      }
+
       setForm((prev) => ({
         ...prev,
         name: details.name || prev.name,
@@ -51,6 +68,26 @@ export function SkuStandaloneForm({
       }
     },
   });
+
+  const handleQuickCreateCategory = async () => {
+    const name = newCatName.trim();
+    if (!name) return;
+    setCreatingCat(true);
+    try {
+      const created = await apiRequest<{ id: string; name: string }>("/categories", {
+        method: "POST",
+        body: { name },
+      });
+      setLoadedCategories((prev) => [...prev, created]);
+      setForm((prev) => ({ ...prev, categoryId: created.id }));
+      setNewCatName("");
+      setNewCatOpen(false);
+    } catch {
+      // Handled
+    } finally {
+      setCreatingCat(false);
+    }
+  };
 
   useEffect(() => {
     if (initialBarcode) {
@@ -117,15 +154,56 @@ export function SkuStandaloneForm({
                 onChange={(e) => set("name", e.target.value)}
               />
             </Field>
-            <Field label="Category" htmlFor="sku-category-select" error={errors.categoryId}>
-              <Select id="sku-category-select" value={form.categoryId} onChange={(e) => set("categoryId", e.target.value)}>
-                <option value="">None</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
+            <Field
+              label="Category"
+              htmlFor="sku-category-select"
+              error={errors.categoryId}
+              hint={
+                <button
+                  type="button"
+                  onClick={() => setNewCatOpen((v) => !v)}
+                  className="text-brand-600 hover:text-brand-700 underline text-xs font-semibold ml-1 inline-flex items-center gap-0.5"
+                >
+                  <Plus className="size-3 inline" /> {newCatOpen ? "Cancel" : "Add category"}
+                </button>
+              }
+            >
+              <div className="space-y-1.5">
+                <Select id="sku-category-select" value={form.categoryId} onChange={(e) => set("categoryId", e.target.value)}>
+                  <option value="">None</option>
+                  {loadedCategories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </Select>
+                {newCatOpen && (
+                  <div className="flex gap-2 pt-1 animate-in fade-in duration-150">
+                    <Input
+                      value={newCatName}
+                      placeholder="New category name"
+                      onChange={(e) => setNewCatName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void handleQuickCreateCategory();
+                        }
+                      }}
+                      className="h-8 text-xs"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={handleQuickCreateCategory}
+                      loading={creatingCat}
+                      disabled={!newCatName.trim()}
+                      className="h-8 text-xs shrink-0"
+                    >
+                      Save
+                    </Button>
+                  </div>
+                )}
+              </div>
             </Field>
             <Field label="Unit" htmlFor="base-unit-select" error={errors.baseUomId} required hint="Cannot change once stock has moved.">
               <Select
@@ -211,6 +289,13 @@ export function SkuStandaloneForm({
                   />
                   <CameraScanButton
                     title="Scan barcode with camera"
+                    onScan={(code) => {
+                      setForm((prev) => ({ ...prev, barcode: code }));
+                      lookupBarcode(code, true);
+                    }}
+                  />
+                  <PhoneScanButton
+                    title="Connect mobile phone as scanner"
                     onScan={(code) => {
                       setForm((prev) => ({ ...prev, barcode: code }));
                       lookupBarcode(code, true);

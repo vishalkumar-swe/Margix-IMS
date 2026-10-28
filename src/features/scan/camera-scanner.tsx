@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FlipHorizontal, Image, Loader2, Volume2, VolumeX, Zap, ZapOff } from "lucide-react";
+import { FlipHorizontal, Image, Loader2, Smartphone, Volume2, VolumeX, Zap, ZapOff } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { PhoneScannerModal } from "./phone-scanner-modal";
 
 /**
  * Camera scanning. Uses the browser's native BarcodeDetector where it exists
@@ -35,7 +36,7 @@ const WANTED_FORMATS = ["qr_code", "code_128", "ean_13", "ean_8", "upc_a", "upc_
 const SCAN_INTERVAL_MS = 80;
 
 /** The native detector when the browser has one, otherwise the bundled ZXing ponyfill. */
-async function loadDetectorClass(): Promise<BarcodeDetectorClass> {
+export async function loadDetectorClass(): Promise<BarcodeDetectorClass> {
   const native = (globalThis as { BarcodeDetector?: BarcodeDetectorClass }).BarcodeDetector;
   if (native) return native;
   const { BarcodeDetector, prepareZXingModule, ZXING_WASM_VERSION } = await import("barcode-detector/ponyfill");
@@ -122,6 +123,7 @@ export function CameraScanner({
   const [hasTorch, setHasTorch] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [phoneModalOpen, setPhoneModalOpen] = useState(false);
   const soundEnabledRef = useRef(soundEnabled);
   useEffect(() => {
     soundEnabledRef.current = soundEnabled;
@@ -390,6 +392,17 @@ export function CameraScanner({
 
           <Button
             type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => setPhoneModalOpen(true)}
+            title="Connect your mobile phone as wireless scanner"
+            className="h-7.5 px-2.5 text-xs text-slate-600 font-medium"
+          >
+            <Smartphone className="size-3.5 mr-1" /> Phone
+          </Button>
+
+          <Button
+            type="button"
             variant="ghost"
             size="icon"
             onClick={() => setSoundEnabled((v) => !v)}
@@ -410,6 +423,17 @@ export function CameraScanner({
       <p className="text-center text-xs text-slate-500">
         {detectedCode ? "Success! Applying scanned barcode..." : "Align barcode or QR code inside the box."}
       </p>
+
+      {phoneModalOpen && (
+        <PhoneScannerModal
+          open={phoneModalOpen}
+          onClose={() => setPhoneModalOpen(false)}
+          onScan={(code) => {
+            setPhoneModalOpen(false);
+            onDetected(code);
+          }}
+        />
+      )}
     </div>
   );
 }
