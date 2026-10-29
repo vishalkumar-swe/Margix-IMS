@@ -48,14 +48,14 @@ export function TableOfContents({ items }: TableOfContentsProps) {
   };
 
   return (
-    <aside className="hidden xl:block w-64 shrink-0 pl-8">
-      <div className="sticky top-24 space-y-4">
+    <aside className="hidden xl:block w-56 2xl:w-60 shrink-0 pl-6">
+      <div className="sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto space-y-3 pr-1">
         <div className="flex items-center gap-1.5 text-xs font-semibold tracking-wider text-slate-400 uppercase">
           <ListFilter className="size-3.5 text-brand-600" />
           <span>On this page</span>
         </div>
 
-        <nav className="max-h-[calc(100vh-14rem)] overflow-y-auto space-y-1 pr-2 text-xs">
+        <nav className="space-y-0.5 text-xs">
           {items.map((item) => {
             const isActive = activeId === item.id;
             return (
