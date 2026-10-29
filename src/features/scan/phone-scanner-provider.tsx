@@ -1,7 +1,6 @@
 "use client";
 
 import { CheckCircle2, Smartphone, Wifi } from "lucide-react";
-import { useRouter } from "next/navigation";
 import QRCode from "qrcode";
 import {
   createContext,
@@ -14,7 +13,6 @@ import {
   type ReactNode,
 } from "react";
 import { apiRequest } from "@/lib/api-client";
-import { lookupDocument, lookupSku } from "./scan-lookup";
 
 export const PHONE_SESSION_STORAGE_KEY = "margix_phone_scan_session_id";
 export const BARCODE_SCANNED_EVENT = "margix:barcode-scanned";
@@ -75,8 +73,6 @@ interface PhoneScannerContextValue {
 const PhoneScannerContext = createContext<PhoneScannerContextValue | null>(null);
 
 export function PhoneScannerProvider({ children }: { children: ReactNode }) {
-  const router = useRouter();
-
   const [sessionId, setSessionId] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     try {
@@ -239,37 +235,14 @@ export function PhoneScannerProvider({ children }: { children: ReactNode }) {
               setToastBarcode(null);
             }, 3000);
 
-            // Dispatch event to see if an active dialog or form handles it
+            // Dispatch event to see if an active dialog, form, or ScanInput handles it
             const event = new CustomEvent<BarcodeScannedEventDetail>(BARCODE_SCANNED_EVENT, {
               detail: { barcode: code },
               cancelable: true,
             });
-            const consumed = !window.dispatchEvent(event);
-
-            // If no form consumed the event, perform global smart routing
-            if (!consumed) {
-              void (async () => {
-                try {
-                  const doc = await lookupDocument(code);
-                  if (doc) {
-                    router.push(doc.url);
-                    return;
-                  }
-                  const sku = await lookupSku(code);
-                  if (sku) {
-                    router.push(`/stock/${sku.id}`);
-                    return;
-                  }
-                  // Numeric barcode not in DB: open SKU creation form with pre-filled code
-                  if (/^\d{6,14}$/.test(code)) {
-                    router.push(`/masters/skus/new?barcode=${encodeURIComponent(code)}`);
-                    return;
-                  }
-                } catch {
-                  // ignore
-                }
-              })();
-            }
+            window.dispatchEvent(event);
+            // Ambient scan is handled in-place by the active form or editor.
+            // We never force navigation away to another page or create an unexpected order.
           }
         }
       } catch (err) {
@@ -294,7 +267,7 @@ export function PhoneScannerProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [sessionId, router]);
+  }, [sessionId]);
 
   const value = useMemo<PhoneScannerContextValue>(
     () => ({

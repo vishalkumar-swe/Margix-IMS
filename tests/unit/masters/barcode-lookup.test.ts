@@ -41,6 +41,40 @@ describe("Barcode Intelligence Lookup", () => {
     expect(parleG.catalogDetails?.name).toContain("Parle-G");
     expect(parleG.catalogDetails?.brand).toBe("Parle");
     expect(parleG.catalogDetails?.suggestedHsnCode).toBe("19053100");
+
+    // Water bottle: Bisleri 1L
+    const bisleri = await lookupBarcodeDetails("8906003920042");
+    expect(bisleri.catalogDetails?.name).toContain("Bisleri");
+    expect(bisleri.catalogDetails?.brand).toBe("Bisleri");
+    expect(bisleri.catalogDetails?.suggestedHsnCode).toBe("22011010");
+    expect(bisleri.catalogDetails?.suggestedCategoryName).toContain("Water");
+
+    // Soap: Mysore Sandal Soap 75g
+    const mysoreSandal = await lookupBarcodeDetails("8901416001018");
+    expect(mysoreSandal.catalogDetails?.name).toContain("Mysore Sandal");
+    expect(mysoreSandal.catalogDetails?.suggestedHsnCode).toBe("34011110");
+    expect(mysoreSandal.catalogDetails?.suggestedCategoryName).toContain("Bathing");
+
+    // Soap: Dettol Original Soap 125g
+    const dettolSoap = await lookupBarcodeDetails("8901023011027");
+    expect(dettolSoap.catalogDetails?.name).toContain("Dettol");
+    expect(dettolSoap.catalogDetails?.suggestedHsnCode).toBe("34011110");
+
+    // Lotion: Vaseline Deep Restore 200ml
+    const vaseline = await lookupBarcodeDetails("8901030368123");
+    expect(vaseline.catalogDetails?.name).toContain("Vaseline");
+    expect(vaseline.catalogDetails?.brand).toBe("Vaseline");
+    expect(vaseline.catalogDetails?.suggestedCategoryName).toContain("Skin Care");
+
+    // Lotion: Nivea Body Milk 200ml
+    const nivea = await lookupBarcodeDetails("8904052401022");
+    expect(nivea.catalogDetails?.name).toContain("Nivea");
+    expect(nivea.catalogDetails?.suggestedHsnCode).toBe("33049990");
+
+    // Cold Drink: Thums Up 750ml
+    const thumsUp = await lookupBarcodeDetails("8901491102019");
+    expect(thumsUp.catalogDetails?.name).toContain("Thums Up");
+    expect(thumsUp.catalogDetails?.suggestedGstRate).toBe("28");
   });
 
   it("identifies manufacturer and brand from GS1 India prefix even when offline", async () => {
@@ -49,6 +83,13 @@ describe("Barcode Intelligence Lookup", () => {
     expect(amulItem.catalogDetails).toBeDefined();
     expect(amulItem.catalogDetails?.brand).toBe("Amul");
     expect(amulItem.catalogDetails?.suggestedCategoryName).toContain("Dairy");
+
+    // Barcode with Bisleri water prefix (8906003xxxxxx)
+    const bisleriItem = await lookupBarcodeDetails("8906003888888");
+    expect(bisleriItem.catalogDetails).toBeDefined();
+    expect(bisleriItem.catalogDetails?.brand).toBe("Bisleri");
+    expect(bisleriItem.catalogDetails?.name).toContain("Bisleri Packaged Drinking Water");
+    expect(bisleriItem.catalogDetails?.suggestedCategoryName).toContain("Water");
 
     // Barcode with HUL prefix (8901030xxxxxx)
     const hulItem = await lookupBarcodeDetails("8901030999999");

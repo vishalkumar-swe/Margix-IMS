@@ -50,6 +50,7 @@ export function GlobalScan({ className }: { className?: string }) {
         onScan={open}
         busy={busy}
         inputClassName="h-8"
+        enableAmbientScan={false}
       />
       {status && (
         <p

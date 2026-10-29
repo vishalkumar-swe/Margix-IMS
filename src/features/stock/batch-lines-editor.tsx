@@ -8,6 +8,7 @@ import { Input, Select } from "@/components/ui/form-controls";
 import { Table, TBody, TD, TH, THead } from "@/components/ui/table";
 import { ScanInput, type ScanStatus } from "@/features/scan/scan-input";
 import { resolveScannedSku } from "@/features/scan/scan-lookup";
+import { EMPTY_SKU, SkuFormDialog } from "@/features/masters/sku-form-dialog";
 import { apiRequest } from "@/lib/api-client";
 import { formatQuantity } from "@/lib/format";
 import type { SkuOption } from "@/lib/options";
@@ -67,6 +68,8 @@ export function BatchLinesEditor({
   const [fefoMessages, setFefoMessages] = useState<Record<string, string>>({});
   const [fefoPending, setFefoPending] = useState<string | null>(null);
   const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null);
+  const [unregisteredBarcode, setUnregisteredBarcode] = useState<string | null>(null);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
   const update = (key: string, patch: Partial<BatchLine>) =>
     onChange(lines.map((line) => (line.key === key ? { ...line, ...patch } : line)));
 
@@ -107,8 +110,12 @@ export function BatchLinesEditor({
     const result = await resolveScannedSku(skus, code, "cannot be picked here");
     if ("error" in result) {
       setScanStatus({ tone: "error", text: result.error });
+      if (code.trim().length >= 3) {
+        setUnregisteredBarcode(code.trim());
+      }
       return;
     }
+    setUnregisteredBarcode(null);
     const { sku } = result;
     const index = lines.findIndex((line) => line.skuId === sku.id);
     if (index >= 0) {
@@ -136,7 +143,54 @@ export function BatchLinesEditor({
       />
       <div className="border-b border-slate-200 px-5 py-3">
         <ScanInput label="Scan product" onScan={selectScanned} status={scanStatus} className="max-w-xl" />
+        {unregisteredBarcode && (
+          <div className="mt-2.5 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-900 max-w-xl">
+            <div className="flex items-center gap-2 min-w-0">
+              <Sparkles className="size-4 text-amber-600 shrink-0" />
+              <span className="truncate">
+                Barcode <strong>{unregisteredBarcode}</strong> is not in your master catalog yet.
+              </span>
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setQuickAddOpen(true)}
+              className="bg-white hover:bg-slate-50 shrink-0 text-xs h-7 px-2.5 font-medium shadow-xs"
+            >
+              <Plus className="size-3.5 mr-1" /> Quick Add Product
+            </Button>
+          </div>
+        )}
       </div>
+      {quickAddOpen && (
+        <SkuFormDialog
+          open={quickAddOpen}
+          onOpenChange={setQuickAddOpen}
+          initial={{ ...EMPTY_SKU, barcode: unregisteredBarcode ?? "" }}
+          onCreated={(newSku) => {
+            const mappedSku: SkuOption = {
+              id: newSku.id,
+              code: newSku.code,
+              name: newSku.name,
+              unit: "PCS",
+              baseUomId: newSku.baseUomId,
+              decimalPlaces: 0,
+              isBatchTracked: true,
+              units: [],
+              hsnCode: null,
+              gstRate: newSku.gstRate ?? null,
+              barcode: newSku.barcode ?? unregisteredBarcode,
+            };
+            skus.push(mappedSku);
+            const blank = lines.find((l) => !l.skuId);
+            const line = { ...(blank ?? emptyBatchLine()), skuId: newSku.id, batchId: "", available: null };
+            onChange(blank ? lines.map((l) => (l.key === blank.key ? line : l)) : [...lines, line]);
+            setScanStatus({ tone: "success", text: `Added new product ${newSku.code} · ${newSku.name}.` });
+            setUnregisteredBarcode(null);
+            focusQuantity(line.key);
+          }}
+        />
+      )}
       <Table>
         <THead>
           <tr>

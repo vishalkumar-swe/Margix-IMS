@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/form-controls";
 import { cn } from "@/lib/cn";
 import { CameraScanner, useCameraScanSupported } from "./camera-scanner";
 import { PhoneScanButton } from "./phone-scan-button";
+import { useBarcodeScanListener } from "./phone-scanner-provider";
 
 export interface ScanStatus {
   tone: "success" | "error" | "info";
@@ -37,6 +38,7 @@ export function ScanInput({
   className,
   inputClassName,
   compact = false,
+  enableAmbientScan = true,
 }: {
   onScan: (code: string) => void;
   label?: string;
@@ -49,10 +51,20 @@ export function ScanInput({
   inputClassName?: string;
   /** Icon-only camera button (tight spaces such as the header). */
   compact?: boolean;
+  /** Whether to listen for ambient wireless phone scans. Defaults to true. */
+  enableAmbientScan?: boolean;
 }) {
   const [value, setValue] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
   const cameraSupported = useCameraScanSupported();
+
+  useBarcodeScanListener(
+    (code) => {
+      if (busy) return;
+      onScan(code);
+    },
+    enableAmbientScan,
+  );
 
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key !== "Enter") return;

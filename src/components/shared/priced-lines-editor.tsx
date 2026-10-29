@@ -111,6 +111,7 @@ export function PricedLinesEditor({
       setScanStatus({ tone: "error", text: result.error });
       if (code.trim().length >= 3) {
         setUnregisteredBarcode(code.trim());
+        setQuickAddOpen(true);
       }
       return;
     }
