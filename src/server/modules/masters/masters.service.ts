@@ -45,8 +45,8 @@ export function createSku(actor: Actor, input: SkuCreateInput) {
     await recordAudit(tx, actor, { action: "MASTER_CREATED", entityType: "Sku", entityId: sku.id, newData: sku });
     if (sku.barcode) {
       invalidateBarcodeCache(sku.barcode);
-      tx.globalProductCatalog
-        .upsert({
+      try {
+        await tx.globalProductCatalog.upsert({
           where: { barcode: sku.barcode },
           create: {
             barcode: sku.barcode,
@@ -65,8 +65,10 @@ export function createSku(actor: Actor, input: SkuCreateInput) {
             source: "merchant",
             confidence: "high",
           },
-        })
-        .catch(() => {});
+        });
+      } catch {
+        // Non-blocking catalog sync
+      }
     }
     return sku;
   });
@@ -109,8 +111,8 @@ export function updateSku(actor: Actor, id: string, input: SkuUpdateInput) {
     });
     if (after.barcode) {
       invalidateBarcodeCache(after.barcode);
-      tx.globalProductCatalog
-        .upsert({
+      try {
+        await tx.globalProductCatalog.upsert({
           where: { barcode: after.barcode },
           create: {
             barcode: after.barcode,
@@ -129,8 +131,10 @@ export function updateSku(actor: Actor, id: string, input: SkuUpdateInput) {
             source: "merchant",
             confidence: "high",
           },
-        })
-        .catch(() => {});
+        });
+      } catch {
+        // Non-blocking catalog sync
+      }
     }
     return after;
   });

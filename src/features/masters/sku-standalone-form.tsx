@@ -55,12 +55,22 @@ export function SkuStandaloneForm({
         });
       }
 
+      let resolvedUomId = details.suggestedBaseUomId;
+      if (!resolvedUomId && details.suggestedUomCode && uoms.length > 0) {
+        const match = uoms.find(
+          (u) =>
+            u.code.toUpperCase() === details.suggestedUomCode?.toUpperCase() ||
+            u.name.toUpperCase().includes(details.suggestedUomCode!.toUpperCase()),
+        );
+        if (match) resolvedUomId = match.id;
+      }
+
       setForm((prev) => ({
         ...prev,
         name: details.name || prev.name,
         description: details.description ?? prev.description,
         categoryId: details.suggestedCategoryId ?? prev.categoryId,
-        baseUomId: details.suggestedBaseUomId ?? prev.baseUomId,
+        baseUomId: resolvedUomId ?? prev.baseUomId,
         hsnCode: details.suggestedHsnCode ?? prev.hsnCode,
         gstRate: details.suggestedGstRate ?? prev.gstRate,
       }));
@@ -94,7 +104,7 @@ export function SkuStandaloneForm({
   useEffect(() => {
     if (initialBarcode && initialLookedUpRef.current !== initialBarcode) {
       initialLookedUpRef.current = initialBarcode;
-      void lookupBarcode(initialBarcode, false);
+      void lookupBarcode(initialBarcode, true);
     }
   }, [initialBarcode, lookupBarcode]);
 

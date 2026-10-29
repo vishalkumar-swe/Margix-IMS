@@ -1,5 +1,6 @@
 import { prisma } from "@/server/db/client";
 import { parseScannedBarcode, type ParsedIndustrialBarcode } from "@/lib/industrial-barcode";
+import { suggestHsnCodes } from "@/server/modules/hsn/hsn.queries";
 import {
   barcodeDiscoveryService,
   cleanCategoryName,
@@ -187,8 +188,36 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
     where: { barcode },
   });
 
-  if (dbCatalogHit) {
-    const matchedCategoryId = resolveOrMatchCategory(dbCatalogHit.category ?? undefined, dbCatalogHit.hsnCode ?? undefined, categories);
+  const isPoisonedHit =
+    dbCatalogHit &&
+    (dbCatalogHit.source === "inferred" ||
+      dbCatalogHit.name.startsWith("Scanned Item") ||
+      dbCatalogHit.name.includes("Product (000000)"));
+
+  if (dbCatalogHit && !isPoisonedHit) {
+    let hsnCode = dbCatalogHit.hsnCode ?? undefined;
+    let gstRate = dbCatalogHit.gstRate ?? undefined;
+
+    if (!hsnCode || !gstRate) {
+      try {
+        const hsnSuggestions = await suggestHsnCodes(
+          { name: dbCatalogHit.name, description: dbCatalogHit.description ?? undefined },
+          1,
+        );
+        if (hsnSuggestions.length > 0) {
+          hsnCode = hsnSuggestions[0].code;
+          gstRate = hsnSuggestions[0].gstRate;
+          prisma.globalProductCatalog
+            .update({
+              where: { barcode },
+              data: { hsnCode, gstRate },
+            })
+            .catch(() => {});
+        }
+      } catch {}
+    }
+
+    const matchedCategoryId = resolveOrMatchCategory(dbCatalogHit.category ?? undefined, hsnCode, categories);
     const matchedUomId = resolveUom(dbCatalogHit.uom ?? undefined, uoms);
 
     const res: BarcodeLookupResult = {
@@ -202,8 +231,8 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
         suggestedCategoryName: matchedCategoryId?.name || dbCatalogHit.category || undefined,
         suggestedBaseUomId: matchedUomId?.id,
         suggestedUomCode: matchedUomId?.code || dbCatalogHit.uom || undefined,
-        suggestedHsnCode: dbCatalogHit.hsnCode ?? undefined,
-        suggestedGstRate: dbCatalogHit.gstRate ?? undefined,
+        suggestedHsnCode: hsnCode,
+        suggestedGstRate: gstRate,
         confidence: (dbCatalogHit.confidence as "high" | "medium" | "low") || "high",
         source: "local",
       },
@@ -269,22 +298,6 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
       confidence = "low";
       source = "inferred";
     }
-
-    // Persist inferred item to global catalog so we never spend resources discovering it again
-    if (productName) {
-      barcodeDiscoveryService.persistToGlobalCatalog({
-        barcode,
-        name: productName,
-        brand,
-        description,
-        category: suggestedCategoryName,
-        uom: suggestedUomCode,
-        hsnCode: suggestedHsn,
-        gstRate: suggestedGst,
-        confidence,
-        source: "inferred",
-      }).catch(() => {});
-    }
   }
 
   // 8. Match or Auto-Create Category in Database
@@ -329,6 +342,17 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
       suggestedHsn = exactHsn.code;
       suggestedGst = exactHsn.gstRate.toString();
     }
+  } else if (productName) {
+    try {
+      const hsnSuggestions = await suggestHsnCodes(
+        { name: productName, description: description || undefined, categoryId: matchedCategory?.id },
+        1,
+      );
+      if (hsnSuggestions.length > 0) {
+        suggestedHsn = hsnSuggestions[0].code;
+        suggestedGst = hsnSuggestions[0].gstRate;
+      }
+    } catch {}
   }
 
   const result: BarcodeLookupResult = {

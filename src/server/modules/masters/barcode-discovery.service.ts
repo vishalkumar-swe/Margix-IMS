@@ -1,5 +1,10 @@
+import dns from "node:dns";
+if (typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
 import { prisma } from "@/server/db/client";
 import { executeLlmChat, llmConfigured } from "@/server/modules/copilot/llm";
+import { suggestHsnCodes } from "@/server/modules/hsn/hsn.queries";
 import { logger } from "@/server/observability/logger";
 
 export interface Gs1PrefixHint {
@@ -92,35 +97,52 @@ export class BarcodeDiscoveryService {
       return this.l1Cache.get(cleanCode) || null;
     }
 
-    // 2. Query Open Registries concurrently in parallel
-    const [foodRes, beautyRes, productRes] = await Promise.allSettled([
-      this.queryOpenFoodFacts(cleanCode, 1400),
-      this.queryOpenBeautyFacts(cleanCode, 1400),
-      this.queryOpenProductsFacts(cleanCode, 1400),
+    // 2. Query Open Registries (Food, Beauty, Products, UPCitemdb) concurrently in parallel
+    const [foodRes, beautyRes, productRes, upcRes] = await Promise.allSettled([
+      this.queryOpenFoodFacts(cleanCode, 2000),
+      this.queryOpenBeautyFacts(cleanCode, 2000),
+      this.queryOpenProductsFacts(cleanCode, 2000),
+      this.queryUpcItemDb(cleanCode, 2000),
     ]);
 
     const found =
       (foodRes.status === "fulfilled" && foodRes.value) ||
       (beautyRes.status === "fulfilled" && beautyRes.value) ||
       (productRes.status === "fulfilled" && productRes.value) ||
+      (upcRes.status === "fulfilled" && upcRes.value) ||
       null;
 
     if (found) {
+      if (!found.hsnCode || !found.gstRate) {
+        try {
+          const suggestions = await suggestHsnCodes({ name: found.name, description: found.description }, 1);
+          if (suggestions.length > 0) {
+            found.hsnCode = suggestions[0].code;
+            found.gstRate = suggestions[0].gstRate;
+          }
+        } catch {
+          // Ignore suggestion error
+        }
+      }
       this.l1Cache.set(cleanCode, found);
       await this.persistToGlobalCatalog(found);
       return found;
     }
 
-    // 3. If GS1 India manufacturer prefix is known, avoid slow web scraping
-    // Return null so caller can infer and save immediately
-    if (prefixHint) {
-      this.l1Cache.set(cleanCode, null);
-      return null;
-    }
-
-    // 4. Try Live Web Search via SearXNG + AI Extraction (strict 2000ms timeout)
+    // 3. Try Live Web Search via SearXNG + Deep AI Extraction (15s timeout)
     const web = await this.queryWebAndExtract(cleanCode, prefixHint);
     if (web) {
+      if (!web.hsnCode || !web.gstRate) {
+        try {
+          const suggestions = await suggestHsnCodes({ name: web.name, description: web.description }, 1);
+          if (suggestions.length > 0) {
+            web.hsnCode = suggestions[0].code;
+            web.gstRate = suggestions[0].gstRate;
+          }
+        } catch {
+          // Ignore suggestion error
+        }
+      }
       this.l1Cache.set(cleanCode, web);
       await this.persistToGlobalCatalog(web);
       return web;
@@ -205,6 +227,45 @@ export class BarcodeDiscoveryService {
       }
     } catch (err) {
       logger.debug("Open Products Facts lookup failed or timed out", { barcode, err: String(err) });
+    }
+    return null;
+  }
+
+  /**
+   * Queries UPCitemdb public trial JSON API (global consumer & hardware items)
+   */
+  async queryUpcItemDb(barcode: string, timeoutMs = 2000): Promise<DiscoveredProduct | null> {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const url = `https://api.upcitemdb.com/prod/trial/lookup?upc=${encodeURIComponent(barcode)}`;
+      const res = await fetch(url, {
+        headers: { "User-Agent": this.userAgent, Accept: "application/json" },
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timer));
+
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data.code === "OK" && Array.isArray(data.items) && data.items.length > 0) {
+        const item = data.items[0];
+        const rawName = item.title;
+        if (!rawName || typeof rawName !== "string" || !rawName.trim()) return null;
+        const brand = item.brand ? String(item.brand).trim() : undefined;
+        const name = cleanCommercialProductName(rawName.trim(), brand);
+        const category = item.category ? cleanCategoryName(String(item.category)) : "General Merchandise";
+        return {
+          barcode,
+          name,
+          brand,
+          description: item.description ? String(item.description).slice(0, 500) : `${name} (${barcode})`,
+          category,
+          uom: "PCS",
+          confidence: "high",
+          source: "registry",
+        };
+      }
+    } catch (err) {
+      logger.debug("UPCitemdb lookup failed or timed out", { barcode, err: String(err) });
     }
     return null;
   }
@@ -330,7 +391,7 @@ Respond strictly in JSON with these keys:
 }`;
 
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 2000);
+        const timeout = setTimeout(() => controller.abort(), 15000);
         try {
           const res = await executeLlmChat({
             messages: [{ role: "user", content: prompt }],
@@ -373,6 +434,14 @@ Respond strictly in JSON with these keys:
    * Saves discovered product metadata directly to PostgreSQL global_product_catalog.
    */
   async persistToGlobalCatalog(product: DiscoveredProduct): Promise<void> {
+    // Never persist dummy inferred placeholder items to global database catalog
+    if (
+      product.source === "inferred" ||
+      product.name.startsWith("Scanned Item") ||
+      product.name.includes("Product (000000)")
+    ) {
+      return;
+    }
     try {
       this.l1Cache.set(product.barcode, product);
       await prisma.globalProductCatalog.upsert({

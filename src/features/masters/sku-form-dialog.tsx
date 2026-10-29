@@ -125,19 +125,29 @@ export function SkuFormDialog({
       });
     }
 
+    let resolvedUomId = details.suggestedBaseUomId;
+    if (!resolvedUomId && details.suggestedUomCode && loadedUoms.length > 0) {
+      const match = loadedUoms.find(
+        (u) =>
+          u.code.toUpperCase() === details.suggestedUomCode?.toUpperCase() ||
+          u.name.toUpperCase().includes(details.suggestedUomCode!.toUpperCase()),
+      );
+      if (match) resolvedUomId = match.id;
+    }
+
     setForm((prev) => ({
       ...prev,
       name: details.name || prev.name,
       description: details.description ?? prev.description,
       categoryId: details.suggestedCategoryId ?? prev.categoryId,
-      baseUomId: details.suggestedBaseUomId ?? prev.baseUomId,
+      baseUomId: resolvedUomId ?? prev.baseUomId,
       hsnCode: details.suggestedHsnCode ?? prev.hsnCode,
       gstRate: details.suggestedGstRate ?? prev.gstRate,
     }));
     if (details.suggestedGstRate) {
       setHsnRate(details.suggestedGstRate);
     }
-  }, []);
+  }, [loadedUoms]);
 
   const handleQuickCreateCategory = async () => {
     const name = newCatName.trim();
@@ -178,7 +188,7 @@ export function SkuFormDialog({
       setForm(initial);
       if (initial.barcode && !editing && lookedUpInitialRef.current !== initial.barcode) {
         lookedUpInitialRef.current = initial.barcode;
-        void lookupBarcode(initial.barcode, false);
+        void lookupBarcode(initial.barcode, true);
       }
     }
     prevOpenRef.current = open;
