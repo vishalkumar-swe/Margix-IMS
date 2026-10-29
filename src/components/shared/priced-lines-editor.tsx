@@ -10,6 +10,7 @@ import { Table, TBody, TD, TH, THead } from "@/components/ui/table";
 import { EMPTY_SKU, SkuFormDialog } from "@/features/masters/sku-form-dialog";
 import { ScanInput, type ScanStatus } from "@/features/scan/scan-input";
 import { resolveScannedSku } from "@/features/scan/scan-lookup";
+import { parseScannedBarcode } from "@/lib/industrial-barcode";
 import { formatAmount } from "@/lib/format";
 import type { SkuOption } from "@/lib/options";
 import { computeTax, formatScaled, parseScaled, type TaxType } from "@/lib/tax";
@@ -109,34 +110,44 @@ export function PricedLinesEditor({
     const result = await resolveScannedSku(skus, code, "cannot be added to this document");
     if ("error" in result) {
       setScanStatus({ tone: "error", text: result.error });
-      if (code.trim().length >= 3) {
-        setUnregisteredBarcode(code.trim());
+      const rawTrimmed = code.trim();
+      if (rawTrimmed.length >= 3) {
+        // Strip composite GS1 wrapper if present so Quick Add gets clean primary barcode
+        const parsed = parseScannedBarcode(rawTrimmed);
+        setUnregisteredBarcode(parsed.primaryCode || rawTrimmed);
         setQuickAddOpen(true);
       }
       return;
     }
     setUnregisteredBarcode(null);
-    const { sku } = result;
+    const { sku, industrialData } = result;
     const existing = lines.find((line) => line.skuId === sku.id);
     if (existing?.uomId) {
       const unit = sku.units.find((u) => u.uomId === existing.uomId)?.code;
       setScanStatus({ tone: "error", text: `${sku.code} is entered in ${unit}; change its quantity on the line.` });
       return;
     }
+    const addQty = industrialData?.quantity && industrialData.quantity > 0 ? industrialData.quantity : 1;
     onChange((current) => {
       const line = current.find((l) => l.skuId === sku.id);
       if (line) {
-        return current.map((l) => (l.key === line.key ? { ...l, quantity: incrementQuantity(l.quantity) } : l));
+        const cur = Number(line.quantity) || 0;
+        return current.map((l) => (l.key === line.key ? { ...l, quantity: String(cur + addQty) } : l));
       }
-      const added = { skuId: sku.id, uomId: "", quantity: "1", gstRate: sku.gstRate ?? "" };
+      const added = { skuId: sku.id, uomId: "", quantity: String(addQty), gstRate: sku.gstRate ?? "" };
       const blank = current.find((l) => !l.skuId);
       return blank
         ? current.map((l) => (l.key === blank.key ? { ...l, ...added } : l))
         : [...current, { ...emptyPricedLine(), ...added }];
     });
+    const extraParts = [
+      industrialData?.batchNumber ? `Batch ${industrialData.batchNumber}` : null,
+      addQty > 1 ? `qty +${addQty}` : null,
+    ].filter(Boolean);
+    const extra = extraParts.length > 0 ? ` (${extraParts.join(", ")})` : "";
     setScanStatus({
       tone: "success",
-      text: existing ? `${sku.code}: quantity +1.` : `Added ${sku.code} · ${sku.name}.`,
+      text: existing ? `${sku.code}: quantity +${addQty}${extra}.` : `Added ${sku.code} · ${sku.name}${extra}.`,
     });
   }
 

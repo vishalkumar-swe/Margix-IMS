@@ -5,6 +5,8 @@
  * the system are EAN-13s in the in-store range (first digit 2).
  */
 
+import { parseScannedBarcode } from "./industrial-barcode";
+
 export const BARCODE_MAX_LENGTH = 48;
 
 const BARCODE_PATTERN = /^[!-~]{1,48}$/;
@@ -47,13 +49,46 @@ export function barcodeProblem(value: string): string | null {
 
 /**
  * The product a scanned value stands for among those already loaded: its
- * barcode (exact), else its code (case-insensitive). Mirrors the server lookup.
+ * barcode (exact), else its code (case-insensitive), or decomposed industrial GTIN / part number.
+ * Mirrors the server lookup.
  */
 export function findByScanCode<T extends { code: string; barcode: string | null }>(items: T[], scanned: string): T | undefined {
   const value = scanned.trim();
   if (!value) return undefined;
   const upper = value.toUpperCase();
-  return items.find((item) => item.barcode === value) ?? items.find((item) => item.code.toUpperCase() === upper);
+  // 1. Direct exact match
+  const direct = items.find((item) => item.barcode === value) ?? items.find((item) => item.code.toUpperCase() === upper);
+  if (direct) return direct;
+
+  // 2. Industrial / composite barcode decomposition (GTIN, part number, stripped zero)
+  const parsed = parseScannedBarcode(value);
+  const candidateBarcodes = new Set<string>();
+  if (parsed.primaryCode && parsed.primaryCode !== value) candidateBarcodes.add(parsed.primaryCode);
+  if (parsed.gtin && parsed.gtin !== value) {
+    candidateBarcodes.add(parsed.gtin);
+    if (parsed.gtin.startsWith("0")) candidateBarcodes.add(parsed.gtin.replace(/^0+/, ""));
+  }
+  for (const sec of parsed.secondaryCodes) {
+    if (sec && sec !== value) candidateBarcodes.add(sec);
+  }
+
+  for (const candidate of candidateBarcodes) {
+    const match = items.find((item) => item.barcode === candidate);
+    if (match) return match;
+  }
+
+  const candidateCodes = new Set<string>();
+  if (parsed.partNumber) candidateCodes.add(parsed.partNumber.toUpperCase());
+  if (parsed.primaryCode && parsed.primaryCode.toUpperCase() !== upper) {
+    candidateCodes.add(parsed.primaryCode.toUpperCase());
+  }
+
+  for (const candidate of candidateCodes) {
+    const match = items.find((item) => item.code.toUpperCase() === candidate);
+    if (match) return match;
+  }
+
+  return undefined;
 }
 
 /** Symbology to print a barcode value in: EAN-13 when it is one, Code 128 otherwise. */

@@ -1,4 +1,5 @@
 import { prisma } from "@/server/db/client";
+import { parseScannedBarcode, type ParsedIndustrialBarcode } from "@/lib/industrial-barcode";
 import {
   barcodeDiscoveryService,
   cleanCategoryName,
@@ -7,6 +8,19 @@ import {
 } from "./barcode-discovery.service";
 
 export { cleanCategoryName, cleanCommercialProductName };
+
+export interface IndustrialBarcodePayload {
+  isComposite: boolean;
+  gtin?: string;
+  partNumber?: string;
+  batchNumber?: string;
+  expiryDate?: string;
+  manufacturingDate?: string;
+  serialNumber?: string;
+  quantity?: number;
+  weightKg?: number;
+  sscc?: string;
+}
 
 export interface SkuLookupPayload {
   id: string;
@@ -42,483 +56,93 @@ export interface BarcodeLookupResult {
   foundInDatabase: boolean;
   sku?: SkuLookupPayload;
   catalogDetails?: CatalogProductDetails;
+  industrialData?: IndustrialBarcodePayload;
 }
 
 export type Gs1ManufacturerPrefix = Gs1PrefixHint;
 
-/** Comprehensive GS1 India (Prefix 890) Manufacturer Prefix Registry */
-const GS1_INDIA_PREFIX_MAP: Record<string, Gs1ManufacturerPrefix> = {
-  // 7-digit prefixes
-  "8901030": {
-    prefix: "8901030",
-    manufacturer: "Hindustan Unilever Limited",
-    brand: "HUL",
-    category: "Personal Care & Home Care",
-    defaultHsn: "34011110",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8901058": {
-    prefix: "8901058",
-    manufacturer: "Nestlé India Limited",
-    brand: "Nestlé",
-    category: "Packaged Foods & Beverages",
-    defaultHsn: "19023010",
-    defaultGst: "12",
-    defaultUom: "PACK",
-  },
-  "8901052": {
-    prefix: "8901052",
-    manufacturer: "Tata Consumer Products Limited",
-    brand: "Tata",
-    category: "Grocery & Beverages",
-    defaultHsn: "09024020",
-    defaultGst: "5",
-    defaultUom: "PACK",
-  },
-  "8901719": {
-    prefix: "8901719",
-    manufacturer: "Parle Products Private Limited",
-    brand: "Parle",
-    category: "Bakery & Biscuits",
-    defaultHsn: "19053100",
-    defaultGst: "18",
-    defaultUom: "PACK",
-  },
-  "8901063": {
-    prefix: "8901063",
-    manufacturer: "Britannia Industries Limited",
-    brand: "Britannia",
-    category: "Bakery & Biscuits",
-    defaultHsn: "19053100",
-    defaultGst: "18",
-    defaultUom: "PACK",
-  },
-  "8901499": {
-    prefix: "8901499",
-    manufacturer: "ITC Limited",
-    brand: "ITC",
-    category: "Packaged Goods & Staples",
-    defaultHsn: "11010000",
-    defaultGst: "5",
-    defaultUom: "PACK",
-  },
-  "8906001": {
-    prefix: "8906001",
-    manufacturer: "Gujarat Co-operative Milk Marketing Federation (Amul)",
-    brand: "Amul",
-    category: "Dairy Products",
-    defaultHsn: "04051000",
-    defaultGst: "12",
-    defaultUom: "PACK",
-  },
-  "8906007": {
-    prefix: "8906007",
-    manufacturer: "Amul Dairy Products (GCMMF)",
-    brand: "Amul",
-    category: "Dairy Products",
-    defaultHsn: "04011000",
-    defaultGst: "5",
-    defaultUom: "PCS",
-  },
-  "8906010": {
-    prefix: "8906010",
-    manufacturer: "Adani Wilmar Limited",
-    brand: "Fortune",
-    category: "Edible Oils & Staples",
-    defaultHsn: "15121910",
-    defaultGst: "5",
-    defaultUom: "PACK",
-  },
-  "8906020": {
-    prefix: "8906020",
-    manufacturer: "KRBL Limited",
-    brand: "India Gate",
-    category: "Grains & Rice",
-    defaultHsn: "10063020",
-    defaultGst: "5",
-    defaultUom: "BAG",
-  },
-  "8906079": {
-    prefix: "8906079",
-    manufacturer: "LT Foods Limited",
-    brand: "Daawat",
-    category: "Grains & Rice",
-    defaultHsn: "10063020",
-    defaultGst: "5",
-    defaultUom: "BAG",
-  },
-  "8901262": {
-    prefix: "8901262",
-    manufacturer: "Marico Limited",
-    brand: "Marico",
-    category: "Personal Care & Edible Oils",
-    defaultHsn: "15131900",
-    defaultGst: "5",
-    defaultUom: "PCS",
-  },
-  "8901207": {
-    prefix: "8901207",
-    manufacturer: "Dabur India Limited",
-    brand: "Dabur",
-    category: "Healthcare & Ayurvedic",
-    defaultHsn: "30049011",
-    defaultGst: "12",
-    defaultUom: "PCS",
-  },
-  "8902579": {
-    prefix: "8902579",
-    manufacturer: "Patanjali Ayurved Limited",
-    brand: "Patanjali",
-    category: "Ayurvedic & Staples",
-    defaultHsn: "04059020",
-    defaultGst: "12",
-    defaultUom: "PCS",
-  },
-  "8901725": {
-    prefix: "8901725",
-    manufacturer: "Haldiram Foods International",
-    brand: "Haldiram's",
-    category: "Snacks & Sweets",
-    defaultHsn: "21069099",
-    defaultGst: "12",
-    defaultUom: "PACK",
-  },
-  "8906005": {
-    prefix: "8906005",
-    manufacturer: "Everest Food Products Private Limited",
-    brand: "Everest",
-    category: "Spices & Seasonings",
-    defaultHsn: "09109100",
-    defaultGst: "5",
-    defaultUom: "PACK",
-  },
-  "8901387": {
-    prefix: "8901387",
-    manufacturer: "Mahashian Di Hatti Private Limited (MDH)",
-    brand: "MDH",
-    category: "Spices & Seasonings",
-    defaultHsn: "09109100",
-    defaultGst: "5",
-    defaultUom: "PACK",
-  },
-  "8906014": {
-    prefix: "8906014",
-    manufacturer: "Dharampal Satyapal Limited (DS Group)",
-    brand: "Catch",
-    category: "Spices & Seasonings",
-    defaultHsn: "25010010",
-    defaultGst: "5",
-    defaultUom: "PCS",
-  },
-  "8901012": {
-    prefix: "8901012",
-    manufacturer: "Colgate-Palmolive (India) Limited",
-    brand: "Colgate",
-    category: "Personal Care & Oral Care",
-    defaultHsn: "33061020",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8901023": {
-    prefix: "8901023",
-    manufacturer: "Reckitt Benckiser (India) Limited",
-    brand: "Dettol / Reckitt",
-    category: "Hygiene & Home Care",
-    defaultHsn: "34011110",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8901088": {
-    prefix: "8901088",
-    manufacturer: "Procter & Gamble Home Products",
-    brand: "P&G",
-    category: "Home & Personal Care",
-    defaultHsn: "34029099",
-    defaultGst: "18",
-    defaultUom: "PACK",
-  },
-  "8901233": {
-    prefix: "8901233",
-    manufacturer: "Mondelez India Foods Private Limited",
-    brand: "Cadbury",
-    category: "Confectionery & Chocolates",
-    defaultHsn: "18063200",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8901764": {
-    prefix: "8901764",
-    manufacturer: "Godrej Consumer Products Limited",
-    brand: "Godrej",
-    category: "Home & Personal Care",
-    defaultHsn: "38089191",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8901314": {
-    prefix: "8901314",
-    manufacturer: "Emami Limited",
-    brand: "Emami",
-    category: "Personal Care & Healthcare",
-    defaultHsn: "30049089",
-    defaultGst: "12",
-    defaultUom: "PCS",
-  },
-  "8904004": {
-    prefix: "8904004",
-    manufacturer: "Himalaya Wellness Company",
-    brand: "Himalaya",
-    category: "Personal Care & Wellness",
-    defaultHsn: "34013000",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8901022": {
-    prefix: "8901022",
-    manufacturer: "Wipro Enterprises Private Limited",
-    brand: "Wipro",
-    category: "Personal Care & Soap",
-    defaultHsn: "34011110",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8901015": {
-    prefix: "8901015",
-    manufacturer: "Pidilite Industries Limited",
-    brand: "Pidilite",
-    category: "Stationery & Adhesives",
-    defaultHsn: "35061000",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8901138": {
-    prefix: "8901138",
-    manufacturer: "PepsiCo India Holdings Private Limited",
-    brand: "PepsiCo",
-    category: "Packaged Snacks & Beverages",
-    defaultHsn: "19059040",
-    defaultGst: "12",
-    defaultUom: "PACK",
-  },
-  "8901491": {
-    prefix: "8901491",
-    manufacturer: "Coca-Cola India Private Limited",
-    brand: "Coca-Cola",
-    category: "Beverages",
-    defaultHsn: "22021010",
-    defaultGst: "28",
-    defaultUom: "PCS",
-  },
-  "8901648": {
-    prefix: "8901648",
-    manufacturer: "Mother Dairy Fruit & Vegetable",
-    brand: "Mother Dairy",
-    category: "Dairy Products",
-    defaultHsn: "04012000",
-    defaultGst: "5",
-    defaultUom: "PACK",
-  },
-  "8901844": {
-    prefix: "8901844",
-    manufacturer: "Bikaji Foods International Limited",
-    brand: "Bikaji",
-    category: "Packaged Snacks",
-    defaultHsn: "21069099",
-    defaultGst: "12",
-    defaultUom: "PACK",
-  },
-  "8901512": {
-    prefix: "8901512",
-    manufacturer: "Bikanervala Foods Private Limited",
-    brand: "Bikano",
-    category: "Packaged Snacks",
-    defaultHsn: "21069099",
-    defaultGst: "12",
-    defaultUom: "PACK",
-  },
-  "8902080": {
-    prefix: "8902080",
-    manufacturer: "MTR Foods Private Limited",
-    brand: "MTR",
-    category: "Instant Foods & Packaged Goods",
-    defaultHsn: "21069099",
-    defaultGst: "12",
-    defaultUom: "PACK",
-  },
-  "8901582": {
-    prefix: "8901582",
-    manufacturer: "Balaji Wafers Private Limited",
-    brand: "Balaji",
-    category: "Packaged Snacks",
-    defaultHsn: "19059040",
-    defaultGst: "12",
-    defaultUom: "PACK",
-  },
-  "8904153": {
-    prefix: "8904153",
-    manufacturer: "Hector Beverages Private Limited",
-    brand: "Paper Boat",
-    category: "Beverages",
-    defaultHsn: "22029920",
-    defaultGst: "12",
-    defaultUom: "PCS",
-  },
-  "8906018": {
-    prefix: "8906018",
-    manufacturer: "Hamdard Laboratories India",
-    brand: "Hamdard",
-    category: "Beverages & Ayurvedic",
-    defaultHsn: "21069019",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8901034": {
-    prefix: "8901034",
-    manufacturer: "Asian Paints Limited",
-    brand: "Asian Paints",
-    category: "Paints & Coatings",
-    defaultHsn: "32091090",
-    defaultGst: "18",
-    defaultUom: "CAN",
-  },
-  "8901525": {
-    prefix: "8901525",
-    manufacturer: "Raymond Limited",
-    brand: "Raymond",
-    category: "Textiles & Apparel",
-    defaultHsn: "55151100",
-    defaultGst: "5",
-    defaultUom: "MTR",
-  },
-  "8901067": {
-    prefix: "8901067",
-    manufacturer: "Bata India Limited",
-    brand: "Bata",
-    category: "Footwear",
-    defaultHsn: "64041990",
-    defaultGst: "12",
-    defaultUom: "PAIR",
-  },
-  "8906003": {
-    prefix: "8906003",
-    manufacturer: "Bisleri International Private Limited",
-    brand: "Bisleri",
-    category: "Packaged Drinking Water & Beverages",
-    defaultHsn: "22011010",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8901416": {
-    prefix: "8901416",
-    manufacturer: "Karnataka Soaps and Detergents Limited",
-    brand: "Mysore Sandal",
-    category: "Personal Care & Bathing",
-    defaultHsn: "34011110",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8904018": {
-    prefix: "8904018",
-    manufacturer: "Cholayil Private Limited",
-    brand: "Medimix",
-    category: "Personal Care & Bathing",
-    defaultHsn: "34011110",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8908006": {
-    prefix: "8908006",
-    manufacturer: "Cholayil Private Limited",
-    brand: "Medimix",
-    category: "Personal Care & Bathing",
-    defaultHsn: "34011110",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8904052": {
-    prefix: "8904052",
-    manufacturer: "Nivea India Private Limited",
-    brand: "Nivea",
-    category: "Personal Care & Skin Care",
-    defaultHsn: "33049990",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8901323": {
-    prefix: "8901323",
-    manufacturer: "GD Pharmaceuticals Private Limited",
-    brand: "Boroline",
-    category: "Personal Care & Skin Care",
-    defaultHsn: "30049089",
-    defaultGst: "12",
-    defaultUom: "PCS",
-  },
-  "8901288": {
-    prefix: "8901288",
-    manufacturer: "Vicco Laboratories",
-    brand: "Vicco",
-    category: "Personal Care & Skin Care",
-    defaultHsn: "30049011",
-    defaultGst: "12",
-    defaultUom: "PCS",
-  },
-  "89060074": {
-    prefix: "89060074",
-    manufacturer: "RSH Global Private Limited (Joy Personal Care)",
-    brand: "Joy",
-    category: "Personal Care & Skin Care",
-    defaultHsn: "33049990",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8901526": {
-    prefix: "8901526",
-    manufacturer: "L'Oréal India Private Limited",
-    brand: "L'Oréal",
-    category: "Personal Care & Hair Care",
-    defaultHsn: "33051090",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-  "8908000": {
-    prefix: "8908000",
-    manufacturer: "Indian Railway Catering and Tourism Corporation (IRCTC)",
-    brand: "Rail Neer",
-    category: "Packaged Drinking Water & Beverages",
-    defaultHsn: "22011010",
-    defaultGst: "18",
-    defaultUom: "PCS",
-  },
-};
+/** High-speed in-memory L1 cache for instant barcode lookups (0.001ms) */
+const lookupMemoryCache = new Map<string, BarcodeLookupResult>();
 
-/** Match GS1 India Manufacturer Prefix (7-digit or 8-digit) */
-export function lookupGs1Prefix(barcode: string): Gs1ManufacturerPrefix | null {
+/** High-speed in-memory cache for GS1 manufacturer prefixes loaded from PostgreSQL */
+let gs1PrefixCache: Map<string, Gs1ManufacturerPrefix> | null = null;
+let gs1PrefixLoadingPromise: Promise<Map<string, Gs1ManufacturerPrefix>> | null = null;
+
+export async function getGs1PrefixMap(): Promise<Map<string, Gs1ManufacturerPrefix>> {
+  if (gs1PrefixCache) return gs1PrefixCache;
+  if (!gs1PrefixLoadingPromise) {
+    gs1PrefixLoadingPromise = (async () => {
+      try {
+        const rows = await prisma.gs1PrefixRegistry.findMany();
+        const map = new Map<string, Gs1ManufacturerPrefix>();
+        for (const row of rows) {
+          map.set(row.prefix, {
+            prefix: row.prefix,
+            manufacturer: row.manufacturer,
+            brand: row.brand,
+            category: row.category,
+            defaultUom: row.defaultUom,
+            defaultHsn: row.defaultHsn ?? undefined,
+            defaultGst: row.defaultGst ?? undefined,
+          });
+        }
+        gs1PrefixCache = map;
+        return map;
+      } catch {
+        return new Map<string, Gs1ManufacturerPrefix>();
+      } finally {
+        gs1PrefixLoadingPromise = null;
+      }
+    })();
+  }
+  return gs1PrefixLoadingPromise;
+}
+
+/** Invalidate memory caches when SKUs are modified */
+export function invalidateBarcodeCache(barcode?: string): void {
+  if (barcode) {
+    lookupMemoryCache.delete(barcode.trim());
+    barcodeDiscoveryService.prime(barcode.trim(), null);
+  } else {
+    lookupMemoryCache.clear();
+  }
+}
+
+/** Match GS1 India Manufacturer Prefix (7-digit or 8-digit) from Database */
+export async function lookupGs1Prefix(barcode: string): Promise<Gs1ManufacturerPrefix | null> {
   if (!barcode.startsWith("890")) return null;
+  const map = await getGs1PrefixMap();
   const prefix7 = barcode.slice(0, 7);
-  if (GS1_INDIA_PREFIX_MAP[prefix7]) {
-    return GS1_INDIA_PREFIX_MAP[prefix7];
-  }
+  if (map.has(prefix7)) return map.get(prefix7)!;
   const prefix8 = barcode.slice(0, 8);
-  if (GS1_INDIA_PREFIX_MAP[prefix8]) {
-    return GS1_INDIA_PREFIX_MAP[prefix8];
-  }
+  if (map.has(prefix8)) return map.get(prefix8)!;
   return null;
 }
 
 /** Looks up barcode in internal database first, then central global catalog, open registries, and AI */
 export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeLookupResult> {
-  const barcode = rawBarcode.trim();
+  const parsed = parseScannedBarcode(rawBarcode);
+  const barcode = (parsed.code || rawBarcode).trim();
   if (!barcode) {
     return { barcode: "", foundInDatabase: false };
   }
 
-  // 1. Check local Margix master database
+  // 1. Instant L1 memory cache hit (0.001 ms)
+  const memoryCached = lookupMemoryCache.get(barcode);
+  if (memoryCached) {
+    if (parsed.isComposite) {
+      return { ...memoryCached, industrialData: parsed };
+    }
+    return memoryCached;
+  }
+
+  // 2. Check local Margix master database (tenant's existing SKU)
   const existingSku = await prisma.sku.findFirst({
     where: {
       OR: [
         { barcode },
         { code: { equals: barcode, mode: "insensitive" } },
+        ...(parsed.gtin ? [{ barcode: parsed.gtin }, { code: { equals: parsed.gtin, mode: "insensitive" as const } }] : []),
       ],
     },
     include: {
@@ -528,7 +152,7 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
   });
 
   if (existingSku) {
-    return {
+    const res: BarcodeLookupResult = {
       barcode,
       foundInDatabase: true,
       sku: {
@@ -545,17 +169,20 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
         barcode: existingSku.barcode,
         status: existingSku.status,
       },
+      industrialData: parsed.isComposite ? parsed : undefined,
     };
+    lookupMemoryCache.set(barcode, res);
+    return res;
   }
 
-  // 2. Fetch master reference lists to match suggestions against actual system categories & UOMs
+  // 3. Fetch master reference lists to match suggestions against actual system categories & UOMs
   const [categories, uoms, hsnCodes] = await Promise.all([
     prisma.category.findMany({ where: { isActive: true }, select: { id: true, name: true, hsnCode: true } }),
     prisma.uom.findMany({ select: { id: true, code: true, name: true } }),
     prisma.hsnCode.findMany({ where: { isActive: true }, select: { code: true, gstRate: true } }),
   ]);
 
-  // 3. Check Central Global Product Catalog in PostgreSQL (stored in DB, sub-millisecond response)
+  // 4. Check Central Global Product Catalog in PostgreSQL (stored in DB, sub-millisecond response)
   const dbCatalogHit = await prisma.globalProductCatalog.findUnique({
     where: { barcode },
   });
@@ -564,7 +191,7 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
     const matchedCategoryId = resolveOrMatchCategory(dbCatalogHit.category ?? undefined, dbCatalogHit.hsnCode ?? undefined, categories);
     const matchedUomId = resolveUom(dbCatalogHit.uom ?? undefined, uoms);
 
-    return {
+    const res: BarcodeLookupResult = {
       barcode,
       foundInDatabase: false,
       catalogDetails: {
@@ -581,12 +208,14 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
         source: "local",
       },
     };
+    lookupMemoryCache.set(barcode, res);
+    return res;
   }
 
-  // 4. GS1 India Manufacturer Prefix check
-  const gs1PrefixInfo = lookupGs1Prefix(barcode);
+  // 5. GS1 India Manufacturer Prefix check from Database
+  const gs1PrefixInfo = await lookupGs1Prefix(barcode);
 
-  // 5. Open-Source Multi-Tier Discovery Service (Open Food Facts, Open Beauty Facts, Open Products Facts, SearXNG + AI)
+  // 6. High-Speed Open-Source Multi-Tier Discovery Service (parallel race)
   const discovered = await barcodeDiscoveryService.discover(barcode, gs1PrefixInfo);
 
   let productName = discovered?.name;
@@ -599,7 +228,7 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
   let confidence: "high" | "medium" | "low" = discovered?.confidence || (gs1PrefixInfo ? "medium" : "low");
   let source: "registry" | "searxng" | "ai" | "inferred" = discovered?.source || "inferred";
 
-  // 6. Inferred fallback if uncataloged in any registry
+  // 7. Inferred fallback if uncataloged in any registry
   if (!productName) {
     if (gs1PrefixInfo) {
       const b = gs1PrefixInfo.brand;
@@ -640,9 +269,25 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
       confidence = "low";
       source = "inferred";
     }
+
+    // Persist inferred item to global catalog so we never spend resources discovering it again
+    if (productName) {
+      barcodeDiscoveryService.persistToGlobalCatalog({
+        barcode,
+        name: productName,
+        brand,
+        description,
+        category: suggestedCategoryName,
+        uom: suggestedUomCode,
+        hsnCode: suggestedHsn,
+        gstRate: suggestedGst,
+        confidence,
+        source: "inferred",
+      }).catch(() => {});
+    }
   }
 
-  // 7. Match or Auto-Create Category in Database
+  // 8. Match or Auto-Create Category in Database
   let matchedCategory = resolveOrMatchCategory(suggestedCategoryName, suggestedHsn, categories);
 
   if (!matchedCategory && suggestedCategoryName && suggestedCategoryName.trim()) {
@@ -658,7 +303,6 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
       });
       matchedCategory = { id: createdCategory.id, name: createdCategory.name };
     } catch {
-      // Handle collision or concurrent creation
       const found = await prisma.category.findFirst({
         where: { name: { equals: formattedCatName, mode: "insensitive" } },
       });
@@ -672,10 +316,10 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
     matchedCategory = { id: categories[0].id, name: categories[0].name };
   }
 
-  // 8. Match UOM against existing DB UOMs
+  // 9. Match UOM against existing DB UOMs
   const matchedUom = resolveUom(suggestedUomCode, uoms);
 
-  // 9. Verify or look up GST rate from HSN master if HSN code is present
+  // 10. Verify or look up GST rate from HSN master if HSN code is present
   if (suggestedHsn && hsnCodes.length > 0) {
     const hsnCodeStr = suggestedHsn;
     const exactHsn =
@@ -687,7 +331,7 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
     }
   }
 
-  return {
+  const result: BarcodeLookupResult = {
     barcode,
     foundInDatabase: false,
     catalogDetails: {
@@ -704,6 +348,9 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
       source,
     },
   };
+
+  lookupMemoryCache.set(barcode, result);
+  return result;
 }
 
 export function resolveOrMatchCategory(

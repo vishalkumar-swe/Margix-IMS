@@ -19,6 +19,7 @@ import { recordAudit } from "@/server/modules/audit/audit.service";
 import { requireActiveHsn } from "@/server/modules/hsn/hsn.service";
 import { allocateCode } from "@/server/modules/numbering/numbering.service";
 import { hasStockOnHand } from "@/server/modules/inventory/stock.queries";
+import { invalidateBarcodeCache } from "./barcode-lookup.service";
 
 /**
  * Master data maintenance. Masters are never deleted (history must stay
@@ -42,6 +43,31 @@ export function createSku(actor: Actor, input: SkuCreateInput) {
       },
     });
     await recordAudit(tx, actor, { action: "MASTER_CREATED", entityType: "Sku", entityId: sku.id, newData: sku });
+    if (sku.barcode) {
+      invalidateBarcodeCache(sku.barcode);
+      tx.globalProductCatalog
+        .upsert({
+          where: { barcode: sku.barcode },
+          create: {
+            barcode: sku.barcode,
+            name: sku.name,
+            description: sku.description,
+            hsnCode: sku.hsnCode,
+            gstRate: sku.gstRate?.toString(),
+            source: "merchant",
+            confidence: "high",
+          },
+          update: {
+            name: sku.name,
+            description: sku.description ?? undefined,
+            hsnCode: sku.hsnCode ?? undefined,
+            gstRate: sku.gstRate?.toString() ?? undefined,
+            source: "merchant",
+            confidence: "high",
+          },
+        })
+        .catch(() => {});
+    }
     return sku;
   });
 }
@@ -81,6 +107,31 @@ export function updateSku(actor: Actor, id: string, input: SkuUpdateInput) {
       oldData: before,
       newData: after,
     });
+    if (after.barcode) {
+      invalidateBarcodeCache(after.barcode);
+      tx.globalProductCatalog
+        .upsert({
+          where: { barcode: after.barcode },
+          create: {
+            barcode: after.barcode,
+            name: after.name,
+            description: after.description,
+            hsnCode: after.hsnCode,
+            gstRate: after.gstRate?.toString(),
+            source: "merchant",
+            confidence: "high",
+          },
+          update: {
+            name: after.name,
+            description: after.description ?? undefined,
+            hsnCode: after.hsnCode ?? undefined,
+            gstRate: after.gstRate?.toString() ?? undefined,
+            source: "merchant",
+            confidence: "high",
+          },
+        })
+        .catch(() => {});
+    }
     return after;
   });
 }

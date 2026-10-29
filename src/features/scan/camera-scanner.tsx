@@ -29,8 +29,23 @@ interface BarcodeDetectorClass {
   getSupportedFormats(): Promise<string[]>;
 }
 
-/** Symbologies used on our labels and documents, plus common retail codes. */
-const WANTED_FORMATS = ["qr_code", "code_128", "ean_13", "ean_8", "upc_a", "upc_e", "code_39"];
+/** Universal symbologies: retail (EAN/UPC), industrial (Code 128, Code 39, Code 93, ITF-14), 2D (QR, DataMatrix, PDF417, Aztec), and medical (Codabar). */
+export const ALL_BARCODE_FORMATS = [
+  "qr_code",
+  "data_matrix",
+  "code_128",
+  "code_39",
+  "code_93",
+  "itf",
+  "ean_13",
+  "ean_8",
+  "upc_a",
+  "upc_e",
+  "pdf417",
+  "aztec",
+  "codabar",
+];
+const WANTED_FORMATS = ALL_BARCODE_FORMATS;
 
 /** Scan frequency in milliseconds: 80ms gives snappy 12fps recognition without lag */
 const SCAN_INTERVAL_MS = 80;

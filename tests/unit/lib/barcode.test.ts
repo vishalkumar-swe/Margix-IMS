@@ -73,4 +73,15 @@ describe("findByScanCode", () => {
     const clash = [...items, { id: "d", code: "Y", barcode: "2000000000022" }];
     expect(findByScanCode(clash, "2000000000022")?.id).toBe("d");
   });
+
+  it("decomposes industrial composite barcodes and matches the underlying product", () => {
+    // GS1 composite with 14-digit GTIN and batch
+    expect(findByScanCode(items, "(01)02000000000015(17)261231(10)LOT99")?.id).toBe("a");
+    // Padded 14-digit GTIN to 13-digit EAN
+    expect(findByScanCode(items, "02000000000015")?.id).toBe("a");
+    // Industrial part number prefix
+    expect(findByScanCode(items, "P/N: FG-001")?.id).toBe("b");
+    // ISO 15434 automotive part mark
+    expect(findByScanCode(items, "[)>*06:1PFG-001:1TBATCH123*")?.id).toBe("b");
+  });
 });

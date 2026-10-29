@@ -67,64 +67,83 @@ export function cleanCommercialProductName(rawName: string, brand?: string): str
 }
 
 /**
- * Open-Source Barcode Discovery Service
+ * High-Speed Open-Source Barcode Discovery Service
  * Queries open registries (Open Food Facts, Open Beauty Facts, Open Products Facts)
- * and SearXNG e-commerce search, extracts structured details with Gemini AI,
- * and writes through to PostgreSQL global_product_catalog.
+ * IN PARALLEL with micro-timeouts, caches every result in memory and PostgreSQL,
+ * and eliminates duplicate network requests.
  */
 export class BarcodeDiscoveryService {
   private userAgent = "MargixIMS/1.0 (https://ims.margixindia.com; inventory@margixindia.com)";
+  private l1Cache = new Map<string, DiscoveredProduct | null>();
 
   /**
    * Primary discovery coordinator:
-   * 1. Query Open Food Facts
-   * 2. Query Open Beauty Facts (soaps, lotions, cosmetics)
-   * 3. Query Open Products Facts (water, household, stationery)
-   * 4. Query SearXNG / Web Search + AI
-   * 5. If found, write through to PostgreSQL global_product_catalog
+   * 1. Check L1 Memory Cache (0.001ms)
+   * 2. Query open registries (Food, Beauty, Products) IN PARALLEL with 1200ms timeout
+   * 3. Fast-fallback to GS1 prefix routing if unlisted
+   * 4. Write-through to PostgreSQL and L1 Cache permanently
    */
   async discover(barcode: string, prefixHint?: Gs1PrefixHint | null): Promise<DiscoveredProduct | null> {
     const cleanCode = barcode.trim();
     if (!cleanCode) return null;
 
-    // 1. Try Open Food Facts
-    const food = await this.queryOpenFoodFacts(cleanCode);
-    if (food) {
-      await this.persistToGlobalCatalog(food);
-      return food;
+    // 1. Instant L1 memory cache hit
+    if (this.l1Cache.has(cleanCode)) {
+      return this.l1Cache.get(cleanCode) || null;
     }
 
-    // 2. Try Open Beauty Facts (Personal Care, Bathing Soaps, Lotions, Creams)
-    const beauty = await this.queryOpenBeautyFacts(cleanCode);
-    if (beauty) {
-      await this.persistToGlobalCatalog(beauty);
-      return beauty;
+    // 2. Query Open Registries concurrently in parallel
+    const [foodRes, beautyRes, productRes] = await Promise.allSettled([
+      this.queryOpenFoodFacts(cleanCode, 1400),
+      this.queryOpenBeautyFacts(cleanCode, 1400),
+      this.queryOpenProductsFacts(cleanCode, 1400),
+    ]);
+
+    const found =
+      (foodRes.status === "fulfilled" && foodRes.value) ||
+      (beautyRes.status === "fulfilled" && beautyRes.value) ||
+      (productRes.status === "fulfilled" && productRes.value) ||
+      null;
+
+    if (found) {
+      this.l1Cache.set(cleanCode, found);
+      await this.persistToGlobalCatalog(found);
+      return found;
     }
 
-    // 3. Try Open Products Facts (Bottled Water, Detergents, Household, Commodities)
-    const product = await this.queryOpenProductsFacts(cleanCode);
-    if (product) {
-      await this.persistToGlobalCatalog(product);
-      return product;
+    // 3. If GS1 India manufacturer prefix is known, avoid slow web scraping
+    // Return null so caller can infer and save immediately
+    if (prefixHint) {
+      this.l1Cache.set(cleanCode, null);
+      return null;
     }
 
-    // 4. Try Live Web Search via SearXNG + AI Extraction
+    // 4. Try Live Web Search via SearXNG + AI Extraction (strict 2000ms timeout)
     const web = await this.queryWebAndExtract(cleanCode, prefixHint);
     if (web) {
+      this.l1Cache.set(cleanCode, web);
       await this.persistToGlobalCatalog(web);
       return web;
     }
 
+    this.l1Cache.set(cleanCode, null);
     return null;
+  }
+
+  /**
+   * Invalidate or prime cache
+   */
+  prime(barcode: string, product: DiscoveredProduct | null): void {
+    this.l1Cache.set(barcode.trim(), product);
   }
 
   /**
    * Queries Open Food Facts public JSON API
    */
-  async queryOpenFoodFacts(barcode: string): Promise<DiscoveredProduct | null> {
+  async queryOpenFoodFacts(barcode: string, timeoutMs = 1400): Promise<DiscoveredProduct | null> {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       const url = `https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(barcode)}.json`;
       const res = await fetch(url, {
         headers: { "User-Agent": this.userAgent },
@@ -145,10 +164,10 @@ export class BarcodeDiscoveryService {
   /**
    * Queries Open Beauty Facts public JSON API (soaps, lotions, skin creams, cosmetics)
    */
-  async queryOpenBeautyFacts(barcode: string): Promise<DiscoveredProduct | null> {
+  async queryOpenBeautyFacts(barcode: string, timeoutMs = 1400): Promise<DiscoveredProduct | null> {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       const url = `https://world.openbeautyfacts.org/api/v0/product/${encodeURIComponent(barcode)}.json`;
       const res = await fetch(url, {
         headers: { "User-Agent": this.userAgent },
@@ -169,10 +188,10 @@ export class BarcodeDiscoveryService {
   /**
    * Queries Open Products Facts public JSON API (general goods, water, detergents)
    */
-  async queryOpenProductsFacts(barcode: string): Promise<DiscoveredProduct | null> {
+  async queryOpenProductsFacts(barcode: string, timeoutMs = 1400): Promise<DiscoveredProduct | null> {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       const url = `https://world.openproductsfacts.org/api/v0/product/${encodeURIComponent(barcode)}.json`;
       const res = await fetch(url, {
         headers: { "User-Agent": this.userAgent },
@@ -210,7 +229,7 @@ export class BarcodeDiscoveryService {
     if (p.categories && typeof p.categories === "string") {
       const catList = p.categories.split(",").map((c: string) => cleanCategoryName(c.trim())).filter(Boolean);
       if (catList.length > 0) {
-        category = catList[catList.length - 1]; // Pick most specific category
+        category = catList[catList.length - 1];
       }
     }
 
@@ -249,7 +268,7 @@ export class BarcodeDiscoveryService {
           ? `"${barcode}" ${prefixHint.brand || prefixHint.manufacturer}`
           : `"${barcode}" india product`;
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 4000);
+        const timer = setTimeout(() => controller.abort(), 1800);
         const searchUrl = `${searxngUrl}/search?q=${encodeURIComponent(query)}&format=json&language=en`;
         const res = await fetch(searchUrl, {
           signal: controller.signal,
@@ -259,7 +278,7 @@ export class BarcodeDiscoveryService {
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data.results)) {
-            for (const r of data.results.slice(0, 5)) {
+            for (const r of data.results.slice(0, 4)) {
               if (r.title) snippets.push(`${r.title}: ${r.content || ""}`);
             }
           }
@@ -269,7 +288,7 @@ export class BarcodeDiscoveryService {
       }
     }
 
-    // If in test environment without live AI key or quota exhausted, avoid long timeout
+    // If in test environment, skip external LLM to guarantee deterministic sub-second tests
     if (process.env.VITEST || process.env.NODE_ENV === "test") {
       return null;
     }
@@ -287,21 +306,31 @@ export class BarcodeDiscoveryService {
           ? `\nWeb Search Snippets:\n${snippets.join("\n")}`
           : "";
 
-        const prompt = `Identify the commercial retail product or commodity for barcode "${barcode}".${hintText}${snippetText}
-If you recognize the specific product or variant, return its accurate commercial name, brand, standard pack/size, HSN code, and GST rate.
+        const prompt = `Identify the product, equipment, component, or commodity for barcode / part number "${barcode}".${hintText}${snippetText}
+This can be any product across all consumer and industrial sectors:
+- Industrial equipment, bearings, motors, pumps, valves, hydraulic/pneumatic parts, fasteners, hardware (e.g. SKF, FAG, Siemens, Schneider Electric, ABB, L&T, Parker, Unbrako)
+- Automotive & commercial vehicle spare parts, filters, brake pads, spark plugs, sensors (e.g. Bosch, NGK, Gabriel, Mahle, Valeo, TVS)
+- Electrical switchgear, MCBs, contactors, cables, industrial wiring (e.g. Polycab, Havells, Legrand)
+- Electronics, semiconductors, passives, microcontrollers, ICs, modules
+- Construction materials, cement, TMT steel, pipes, fittings (e.g. UltraTech, Tata Tiscon, Astral, Supreme)
+- FMCG, grocery, packaged foods, beverages, personal care, cosmetics, soaps, lotions
+- Pharmaceuticals, formulations, medical devices, health supplies
+- Chemicals, industrial lubricants, greases, adhesives, paints (e.g. Castrol, Loctite, Asian Paints)
+- Raw materials, metals, plastics, textiles
+
 Respond strictly in JSON with these keys:
 {
-  "name": "Commercial Product Name with Pack/Size if applicable",
-  "brand": "Brand Name or Manufacturer",
-  "description": "Short product description",
-  "category": "Broad category (e.g. Packaged Drinking Water, Bathing Soaps, Body Lotions & Skin Care, Instant Foods, Cold Drinks & Beverages)",
-  "uom": "Standard Unit (e.g. KG, GM, LTR, PCS, PACK, BOX, BAG)",
-  "hsnCode": "HSN Code (4 to 8 digits)",
-  "gstRate": "GST Rate percentage (e.g. 0, 5, 12, 18, 28)"
+  "name": "Accurate Commercial/Industrial Name with key specifications/dimensions/size if applicable",
+  "brand": "Manufacturer or Brand Name",
+  "description": "Short product description with technical specifications",
+  "category": "Broad Category (e.g. Industrial Bearings, Electrical Switchgear, Automotive Spares, Fasteners & Hardware, Electronics & Semis, Packaged Goods, Personal Care, Construction Materials, Pharmaceuticals)",
+  "uom": "Standard Unit of Measure (e.g. PCS, NOS, SET, MTR, KG, LTR, BOX, BAG, PAIR, ROLL, CAN, DRUM, TON)",
+  "hsnCode": "Standard Indian GST HSN Code (4 to 8 digits, e.g. 8482 for bearings, 8536 for switchgear, 7318 for fasteners, 8708 for auto parts, 3004 for pharma, 2201 for water)",
+  "gstRate": "Standard GST Rate percentage in India (e.g. 0, 5, 12, 18, 28)"
 }`;
 
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
+        const timeout = setTimeout(() => controller.abort(), 2000);
         try {
           const res = await executeLlmChat({
             messages: [{ role: "user", content: prompt }],
@@ -345,6 +374,7 @@ Respond strictly in JSON with these keys:
    */
   async persistToGlobalCatalog(product: DiscoveredProduct): Promise<void> {
     try {
+      this.l1Cache.set(product.barcode, product);
       await prisma.globalProductCatalog.upsert({
         where: { barcode: product.barcode },
         create: {

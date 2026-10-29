@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { ParsedIndustrialBarcode } from "@/lib/industrial-barcode";
 import type { SkuOption } from "@/lib/options";
 import { resolveScannedSku } from "./scan-lookup";
 import { ScanInput, type ScanStatus } from "./scan-input";
@@ -19,7 +20,7 @@ export function LineScanBar<T extends SkuOption>({
   className,
 }: {
   products: T[];
-  onProduct: (sku: T) => string;
+  onProduct: (sku: T, industrialData?: ParsedIndustrialBarcode) => string;
   label?: string;
   notOfferedReason?: string;
   className?: string;
@@ -32,7 +33,7 @@ export function LineScanBar<T extends SkuOption>({
     const result = await resolveScannedSku(products, code, notOfferedReason);
     setBusy(false);
     if ("error" in result) return setStatus({ tone: "error", text: result.error });
-    const message = onProduct(result.sku);
+    const message = onProduct(result.sku, result.industrialData);
     setStatus(message.startsWith("!") ? { tone: "error", text: message.slice(1) } : { tone: "success", text: message });
   }
 

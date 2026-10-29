@@ -8,6 +8,7 @@ import { Input, Select } from "@/components/ui/form-controls";
 import { Table, TBody, TD, TH, THead } from "@/components/ui/table";
 import { ScanInput, type ScanStatus } from "@/features/scan/scan-input";
 import { resolveScannedSku } from "@/features/scan/scan-lookup";
+import { parseScannedBarcode } from "@/lib/industrial-barcode";
 import { EMPTY_SKU, SkuFormDialog } from "@/features/masters/sku-form-dialog";
 import { apiRequest } from "@/lib/api-client";
 import { formatQuantity } from "@/lib/format";
@@ -105,28 +106,72 @@ export function BatchLinesEditor({
     }
   }
 
-  /** Selects the scanned product's line: focuses it, or puts the product on a new line. */
+  /** Selects the scanned product's line: focuses it, or puts the product on a new line, auto-selecting batch if encoded. */
   async function selectScanned(code: string) {
     const result = await resolveScannedSku(skus, code, "cannot be picked here");
     if ("error" in result) {
       setScanStatus({ tone: "error", text: result.error });
-      if (code.trim().length >= 3) {
-        setUnregisteredBarcode(code.trim());
+      const rawTrimmed = code.trim();
+      if (rawTrimmed.length >= 3) {
+        const parsed = parseScannedBarcode(rawTrimmed);
+        setUnregisteredBarcode(parsed.primaryCode || rawTrimmed);
       }
       return;
     }
     setUnregisteredBarcode(null);
-    const { sku } = result;
+    const { sku, industrialData } = result;
     const index = lines.findIndex((line) => line.skuId === sku.id);
+    let targetBatchId = "";
+    let targetAvailable: string | null = null;
+
+    if (godownId && industrialData?.batchNumber) {
+      try {
+        const avail = await apiRequest<{ quantity: string; batch: { id: string; batchNumber: string } }[]>(
+          `/stock/available-batches?skuId=${sku.id}&godownId=${godownId}`,
+        );
+        const match = avail.find((b) => b.batch.batchNumber.toUpperCase() === industrialData.batchNumber?.toUpperCase());
+        if (match) {
+          targetBatchId = match.batch.id;
+          targetAvailable = match.quantity;
+        }
+      } catch {
+        // Fall back to manual selection
+      }
+    }
+
     if (index >= 0) {
-      setScanStatus({ tone: "info", text: `${sku.code} is on line ${index + 1}.` });
-      focusQuantity(lines[index].key);
+      const lineKey = lines[index].key;
+      if (targetBatchId || (industrialData?.quantity && industrialData.quantity > 0)) {
+        onChange(
+          lines.map((l) =>
+            l.key === lineKey
+              ? {
+                  ...l,
+                  ...(targetBatchId && { batchId: targetBatchId, available: targetAvailable }),
+                  ...(industrialData?.quantity && { quantity: String(industrialData.quantity) }),
+                }
+              : l,
+          ),
+        );
+      }
+      const extra = targetBatchId ? ` (Batch ${industrialData?.batchNumber} selected)` : "";
+      setScanStatus({ tone: "info", text: `${sku.code} is on line ${index + 1}${extra}.` });
+      focusQuantity(lineKey);
       return;
     }
+
     const blank = lines.find((line) => !line.skuId);
-    const line = { ...(blank ?? emptyBatchLine()), skuId: sku.id, batchId: "", available: null };
+    const initialQty = industrialData?.quantity && industrialData.quantity > 0 ? String(industrialData.quantity) : "";
+    const line: BatchLine = {
+      ...(blank ?? emptyBatchLine()),
+      skuId: sku.id,
+      batchId: targetBatchId,
+      available: targetAvailable,
+      quantity: initialQty,
+    };
     onChange(blank ? lines.map((l) => (l.key === blank.key ? line : l)) : [...lines, line]);
-    setScanStatus({ tone: "success", text: `Added ${sku.code} · ${sku.name}. Enter the quantity and pick a batch.` });
+    const extra = targetBatchId ? ` with batch ${industrialData?.batchNumber}` : "";
+    setScanStatus({ tone: "success", text: `Added ${sku.code} · ${sku.name}${extra}. Enter quantity or confirm batch.` });
     focusQuantity(line.key);
   }
 

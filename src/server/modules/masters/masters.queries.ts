@@ -1,4 +1,5 @@
 import type { Prisma, Sku } from "@prisma/client";
+import { parseScannedBarcode } from "@/lib/industrial-barcode";
 import { prisma } from "@/server/db/client";
 import type { Tx } from "@/server/db/transaction";
 import { NotFoundError, ValidationError } from "@/server/errors";
@@ -133,10 +134,47 @@ export function listUoms() {
 export async function findSkuByScanCode(code: string) {
   const value = code.trim();
   if (!value) return null;
-  return (
+  // 1. Direct exact match by barcode or uppercase code
+  const direct =
     (await prisma.sku.findUnique({ where: { barcode: value }, select: skuWithUomSelect })) ??
-    (await prisma.sku.findUnique({ where: { code: value.toUpperCase() }, select: skuWithUomSelect }))
-  );
+    (await prisma.sku.findUnique({ where: { code: value.toUpperCase() }, select: skuWithUomSelect }));
+  if (direct) return direct;
+
+  // 2. Industrial / composite barcode decomposition (GTIN, part number, stripped zero)
+  const parsed = parseScannedBarcode(value);
+  const candidateBarcodes = new Set<string>();
+  if (parsed.primaryCode && parsed.primaryCode !== value) candidateBarcodes.add(parsed.primaryCode);
+  if (parsed.gtin && parsed.gtin !== value) {
+    candidateBarcodes.add(parsed.gtin);
+    if (parsed.gtin.startsWith("0")) candidateBarcodes.add(parsed.gtin.replace(/^0+/, ""));
+  }
+  for (const sec of parsed.secondaryCodes) {
+    if (sec && sec !== value) candidateBarcodes.add(sec);
+  }
+
+  if (candidateBarcodes.size > 0) {
+    const byBarcode = await prisma.sku.findFirst({
+      where: { barcode: { in: [...candidateBarcodes] } },
+      select: skuWithUomSelect,
+    });
+    if (byBarcode) return byBarcode;
+  }
+
+  const candidateCodes = new Set<string>();
+  if (parsed.partNumber) candidateCodes.add(parsed.partNumber.toUpperCase());
+  if (parsed.primaryCode && parsed.primaryCode.toUpperCase() !== value.toUpperCase()) {
+    candidateCodes.add(parsed.primaryCode.toUpperCase());
+  }
+
+  if (candidateCodes.size > 0) {
+    const byCode = await prisma.sku.findFirst({
+      where: { code: { in: [...candidateCodes] } },
+      select: skuWithUomSelect,
+    });
+    if (byCode) return byCode;
+  }
+
+  return null;
 }
 
 /** What a product label shows, for the given SKUs (in no particular order). */

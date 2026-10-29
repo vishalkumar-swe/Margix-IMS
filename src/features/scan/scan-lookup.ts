@@ -1,6 +1,7 @@
 import { ApiClientError, apiRequest } from "@/lib/api-client";
 import { findByScanCode } from "@/lib/barcode";
 import type { ScannableDocumentType } from "@/lib/document-codes";
+import { parseScannedBarcode, type ParsedIndustrialBarcode } from "@/lib/industrial-barcode";
 import type { SkuOption } from "@/lib/options";
 
 /** Client-side calls to the scan lookup APIs. A code that matches nothing resolves to null. */
@@ -36,14 +37,16 @@ export function lookupDocument(code: string): Promise<ScannedDocumentRef | null>
 /**
  * Resolves a scanned product code among the products a form offers; when it
  * is not one of them, asks the server so the message can say why.
+ * Returns both the matched SKU and decomposed industrial metadata (batch, expiry, qty).
  */
 export async function resolveScannedSku<T extends SkuOption>(
   offered: T[],
   code: string,
   notOfferedReason = "cannot be used here",
-): Promise<{ sku: T } | { error: string }> {
+): Promise<{ sku: T; industrialData?: ParsedIndustrialBarcode } | { error: string }> {
+  const parsed = parseScannedBarcode(code);
   const local = findByScanCode(offered, code);
-  if (local) return { sku: local };
+  if (local) return { sku: local, industrialData: parsed };
   try {
     const found = await lookupSku(code);
     if (!found) return { error: `No product has the barcode or code "${code}".` };

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { cn } from "@/lib/cn";
+import { parseScannedBarcode } from "@/lib/industrial-barcode";
 import { ScanInput, type ScanStatus } from "./scan-input";
 import { lookupDocument, lookupErrorMessage, lookupSku } from "./scan-lookup";
 
@@ -29,8 +30,10 @@ export function GlobalScan({ className }: { className?: string }) {
         router.push(`/stock/${sku.id}`);
         return;
       }
-      if (/^\d{6,14}$/.test(code.trim())) {
-        router.push(`/masters/skus/new?barcode=${encodeURIComponent(code.trim())}`);
+      const parsed = parseScannedBarcode(code);
+      const cleanCode = parsed.primaryCode || code.trim();
+      if (/^\d{6,14}$/.test(cleanCode) || cleanCode.length >= 4) {
+        router.push(`/masters/skus/new?barcode=${encodeURIComponent(cleanCode)}`);
         return;
       }
       setStatus({ tone: "error", text: `Nothing matches "${code}".` });

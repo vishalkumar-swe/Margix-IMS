@@ -334,6 +334,25 @@ model GlobalProductCatalog {
   @@map("global_product_catalog")
 }
 
+/// GS1 India manufacturer prefix registry for FMCG and commodity brand routing.
+/// Stored in database, loaded into high-speed memory cache on startup.
+model Gs1PrefixRegistry {
+  id           String   @id @default(uuid()) @db.Uuid
+  prefix       String   @unique
+  manufacturer String
+  brand        String
+  category     String
+  defaultUom   String   @map("default_uom")
+  defaultHsn   String?  @map("default_hsn")
+  defaultGst   String?  @map("default_gst")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([prefix])
+  @@index([brand])
+  @@map("gs1_prefix_registry")
+}
+
 model Batch {
   id                String    @id @default(uuid()) @db.Uuid
   skuId             String    @map("sku_id") @db.Uuid

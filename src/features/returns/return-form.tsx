@@ -9,6 +9,7 @@ import { Field } from "@/components/ui/field";
 import { Input, Select, Textarea } from "@/components/ui/form-controls";
 import { Table, TBody, TD, TH, THead } from "@/components/ui/table";
 import { ScanInput, type ScanStatus } from "@/features/scan/scan-input";
+import { parseScannedBarcode } from "@/lib/industrial-barcode";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { apiRequest } from "@/lib/api-client";
 import { formatQuantity } from "@/lib/format";
@@ -64,22 +65,46 @@ export function ReturnForm({
   const [clientError, setClientError] = useState<string | null>(null);
   const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null);
 
-  /** A scanned product adds one unit to its first line (batch) that can still take it. */
+  /** A scanned product adds units to its line/batch that can still take it, matching exact batches from industrial barcodes. */
   function onScanProduct(code: string) {
-    const upper = code.toUpperCase();
-    const matching = lines.filter((line) => line.skuBarcode === code || line.skuCode.toUpperCase() === upper);
+    const rawTrimmed = code.trim();
+    const upper = rawTrimmed.toUpperCase();
+    const parsed = parseScannedBarcode(rawTrimmed);
+    const candidateBarcodes = new Set([rawTrimmed, parsed.primaryCode, parsed.gtin, ...parsed.secondaryCodes].filter(Boolean));
+    const candidateCodes = new Set([upper, parsed.partNumber?.toUpperCase(), parsed.primaryCode.toUpperCase()].filter(Boolean));
+
+    const matching = lines.filter(
+      (line) =>
+        (line.skuBarcode && candidateBarcodes.has(line.skuBarcode)) ||
+        candidateCodes.has(line.skuCode.toUpperCase()),
+    );
     if (matching.length === 0) {
       setScanStatus({ tone: "error", text: `"${code}" is not on ${sourceNumber}.` });
       return;
     }
-    const target = matching.find(
-      (line) => toThousandths(quantities[line.id] ?? "") + 1000n <= toThousandths(line.returnable),
-    );
+
+    const qtyInc = parsed.quantity && parsed.quantity > 0 ? BigInt(Math.round(parsed.quantity * 1000)) : 1000n;
+
+    // If industrial barcode has a specific batch, prefer matching that batch first
+    let target = parsed.batchNumber
+      ? matching.find(
+          (line) =>
+            line.batchNumber.toUpperCase() === parsed.batchNumber?.toUpperCase() &&
+            toThousandths(quantities[line.id] ?? "") + qtyInc <= toThousandths(line.returnable),
+        )
+      : null;
+
+    if (!target) {
+      target = matching.find(
+        (line) => toThousandths(quantities[line.id] ?? "") + qtyInc <= toThousandths(line.returnable),
+      );
+    }
+
     if (!target) {
       setScanStatus({ tone: "error", text: `No more of ${matching[0].skuCode} can be returned against ${sourceNumber}.` });
       return;
     }
-    const next = fromThousandths(toThousandths(quantities[target.id] ?? "") + 1000n);
+    const next = fromThousandths(toThousandths(quantities[target.id] ?? "") + qtyInc);
     setQuantities((current) => ({ ...current, [target.id]: next }));
     setScanStatus({ tone: "success", text: `${target.skuCode} batch ${target.batchNumber}: returning ${next}.` });
   }

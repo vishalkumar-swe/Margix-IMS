@@ -8,7 +8,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/form-controls";
 import { loadDetectorClass } from "@/features/scan/camera-scanner";
 
-const WANTED_FORMATS = ["qr_code", "code_128", "ean_13", "ean_8", "upc_a", "upc_e", "code_39"];
+const WANTED_FORMATS = [
+  "qr_code",
+  "data_matrix",
+  "code_128",
+  "code_39",
+  "code_93",
+  "itf",
+  "ean_13",
+  "ean_8",
+  "upc_a",
+  "upc_e",
+  "pdf417",
+  "aztec",
+  "codabar",
+];
 const PHONE_STORAGE_KEY = "margix_remote_phone_session";
 
 function playBeep() {

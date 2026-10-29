@@ -13,6 +13,7 @@ import { apiRequest } from "@/lib/api-client";
 import { formatQuantity } from "@/lib/format";
 import { replaceFresh } from "@/lib/navigation";
 import type { NamedOption, SkuOption } from "@/lib/options";
+import type { ParsedIndustrialBarcode } from "@/lib/industrial-barcode";
 import { LineScanBar } from "@/features/scan/line-scan-bar";
 
 export interface ReceivableLine {
@@ -76,16 +77,27 @@ export function ReceiveGoodsForm({
     });
   }
 
-  /** Receiving by scan: each scan counts one more received (and accepted) unit on that order line. */
-  function receiveScannedProduct(sku: SkuOption): string {
+  /** Receiving by scan: each scan counts received (and accepted) units on that order line, auto-populating batch & expiry from industrial barcodes. */
+  function receiveScannedProduct(sku: SkuOption, industrialData?: ParsedIndustrialBarcode): string {
     const line = lines.find((l) => l.sku.id === sku.id);
     if (!line) return `!${sku.code} · ${sku.name} is not pending on this order.`;
-    const received = (Number(inputFor(line.purchaseOrderItemId).receivedQty) || 0) + 1;
+    const incQty = industrialData?.quantity && industrialData.quantity > 0 ? industrialData.quantity : 1;
+    const received = (Number(inputFor(line.purchaseOrderItemId).receivedQty) || 0) + incQty;
     if (received > Number(line.pending)) {
       return `!${sku.code}: only ${formatQuantity(line.pending)} ${sku.unit} is pending on this order.`;
     }
-    update(line.purchaseOrderItemId, { receivedQty: String(received) });
-    return `${sku.code} · ${sku.name}: ${received} of ${formatQuantity(line.pending)} ${sku.unit} received.`;
+    const patch: Partial<LineInput> = { receivedQty: String(received) };
+    if (industrialData?.batchNumber) patch.batchNumber = industrialData.batchNumber;
+    if (industrialData?.expiryDate) patch.expiryDate = industrialData.expiryDate;
+    if (industrialData?.productionDate) patch.manufacturingDate = industrialData.productionDate;
+    update(line.purchaseOrderItemId, patch);
+    const extraParts = [
+      patch.batchNumber ? `Batch: ${patch.batchNumber}` : null,
+      patch.expiryDate ? `Exp: ${patch.expiryDate}` : null,
+      incQty > 1 ? `+${incQty} units` : null,
+    ].filter(Boolean);
+    const extra = extraParts.length > 0 ? ` (${extraParts.join(", ")})` : "";
+    return `${sku.code} · ${sku.name}: ${received} of ${formatQuantity(line.pending)} ${sku.unit} received${extra}.`;
   }
 
   const submitted = lines.filter((line) => inputFor(line.purchaseOrderItemId).receivedQty.trim() !== "");

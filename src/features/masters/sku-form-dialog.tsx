@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Pencil, Plus, Sparkles } from "lucide-react";
+import { Loader2, Pencil, Plus, Sparkles, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Alert } from "@/components/ui/alert";
@@ -159,7 +159,7 @@ export function SkuFormDialog({
     }
   };
 
-  const { lookingUp, status: barcodeStatus, lookupBarcode } = useBarcodeLookup({
+  const { lookingUp, status: barcodeStatus, lookupBarcode, debouncedLookup, dismissStatus } = useBarcodeLookup({
     onAutoFill,
   });
 
@@ -397,7 +397,7 @@ export function SkuFormDialog({
                       const val = e.target.value;
                       set("barcode", val);
                       if (val.trim().length >= 8 && !editing) {
-                        lookupBarcode(val);
+                        debouncedLookup(val);
                       }
                     }}
                     onKeyDown={(e) => {
@@ -446,26 +446,36 @@ export function SkuFormDialog({
                 </div>
                 {barcodeStatus && !editing && (
                   <div
-                    className={cn("text-xs flex flex-wrap items-center gap-1.5 font-medium", {
-                      "text-emerald-700": barcodeStatus.tone === "success",
-                      "text-amber-700": barcodeStatus.tone === "warning",
-                      "text-blue-700": barcodeStatus.tone === "info",
-                      "text-red-600": barcodeStatus.tone === "error",
+                    className={cn("text-xs flex items-center justify-between gap-1.5 font-medium rounded-md px-2 py-1", {
+                      "bg-emerald-50 text-emerald-800 border border-emerald-200": barcodeStatus.tone === "success",
+                      "bg-amber-50 text-amber-800 border border-amber-200": barcodeStatus.tone === "warning",
+                      "bg-blue-50 text-blue-800 border border-blue-200": barcodeStatus.tone === "info",
+                      "bg-red-50 text-red-800 border border-red-200": barcodeStatus.tone === "error",
                     })}
                   >
-                    {lookingUp && <Loader2 className="size-3 animate-spin inline shrink-0" />}
-                    {!lookingUp && barcodeStatus.tone === "success" && <Sparkles className="size-3 text-emerald-600 inline shrink-0" />}
-                    <span>{barcodeStatus.text}</span>
-                    {barcodeStatus.existingSkuId && (
-                      <a
-                        href={`/masters/products/${barcodeStatus.existingSkuId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline font-semibold ml-1 text-amber-800 hover:text-amber-900 inline-flex items-center gap-0.5"
-                      >
-                        View SKU {barcodeStatus.existingSkuCode} →
-                      </a>
-                    )}
+                    <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                      {lookingUp && <Loader2 className="size-3 animate-spin inline shrink-0" />}
+                      {!lookingUp && barcodeStatus.tone === "success" && <Sparkles className="size-3 text-emerald-600 inline shrink-0" />}
+                      <span>{barcodeStatus.text}</span>
+                      {barcodeStatus.existingSkuId && (
+                        <a
+                          href={`/masters/products/${barcodeStatus.existingSkuId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline font-semibold ml-1 text-amber-900 hover:text-amber-950 inline-flex items-center gap-0.5"
+                        >
+                          View SKU {barcodeStatus.existingSkuCode} →
+                        </a>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={dismissStatus}
+                      className="text-slate-400 hover:text-slate-600 p-0.5 rounded cursor-pointer shrink-0"
+                      title="Dismiss notification"
+                    >
+                      <X className="size-3.5" />
+                    </button>
                   </div>
                 )}
               </div>
