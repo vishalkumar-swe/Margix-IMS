@@ -1,4 +1,5 @@
 import { internalEan13, MAX_INTERNAL_SEQUENCE } from "@/lib/barcode";
+import { parseScannedBarcode } from "@/lib/industrial-barcode";
 import { stateCodeOfGstin } from "@/lib/gst-states";
 import type {
   CategoryCreateInput,
@@ -26,6 +27,75 @@ import { invalidateBarcodeCache } from "./barcode-lookup.service";
  * resolvable); they are deactivated/archived instead. Every change is audited.
  */
 
+/**
+ * Self-learning global catalog sync:
+ * Whenever a SKU is created or updated by a merchant, persist full product details
+ * (name, description, category, unit of measure, HSN, and GST) to globalProductCatalog
+ * for both the primary barcode and any equivalent/inner GTIN codes.
+ */
+async function syncSkuToGlobalCatalog(
+  tx: Tx,
+  sku: {
+    barcode?: string | null;
+    name: string;
+    description?: string | null;
+    categoryId?: string | null;
+    baseUomId?: string | null;
+    hsnCode?: string | null;
+    gstRate?: unknown;
+  },
+) {
+  if (!sku.barcode) return;
+  const rawBarcode = sku.barcode.trim();
+  if (!rawBarcode) return;
+
+  try {
+    const [category, uom] = await Promise.all([
+      sku.categoryId ? tx.category.findUnique({ where: { id: sku.categoryId }, select: { name: true } }) : null,
+      sku.baseUomId ? tx.uom.findUnique({ where: { id: sku.baseUomId }, select: { code: true } }) : null,
+    ]);
+
+    const parsed = parseScannedBarcode(rawBarcode);
+    const codesToSync = new Set<string>([rawBarcode]);
+    if (parsed.primaryCode) codesToSync.add(parsed.primaryCode);
+    if (parsed.innerGtin) codesToSync.add(parsed.innerGtin);
+    for (const sec of parsed.secondaryCodes) {
+      if (sec) codesToSync.add(sec);
+    }
+
+    const gstRateStr = sku.gstRate != null ? String(sku.gstRate) : undefined;
+
+    for (const code of codesToSync) {
+      await tx.globalProductCatalog.upsert({
+        where: { barcode: code },
+        create: {
+          barcode: code,
+          name: sku.name,
+          description: sku.description ?? undefined,
+          category: category?.name ?? undefined,
+          uom: uom?.code ?? undefined,
+          hsnCode: sku.hsnCode ?? undefined,
+          gstRate: gstRateStr,
+          source: "merchant",
+          confidence: "high",
+        },
+        update: {
+          name: sku.name,
+          description: sku.description ?? undefined,
+          category: category?.name ?? undefined,
+          uom: uom?.code ?? undefined,
+          hsnCode: sku.hsnCode ?? undefined,
+          gstRate: gstRateStr,
+          source: "merchant",
+          confidence: "high",
+        },
+      });
+    }
+  } catch {
+    // Non-blocking catalog sync
+  }
+}
+
 // ---- SKU ----
 
 export function createSku(actor: Actor, input: SkuCreateInput) {
@@ -45,30 +115,7 @@ export function createSku(actor: Actor, input: SkuCreateInput) {
     await recordAudit(tx, actor, { action: "MASTER_CREATED", entityType: "Sku", entityId: sku.id, newData: sku });
     if (sku.barcode) {
       invalidateBarcodeCache(sku.barcode);
-      try {
-        await tx.globalProductCatalog.upsert({
-          where: { barcode: sku.barcode },
-          create: {
-            barcode: sku.barcode,
-            name: sku.name,
-            description: sku.description,
-            hsnCode: sku.hsnCode,
-            gstRate: sku.gstRate?.toString(),
-            source: "merchant",
-            confidence: "high",
-          },
-          update: {
-            name: sku.name,
-            description: sku.description ?? undefined,
-            hsnCode: sku.hsnCode ?? undefined,
-            gstRate: sku.gstRate?.toString() ?? undefined,
-            source: "merchant",
-            confidence: "high",
-          },
-        });
-      } catch {
-        // Non-blocking catalog sync
-      }
+      await syncSkuToGlobalCatalog(tx, sku);
     }
     return sku;
   });
@@ -111,30 +158,7 @@ export function updateSku(actor: Actor, id: string, input: SkuUpdateInput) {
     });
     if (after.barcode) {
       invalidateBarcodeCache(after.barcode);
-      try {
-        await tx.globalProductCatalog.upsert({
-          where: { barcode: after.barcode },
-          create: {
-            barcode: after.barcode,
-            name: after.name,
-            description: after.description,
-            hsnCode: after.hsnCode,
-            gstRate: after.gstRate?.toString(),
-            source: "merchant",
-            confidence: "high",
-          },
-          update: {
-            name: after.name,
-            description: after.description ?? undefined,
-            hsnCode: after.hsnCode ?? undefined,
-            gstRate: after.gstRate?.toString() ?? undefined,
-            source: "merchant",
-            confidence: "high",
-          },
-        });
-      } catch {
-        // Non-blocking catalog sync
-      }
+      await syncSkuToGlobalCatalog(tx, after);
     }
     return after;
   });

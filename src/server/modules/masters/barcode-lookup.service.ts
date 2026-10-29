@@ -255,6 +255,22 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
     const matchedCategoryId = resolveOrMatchCategory(dbCatalogHit.category ?? undefined, hsnCode, categories);
     const matchedUomId = resolveUom(dbCatalogHit.uom ?? undefined, uoms);
 
+    // Self-healing: persist back newly resolved category or UOM to incomplete catalog entries
+    const catalogUpdates: { hsnCode?: string; gstRate?: string; category?: string; uom?: string } = {};
+    if (!dbCatalogHit.hsnCode && hsnCode) catalogUpdates.hsnCode = hsnCode;
+    if (!dbCatalogHit.gstRate && gstRate) catalogUpdates.gstRate = gstRate;
+    if (!dbCatalogHit.category && matchedCategoryId?.name) catalogUpdates.category = matchedCategoryId.name;
+    if (!dbCatalogHit.uom && matchedUomId?.code) catalogUpdates.uom = matchedUomId.code;
+
+    if (Object.keys(catalogUpdates).length > 0) {
+      prisma.globalProductCatalog
+        .update({
+          where: { barcode: dbCatalogHit.barcode },
+          data: catalogUpdates,
+        })
+        .catch(() => {});
+    }
+
     const res: BarcodeLookupResult = {
       barcode,
       foundInDatabase: false,
@@ -462,6 +478,57 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
     },
     industrialData: parsed,
   };
+
+  // Self-learning write-through: persist enriched metadata to PostgreSQL globalProductCatalog
+  // so future lookups across all users/workstations are 0.001ms instant and don't re-query open registries or AI!
+  if (
+    productName &&
+    !productName.startsWith("Scanned Item") &&
+    !productName.includes("Product (000000)") &&
+    source !== "inferred"
+  ) {
+    const codesToPersist = new Set<string>([barcode]);
+    if (parsed.primaryCode) codesToPersist.add(parsed.primaryCode);
+    if (parsed.innerGtin) codesToPersist.add(parsed.innerGtin);
+    for (const sec of parsed.secondaryCodes) {
+      if (sec) codesToPersist.add(sec);
+    }
+
+    const payload = {
+      name: productName,
+      brand: brand ?? undefined,
+      description: description ?? undefined,
+      category: matchedCategory?.name || suggestedCategoryName,
+      uom: matchedUom?.code || suggestedUomCode,
+      hsnCode: suggestedHsn,
+      gstRate: suggestedGst,
+      source,
+      confidence,
+    };
+
+    for (const bCode of codesToPersist) {
+      prisma.globalProductCatalog
+        .upsert({
+          where: { barcode: bCode },
+          create: {
+            barcode: bCode,
+            ...payload,
+          },
+          update: {
+            name: productName,
+            brand: payload.brand,
+            description: payload.description,
+            category: payload.category ?? undefined,
+            uom: payload.uom ?? undefined,
+            hsnCode: payload.hsnCode ?? undefined,
+            gstRate: payload.gstRate ?? undefined,
+            source,
+            confidence,
+          },
+        })
+        .catch(() => {});
+    }
+  }
 
   lookupMemoryCache.set(barcode, result);
   return result;
