@@ -7,6 +7,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { ThemeSwitcher } from "@/components/layout/theme-switcher";
 import { UserMenu } from "@/components/layout/user-menu";
 import { GlobalScan } from "@/features/scan/global-scan";
+import { PhoneScannerProvider } from "@/features/scan/phone-scanner-provider";
 import { ChecklistProvider } from "@/features/checklist/checklist-provider";
 import { OpenChecklistButton } from "@/features/checklist/open-checklist-button";
 import { CompletionDialog } from "@/features/copilot/completion-dialog";
@@ -34,30 +35,32 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
     <div data-theme={theme} className="app-backdrop min-h-screen text-slate-900">
       <CopilotProvider user={{ id: user.id, role: user.role }} permissions={permissionsFor(user.role)}>
         <ChecklistProvider autoOpen={showChecklist}>
-          <NavigationIntent />
-          <LiveUpdates />
-          <Suspense fallback={null}>
-            <NavigationProgress />
-          </Suspense>
-          <Sidebar permissions={permissionsFor(user.role)} />
-          <div className="lg:pl-64">
-            <header className="glass-strong sticky top-0 z-20 flex h-14 items-center justify-end gap-1 border-b px-3 sm:gap-2 sm:px-6">
-              <GlobalScan className="mr-auto ml-12 w-full max-w-[8rem] sm:max-w-sm lg:ml-0" />
-              <CopilotLauncher />
-              <OpenChecklistButton />
-              <NotificationBell unread={unread} />
-              <ThemeSwitcher initial={theme} />
-              <span className="mx-1 hidden h-6 w-px bg-slate-200 sm:block" aria-hidden />
-              <UserMenu name={user.name} roleLabel={ROLE_LABELS[user.role]} />
-            </header>
-            <WalkthroughBar />
-            <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">{children}</main>
-          </div>
-          <TourEngine />
-          <DeepLinkSpotlight />
-          <CopilotDrawer />
-          <MilestoneCelebration />
-          <CompletionDialog />
+          <PhoneScannerProvider>
+            <NavigationIntent />
+            <LiveUpdates />
+            <Suspense fallback={null}>
+              <NavigationProgress />
+            </Suspense>
+            <Sidebar permissions={permissionsFor(user.role)} />
+            <div className="lg:pl-64">
+              <header className="glass-strong sticky top-0 z-20 flex h-14 items-center justify-end gap-1 border-b px-3 sm:gap-2 sm:px-6">
+                <GlobalScan className="mr-auto ml-12 w-full max-w-[8rem] sm:max-w-sm lg:ml-0" />
+                <CopilotLauncher />
+                <OpenChecklistButton />
+                <NotificationBell unread={unread} />
+                <ThemeSwitcher initial={theme} />
+                <span className="mx-1 hidden h-6 w-px bg-slate-200 sm:block" aria-hidden />
+                <UserMenu name={user.name} roleLabel={ROLE_LABELS[user.role]} />
+              </header>
+              <WalkthroughBar />
+              <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+            </div>
+            <TourEngine />
+            <DeepLinkSpotlight />
+            <CopilotDrawer />
+            <MilestoneCelebration />
+            <CompletionDialog />
+          </PhoneScannerProvider>
         </ChecklistProvider>
       </CopilotProvider>
     </div>

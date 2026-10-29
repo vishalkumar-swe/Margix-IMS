@@ -17,7 +17,7 @@ import { SKU_STATUSES } from "@/lib/enums";
 import { HsnPicker } from "./hsn-picker";
 import { CameraScanButton } from "@/features/scan/camera-scan-button";
 import { PhoneScanButton } from "@/features/scan/phone-scan-button";
-import { usePhoneScanner } from "@/features/scan/use-phone-scanner";
+import { useBarcodeScanListener } from "@/features/scan/phone-scanner-provider";
 import { useBarcodeLookup, type AutoFillCatalogDetails } from "@/features/scan/use-barcode-lookup";
 
 export interface SkuFormValues {
@@ -163,23 +163,22 @@ export function SkuFormDialog({
     onAutoFill,
   });
 
-  // Listen for paired phone scans in background while form is open
-  usePhoneScanner({
-    active: open,
-    onScan: (code) => {
-      setForm((prev) => ({ ...prev, barcode: code }));
-      if (!editing) {
-        lookupBarcode(code, true);
-      }
-    },
-  });
+  // Listen for ambient mobile phone scans in background while form is open
+  useBarcodeScanListener((code) => {
+    setForm((prev) => ({ ...prev, barcode: code }));
+    if (!editing) {
+      void lookupBarcode(code, true);
+    }
+  }, open);
 
   const prevOpenRef = useRef(false);
+  const lookedUpInitialRef = useRef<string>("");
   useEffect(() => {
     if (open && !prevOpenRef.current) {
       setForm(initial);
-      if (initial.barcode && !editing) {
-        lookupBarcode(initial.barcode, true);
+      if (initial.barcode && !editing && lookedUpInitialRef.current !== initial.barcode) {
+        lookedUpInitialRef.current = initial.barcode;
+        void lookupBarcode(initial.barcode, false);
       }
     }
     prevOpenRef.current = open;

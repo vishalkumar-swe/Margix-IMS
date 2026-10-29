@@ -6,7 +6,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/form-controls";
-import { usePhoneScanner } from "./use-phone-scanner";
+import { usePhoneScannerContext, useBarcodeScanListener } from "./use-phone-scanner";
 
 interface PhoneScannerModalProps {
   open: boolean;
@@ -35,16 +35,18 @@ export function PhoneScannerModal({
     lastScanned,
     initSession,
     disconnect,
-  } = usePhoneScanner({
-    active: open,
-    onScan: (barcode) => {
+  } = usePhoneScannerContext();
+
+  useBarcodeScanListener(
+    (barcode) => {
       onScan(barcode);
       // Close modal after brief visual confirmation so the form is visible
       setTimeout(() => {
         onClose();
       }, 600);
     },
-  });
+    open,
+  );
 
   // Check if client is browsing on localhost / 0.0.0.0
   const isLocalhost =
@@ -54,10 +56,10 @@ export function PhoneScannerModal({
       window.location.hostname === "0.0.0.0");
 
   useEffect(() => {
-    if (open) {
+    if (open && (!sessionId || (!qrCodeDataUrl && !phoneConnected))) {
       void initSession({ forceNew: false });
     }
-  }, [open, initSession]);
+  }, [open, sessionId, qrCodeDataUrl, phoneConnected, initSession]);
 
   const handlePairNewPhone = async () => {
     setShowQrAnyway(false);

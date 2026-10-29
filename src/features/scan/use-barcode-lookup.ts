@@ -23,55 +23,68 @@ export function useBarcodeLookup({
   const [lookingUp, setLookingUp] = useState(false);
   const [status, setStatus] = useState<BarcodeStatusMessage | null>(null);
   const lastLookedUpRef = useRef<string>("");
+  const inFlightRef = useRef(false);
 
-  const lookupBarcode = useCallback(
-    async (rawCode: string, force = false) => {
-      const code = rawCode.trim();
-      if (!code || code.length < 3) {
-        setStatus(null);
-        return null;
-      }
-      if (!force && lastLookedUpRef.current === code) {
-        return null;
-      }
-      lastLookedUpRef.current = code;
-      setLookingUp(true);
-      setStatus({ tone: "info", text: "🔍 Looking up barcode details..." });
+  const onFoundRef = useRef(onFound);
+  const onAutoFillRef = useRef(onAutoFill);
+  useEffect(() => {
+    onFoundRef.current = onFound;
+    onAutoFillRef.current = onAutoFill;
+  }, [onFound, onAutoFill]);
 
-      try {
-        const result = await apiRequest<BarcodeLookupResult>(`/skus/barcode-lookup?barcode=${encodeURIComponent(code)}`);
+  const lookupBarcode = useCallback(async (rawCode: string, force = false) => {
+    const code = rawCode.trim();
+    if (!code || code.length < 3) {
+      setStatus(null);
+      return null;
+    }
 
-        if (result.foundInDatabase && result.sku) {
-          setStatus({
-            tone: "warning",
-            text: `⚠️ Barcode already assigned to SKU ${result.sku.code} · ${result.sku.name}.`,
-            existingSkuId: result.sku.id,
-            existingSkuCode: result.sku.code,
-          });
-          onFound?.(result.sku);
-          return result;
-        }
+    if (!force && lastLookedUpRef.current === code) {
+      return null;
+    }
 
-        if (result.catalogDetails) {
-          setStatus({
-            tone: "success",
-            text: `✨ Detected "${result.catalogDetails.name}". Details auto-filled!`,
-          });
-          onAutoFill?.(result.catalogDetails);
-          return result;
-        }
+    if (inFlightRef.current && lastLookedUpRef.current === code) {
+      return null;
+    }
 
-        setStatus({ tone: "info", text: `Barcode ${code} recorded. Enter remaining product details.` });
+    inFlightRef.current = true;
+    lastLookedUpRef.current = code;
+    setLookingUp(true);
+    setStatus({ tone: "info", text: "🔍 Looking up barcode details..." });
+
+    try {
+      const result = await apiRequest<BarcodeLookupResult>(`/skus/barcode-lookup?barcode=${encodeURIComponent(code)}`);
+
+      if (result.foundInDatabase && result.sku) {
+        setStatus({
+          tone: "warning",
+          text: `⚠️ Barcode already assigned to SKU ${result.sku.code} · ${result.sku.name}.`,
+          existingSkuId: result.sku.id,
+          existingSkuCode: result.sku.code,
+        });
+        onFoundRef.current?.(result.sku);
         return result;
-      } catch {
-        setStatus({ tone: "error", text: "Could not look up barcode online. You can enter details manually." });
-        return null;
-      } finally {
-        setLookingUp(false);
       }
-    },
-    [onFound, onAutoFill],
-  );
+
+      if (result.catalogDetails) {
+        setStatus({
+          tone: "success",
+          text: `✨ Detected "${result.catalogDetails.name}". Details auto-filled!`,
+        });
+        onAutoFillRef.current?.(result.catalogDetails);
+        return result;
+      }
+
+      setStatus({ tone: "info", text: `Barcode ${code} recorded. Enter remaining product details.` });
+      return result;
+    } catch {
+      setStatus({ tone: "error", text: "Could not look up barcode online. You can enter details manually." });
+      return null;
+    } finally {
+      inFlightRef.current = false;
+      setLookingUp(false);
+    }
+  }, []);
 
   return {
     lookingUp,
@@ -80,4 +93,3 @@ export function useBarcodeLookup({
     lookupBarcode,
   };
 }
-

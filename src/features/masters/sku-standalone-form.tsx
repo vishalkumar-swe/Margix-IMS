@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Loader2, Plus, Sparkles } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import { emitCopilotEvent } from "@/lib/copilot/runtime";
 import { HsnPicker } from "./hsn-picker";
 import { CameraScanButton } from "@/features/scan/camera-scan-button";
 import { PhoneScanButton } from "@/features/scan/phone-scan-button";
-import { usePhoneScanner } from "@/features/scan/use-phone-scanner";
+import { useBarcodeScanListener } from "@/features/scan/phone-scanner-provider";
 import { useBarcodeLookup } from "@/features/scan/use-barcode-lookup";
 import { EMPTY_SKU, type SkuFormValues } from "./sku-form-dialog";
 
@@ -90,20 +90,19 @@ export function SkuStandaloneForm({
     }
   };
 
+  const initialLookedUpRef = useRef<string>("");
   useEffect(() => {
-    if (initialBarcode) {
-      lookupBarcode(initialBarcode, true);
+    if (initialBarcode && initialLookedUpRef.current !== initialBarcode) {
+      initialLookedUpRef.current = initialBarcode;
+      void lookupBarcode(initialBarcode, false);
     }
   }, [initialBarcode, lookupBarcode]);
 
-  // Listen for paired phone scans in background while form is active
-  usePhoneScanner({
-    active: true,
-    onScan: (code) => {
-      setForm((prev) => ({ ...prev, barcode: code }));
-      lookupBarcode(code, true);
-    },
-  });
+  // Listen for ambient mobile phone scans in background while form is active
+  useBarcodeScanListener((code) => {
+    setForm((prev) => ({ ...prev, barcode: code }));
+    void lookupBarcode(code, true);
+  }, true);
 
   const save = useApiMutation((values: SkuFormValues) => {
     return apiRequest<{ id: string; code: string }>("/skus", {
