@@ -17,7 +17,6 @@ import {
   Truck,
   ReceiptIndianRupee,
   ShieldCheck,
-  ChevronRight,
 } from "lucide-react";
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { MANUAL_CHAPTERS } from "@/lib/manual-content";
@@ -64,12 +63,12 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
   }, [sidebarFilter]);
 
   return (
-    <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans">
+    <div className="min-h-screen bg-slate-50/60 text-slate-900 flex flex-col font-sans">
       {/* Top Reading Progress Bar */}
       <ReadingProgress />
 
-      {/* Top Navbar */}
-      <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-200/80 bg-white/90 px-4 backdrop-blur-md sm:px-8">
+      {/* Top Sticky Navbar */}
+      <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-200/80 bg-white/95 px-4 backdrop-blur-md sm:px-8 shadow-2xs">
         <div className="flex items-center gap-4">
           <button
             type="button"
@@ -89,7 +88,7 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
           </span>
         </div>
 
-        {/* Global ⌘K Search Modal */}
+        {/* Global ⌘K Search Modal + Actions */}
         <div className="flex items-center gap-3">
           <DocsSearchModal />
 
@@ -113,16 +112,16 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
         </div>
       </header>
 
-      {/* Main Grid: Left Sidebar + Children Content + (Optional TOC in Chapter) */}
-      <div className="mx-auto flex w-full max-w-7xl flex-1 items-start px-4 sm:px-6 lg:px-8">
-        {/* Left Sidebar (Desktop + Mobile Drawer) */}
+      {/* Main Grid: Sticky Left Sidebar + Center Content + Sticky Right TOC */}
+      <div className="mx-auto flex w-full max-w-[1440px] flex-1 items-start px-4 sm:px-6 lg:px-8">
+        {/* Left Sidebar (Sticky on Desktop: DOES NOT SCROLL AWAY WITH PAGE) */}
         <aside
           className={cn(
-            "fixed inset-y-16 left-0 z-30 w-72 transform border-r border-slate-200 bg-white p-4 transition-transform lg:static lg:inset-auto lg:w-72 lg:translate-x-0 lg:border-r lg:bg-transparent lg:p-0 lg:py-6",
+            "fixed inset-y-16 left-0 z-30 w-72 transform border-r border-slate-200 bg-white p-4 transition-transform lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] lg:overflow-y-auto lg:w-64 xl:w-72 lg:shrink-0 lg:border-r lg:bg-transparent lg:p-0 lg:py-6 lg:pr-5",
             mobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full lg:translate-x-0",
           )}
         >
-          {/* Quick Filter */}
+          {/* Quick Filter Input */}
           <div className="relative mb-3">
             <Search className="absolute left-3 top-2.5 size-3.5 text-slate-400" />
             <input
@@ -134,7 +133,7 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
             />
           </div>
 
-          {/* Master Index Overview */}
+          {/* Master Index Overview Link */}
           <div className="mb-4">
             <Link
               href="/docs"
@@ -142,8 +141,8 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
               className={cn(
                 "flex items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold transition-all",
                 pathname === "/docs"
-                  ? "bg-brand-50 text-brand-700 font-bold shadow-2xs"
-                  : "text-slate-700 hover:bg-slate-100",
+                  ? "bg-brand-50 text-brand-700 font-bold shadow-2xs border border-brand-200/50"
+                  : "text-slate-700 hover:bg-slate-100/80",
               )}
             >
               <div className="flex items-center gap-2">
@@ -156,8 +155,8 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
             </Link>
           </div>
 
-          {/* Categorized Chapters Nav */}
-          <nav className="space-y-4 overflow-y-auto max-h-[calc(100vh-14rem)] pr-1 text-xs">
+          {/* Categorized Chapters Navigation */}
+          <nav className="space-y-4 pr-1 text-xs">
             {categories.map((group) => {
               const GroupIcon = group.icon;
               return (
@@ -178,8 +177,8 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
                           className={cn(
                             "flex items-center gap-2.5 rounded-lg px-3 py-1.5 transition-colors",
                             active
-                              ? "bg-brand-50 text-brand-700 font-semibold shadow-2xs"
-                              : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
+                              ? "bg-brand-50 text-brand-700 font-semibold shadow-2xs border border-brand-200/40"
+                              : "text-slate-600 hover:bg-slate-100/80 hover:text-slate-900",
                           )}
                         >
                           <span
@@ -204,9 +203,9 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
             )}
           </nav>
 
-          {/* Bottom Compliance & Tally Badge */}
-          <div className="mt-6 border-t border-slate-200 pt-4 px-3 text-[11px] text-slate-400 space-y-1">
-            <div className="flex items-center gap-1 text-slate-500 font-medium">
+          {/* Bottom Compliance & Release Tag */}
+          <div className="mt-8 border-t border-slate-200/80 pt-4 px-3 text-[11px] text-slate-400 space-y-1">
+            <div className="flex items-center gap-1 text-slate-600 font-medium">
               <ShieldCheck className="size-3.5 text-emerald-600" />
               <span>Production Release v1.0</span>
             </div>
@@ -222,7 +221,7 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
           />
         )}
 
-        {/* Content Area */}
+        {/* Content Area (Constrained to optimal reading width so text is NOT congested or stretched) */}
         <main className="min-w-0 flex-1 py-6 lg:pl-8">{children}</main>
       </div>
     </div>

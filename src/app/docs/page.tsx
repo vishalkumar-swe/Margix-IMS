@@ -63,7 +63,7 @@ const ROLE_GUIDES = [
 
 export default function DocsIndexPage() {
   return (
-    <article className="space-y-12">
+    <article className="max-w-[860px] mx-auto space-y-10">
       {/* Hero Header */}
       <div className="rounded-2xl border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/50 p-6 sm:p-10 shadow-xs">
         <div className="inline-flex items-center gap-2 rounded-full bg-brand-50 border border-brand-200/60 px-3.5 py-1 text-xs font-bold text-brand-700">

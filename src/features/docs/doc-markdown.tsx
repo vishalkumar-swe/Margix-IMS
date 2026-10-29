@@ -110,7 +110,7 @@ export function DocMarkdown({ text }: { text: string }) {
 
     if (isNum) {
       blocks.push(
-        <ol key={`list-${blocks.length}`} className="my-3 list-decimal space-y-1.5 pl-6 text-sm text-slate-700">
+        <ol key={`list-${blocks.length}`} className="my-4 list-decimal space-y-2 pl-6 text-[14.5px] leading-relaxed text-slate-700">
           {items.map((item, idx) => (
             <li key={idx} className="leading-relaxed">
               {inline(item)}
@@ -120,7 +120,7 @@ export function DocMarkdown({ text }: { text: string }) {
       );
     } else {
       blocks.push(
-        <ul key={`list-${blocks.length}`} className="my-3 list-disc space-y-1.5 pl-6 text-sm text-slate-700">
+        <ul key={`list-${blocks.length}`} className="my-4 list-disc space-y-2 pl-6 text-[14.5px] leading-relaxed text-slate-700">
           {items.map((item, idx) => (
             <li key={idx} className="leading-relaxed">
               {inline(item)}
@@ -409,7 +409,7 @@ export function DocMarkdown({ text }: { text: string }) {
 
     // Regular paragraph
     blocks.push(
-      <p key={`p-${blocks.length}`} className="my-3 text-sm leading-relaxed text-slate-700">
+      <p key={`p-${blocks.length}`} className="my-3.5 text-[14.5px] leading-7 text-slate-700">
         {inline(trimmed)}
       </p>,
     );
