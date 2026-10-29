@@ -12,11 +12,14 @@
 
 export interface ParsedIndustrialBarcode {
   raw: string;
-  code: string; // Primary lookup code (GTIN, SKU, or clean Part Number)
+  code: string; // Primary lookup code (GTIN, SKU, ASIN, ISBN, or clean Part Number)
   primaryCode: string; // Alias to code for convenience
   secondaryCodes: string[]; // Alternate representations (e.g. 14-digit GTIN vs 13-digit EAN, raw vs stripped)
   isComposite: boolean;
   gtin?: string;
+  asin?: string;
+  isbn?: string;
+  fnsku?: string;
   partNumber?: string;
   batchNumber?: string;
   expiryDate?: string; // YYYY-MM-DD
@@ -26,6 +29,7 @@ export interface ParsedIndustrialBarcode {
   quantity?: number;
   weightKg?: number;
   sscc?: string;
+  identifierType?: "gtin" | "asin" | "isbn" | "fnsku" | "mpn" | "custom";
 }
 
 /** Parses GS1 YYMMDD date format into YYYY-MM-DD */
@@ -64,6 +68,9 @@ function finalizeResult(
       secondarySet.add("0" + res.gtin);
     }
   }
+  if (res.asin) secondarySet.add(res.asin);
+  if (res.isbn) secondarySet.add(res.isbn);
+  if (res.fnsku) secondarySet.add(res.fnsku);
   if (res.partNumber) secondarySet.add(res.partNumber);
   if (primaryCode !== raw && raw) secondarySet.add(raw);
   secondarySet.delete(primaryCode);
@@ -274,19 +281,108 @@ function rawParseScannedBarcode(raw: string): Omit<ParsedIndustrialBarcode, "pri
     }
   }
 
-  // 5. Clean Part Number Prefixes: "P/N: SKF-6205", "PART NO: ABC-123", "SKU: XYZ"
-  const cleanPrefixMatch = raw.match(/^(?:p\/n|part\s*no|part\s*#|part|sku|mat\s*no|item\s*no)[\s:#]+(.+)$/i);
+  // 5. Amazon URLs: https://www.amazon.in/dp/B08N5WRWNW, https://amzn.in/d/..., etc.
+  const amazonMatch = raw.match(/(?:amazon\.[a-z.]+\/(?:.*\/)?(?:dp|gp\/product)\/|amzn\.[a-z.]+\/d\/)([A-Z0-9]{10})/i);
+  if (amazonMatch) {
+    const asin = amazonMatch[1].toUpperCase();
+    return {
+      raw,
+      code: asin,
+      asin,
+      partNumber: asin,
+      identifierType: "asin",
+      isComposite: false,
+    };
+  }
+
+  // 6. Amazon ASIN: "ASIN: B08N5WRWNW" or bare "B0..." 10-char code
+  const asinPrefixMatch = raw.match(/^(?:asin|amazon)[\s:#]+([A-Z0-9]{10})$/i);
+  if (asinPrefixMatch) {
+    const asin = asinPrefixMatch[1].toUpperCase();
+    return {
+      raw,
+      code: asin,
+      asin,
+      partNumber: asin,
+      identifierType: "asin",
+      isComposite: false,
+    };
+  }
+  if (/^B0[A-Z0-9]{8}$/i.test(raw)) {
+    const asin = raw.toUpperCase();
+    return {
+      raw,
+      code: asin,
+      asin,
+      partNumber: asin,
+      identifierType: "asin",
+      isComposite: false,
+    };
+  }
+
+  // 7. Amazon FNSKU: "FNSKU: X001..." or bare "X0..."
+  const fnskuPrefixMatch = raw.match(/^(?:fnsku)[\s:#]+([A-Z0-9]{10})$/i);
+  if (fnskuPrefixMatch) {
+    const fnsku = fnskuPrefixMatch[1].toUpperCase();
+    return {
+      raw,
+      code: fnsku,
+      fnsku,
+      identifierType: "fnsku",
+      isComposite: false,
+    };
+  }
+  if (/^X0[A-Z0-9]{8}$/i.test(raw)) {
+    const fnsku = raw.toUpperCase();
+    return {
+      raw,
+      code: fnsku,
+      fnsku,
+      identifierType: "fnsku",
+      isComposite: false,
+    };
+  }
+
+  // 8. ISBN (Books): "ISBN: 978-0-13-235088-4" or bare 13/10 digits
+  const isbnPrefixMatch = raw.match(/^(?:isbn|isbn-13|isbn-10)[\s:#]+([0-9Xx-]{10,17})$/i);
+  if (isbnPrefixMatch) {
+    const cleanIsbn = isbnPrefixMatch[1].replace(/[^0-9Xx]/g, "").toUpperCase();
+    if (cleanIsbn.length === 10 || cleanIsbn.length === 13) {
+      return {
+        raw,
+        code: cleanIsbn,
+        isbn: cleanIsbn,
+        identifierType: "isbn",
+        isComposite: false,
+      };
+    }
+  }
+  const cleanBareIsbn = raw.replace(/[^0-9Xx]/g, "").toUpperCase();
+  if ((cleanBareIsbn.length === 13 && (cleanBareIsbn.startsWith("978") || cleanBareIsbn.startsWith("979"))) ||
+      (cleanBareIsbn.length === 10 && /^\d{9}[\dX]$/.test(cleanBareIsbn) && raw.includes("-"))) {
+    return {
+      raw,
+      code: cleanBareIsbn,
+      isbn: cleanBareIsbn,
+      identifierType: "isbn",
+      isComposite: false,
+    };
+  }
+
+  // 9. Clean Part Number / MPN / Model Prefixes: "P/N: SKF-6205", "MPN: 123", "MODEL: ABC-123"
+  const cleanPrefixMatch = raw.match(/^(?:mpn|model|mod|cat\s*no|cat\s*#|p\/n|part\s*no|part\s*#|part|sku|mat\s*no|item\s*no)[\s:#]+(.+)$/i);
   if (cleanPrefixMatch) {
     const cleanCode = cleanPrefixMatch[1].trim();
     return {
       raw,
       code: cleanCode,
       partNumber: cleanCode,
+      identifierType: "mpn",
       isComposite: false,
     };
   }
 
-  // 6. ITF-14 Outer Packaging Carton (14 digits)
+  // 10. ITF-14 Outer Packaging Carton (14 digits)
   // Leading digit 1-8 indicates packaging level (e.g. 1 = inner pack, 2 = case)
   // Digits 2-13 are base GTIN-12
   if (/^\d{14}$/.test(raw) && !raw.startsWith("00")) {
@@ -296,16 +392,21 @@ function rawParseScannedBarcode(raw: string): Omit<ParsedIndustrialBarcode, "pri
       raw,
       code: cleanCode,
       gtin: cleanCode,
+      identifierType: "gtin",
       isComposite: false,
     };
   }
 
-  // 7. Standard alphanumeric or numeric barcode (EAN, UPC, Code 128, Code 39)
+  // 11. Standard alphanumeric or numeric barcode (EAN, UPC, Code 128, Code 39)
   // Strips unprintable control characters (ASCII 0-31) often sent by serial scanners
   const sanitized = raw.replace(/[\x00-\x1f\x7f]/g, "").trim();
+  const isGtin = /^\d{8}$|^\d{12,14}$/.test(sanitized);
   return {
     raw,
     code: sanitized,
+    gtin: isGtin ? sanitized : undefined,
+    partNumber: !isGtin ? sanitized : undefined,
+    identifierType: isGtin ? "gtin" : "custom",
     isComposite: false,
   };
 }

@@ -97,15 +97,21 @@ export class BarcodeDiscoveryService {
       return this.l1Cache.get(cleanCode) || null;
     }
 
-    // 2. Query Open Registries (Food, Beauty, Products, UPCitemdb) concurrently in parallel
-    const [foodRes, beautyRes, productRes, upcRes] = await Promise.allSettled([
+    // Check if barcode is an ISBN book code
+    const isIsbn = /^(?:97[89]\d{10}|\d{9}[\dX])$/i.test(cleanCode.replace(/[^0-9Xx]/g, ""));
+    const isbnPromise = isIsbn ? this.queryOpenLibrary(cleanCode, 2000) : Promise.resolve(null);
+
+    // 2. Query Open Registries (Food, Beauty, Products, UPCitemdb, Books) concurrently in parallel
+    const [foodRes, beautyRes, productRes, upcRes, isbnRes] = await Promise.allSettled([
       this.queryOpenFoodFacts(cleanCode, 2000),
       this.queryOpenBeautyFacts(cleanCode, 2000),
       this.queryOpenProductsFacts(cleanCode, 2000),
       this.queryUpcItemDb(cleanCode, 2000),
+      isbnPromise,
     ]);
 
     const found =
+      (isbnRes.status === "fulfilled" && isbnRes.value) ||
       (foodRes.status === "fulfilled" && foodRes.value) ||
       (beautyRes.status === "fulfilled" && beautyRes.value) ||
       (productRes.status === "fulfilled" && productRes.value) ||
@@ -271,6 +277,51 @@ export class BarcodeDiscoveryService {
   }
 
   /**
+   * Queries Open Library public JSON API (books, publications, ISBN-10, ISBN-13)
+   */
+  async queryOpenLibrary(isbn: string, timeoutMs = 2000): Promise<DiscoveredProduct | null> {
+    const clean = isbn.replace(/[^0-9Xx]/g, "");
+    if (clean.length !== 10 && clean.length !== 13) return null;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const url = `https://openlibrary.org/isbn/${encodeURIComponent(clean)}.json`;
+      const res = await fetch(url, {
+        headers: { "User-Agent": this.userAgent, Accept: "application/json" },
+        signal: controller.signal,
+        redirect: "follow",
+      }).finally(() => clearTimeout(timer));
+
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data.title && typeof data.title === "string") {
+        const brand = Array.isArray(data.publishers) && data.publishers[0]
+          ? String(data.publishers[0]).trim()
+          : undefined;
+        const name = cleanCommercialProductName(data.title.trim(), brand);
+        return {
+          barcode: isbn,
+          name,
+          brand,
+          description:
+            typeof data.description === "string"
+              ? data.description
+              : data.description?.value || `${name} (ISBN: ${isbn})`,
+          category: "Books & Publications",
+          uom: "PCS",
+          hsnCode: "4901",
+          gstRate: "0.00",
+          confidence: "high",
+          source: "registry",
+        };
+      }
+    } catch (err) {
+      logger.debug("Open Library lookup failed or timed out", { isbn, err: String(err) });
+    }
+    return null;
+  }
+
+  /**
    * Parse product structure returned by Open * Facts family APIs
    */
   private parseOpenRegistryProduct(barcode: string, p: Record<string, any>, defaultCategory: string): DiscoveredProduct | null {
@@ -358,6 +409,17 @@ export class BarcodeDiscoveryService {
     if (llmConfigured()) {
       try {
         const isIndian = barcode.startsWith("890");
+        let identifierHint = "";
+        if (/^B0[A-Z0-9]{8}$/i.test(barcode)) {
+          identifierHint = `\nIdentifier Type: Amazon Standard Identification Number (ASIN): "${barcode}". Identify the exact commercial product, electronics, smartphone, appliance, or consumer item, manufacturer brand, and statutory Indian GST HSN code.`;
+        } else if (/^X0[A-Z0-9]{8}$/i.test(barcode)) {
+          identifierHint = `\nIdentifier Type: Amazon Fulfillment Network SKU (FNSKU): "${barcode}". Identify the Amazon catalog product, manufacturer brand, and statutory Indian GST HSN code.`;
+        } else if (/^97[89]\d{10}$/.test(barcode) || (barcode.length === 10 && /^\d{9}[\dX]$/i.test(barcode))) {
+          identifierHint = `\nIdentifier Type: International Standard Book Number (ISBN): "${barcode}". Identify the book title, author, publisher, and statutory Indian GST HSN code (4901 for printed books, 0% GST).`;
+        } else if (!/^\d+$/.test(barcode)) {
+          identifierHint = `\nIdentifier Type: Manufacturer Part Number (MPN) or Model Code: "${barcode}". Identify the exact equipment, automotive, electrical, mechanical component, bearings, or hardware, manufacturer brand, and statutory Indian GST HSN code.`;
+        }
+
         const hintText = prefixHint
           ? `\nVerified GS1 India Registry Context: Manufacturer: "${prefixHint.manufacturer}", Brand: "${prefixHint.brand}", Common Category: "${prefixHint.category}".`
           : isIndian
@@ -367,7 +429,7 @@ export class BarcodeDiscoveryService {
           ? `\nWeb Search Snippets:\n${snippets.join("\n")}`
           : "";
 
-        const prompt = `Identify the product, equipment, component, or commodity for barcode / part number "${barcode}".${hintText}${snippetText}
+        const prompt = `Identify the product, equipment, component, or commodity for identifier "${barcode}".${identifierHint}${hintText}${snippetText}
 This can be any product across all consumer and industrial sectors:
 - Industrial equipment, bearings, motors, pumps, valves, hydraulic/pneumatic parts, fasteners, hardware (e.g. SKF, FAG, Siemens, Schneider Electric, ABB, L&T, Parker, Unbrako)
 - Automotive & commercial vehicle spare parts, filters, brake pads, spark plugs, sensors (e.g. Bosch, NGK, Gabriel, Mahle, Valeo, TVS)

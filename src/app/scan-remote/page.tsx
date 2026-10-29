@@ -1,6 +1,19 @@
 "use client";
 
-import { CheckCircle2, FlipHorizontal, Loader2, Send, Smartphone, Volume2, VolumeX, Zap, ZapOff } from "lucide-react";
+import {
+  Camera,
+  CameraOff,
+  CheckCircle2,
+  FlipHorizontal,
+  Loader2,
+  Moon,
+  Send,
+  Smartphone,
+  Volume2,
+  VolumeX,
+  Zap,
+  ZapOff,
+} from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/alert";
@@ -68,6 +81,31 @@ function RemoteScannerContent() {
   const [soundOn, setSoundOn] = useState(true);
   const soundOnRef = useRef(soundOn);
   soundOnRef.current = soundOn;
+
+  // Camera Power & Battery Saver States
+  const [cameraActive, setCameraActive] = useState(true);
+  const [isAutoPaused, setIsAutoPaused] = useState(false);
+  const [autoSleepSeconds] = useState(60);
+  const [secondsRemaining, setSecondsRemaining] = useState(60);
+  const lastActivityRef = useRef(Date.now());
+
+  const resetActivity = () => {
+    lastActivityRef.current = Date.now();
+    setSecondsRemaining(autoSleepSeconds);
+  };
+
+  const pauseCamera = () => {
+    setCameraActive(false);
+    setIsAutoPaused(false);
+    setTorchOn(false);
+  };
+
+  const resumeCamera = () => {
+    lastActivityRef.current = Date.now();
+    setSecondsRemaining(autoSleepSeconds);
+    setIsAutoPaused(false);
+    setCameraActive(true);
+  };
 
   // 1. Resolve and persist session ID
   useEffect(() => {
@@ -154,9 +192,59 @@ function RemoteScannerContent() {
     return () => clearInterval(interval);
   }, [connected, sessionId]);
 
-  // 4. Camera feed and continuous detection
+  // 4. Inactivity & Auto-Sleep Battery Saver Listeners
   useEffect(() => {
-    if (!connected || !sessionId) return;
+    const handleTouch = () => {
+      lastActivityRef.current = Date.now();
+    };
+    window.addEventListener("touchstart", handleTouch, { passive: true });
+    window.addEventListener("click", handleTouch, { passive: true });
+    window.addEventListener("keydown", handleTouch, { passive: true });
+
+    return () => {
+      window.removeEventListener("touchstart", handleTouch);
+      window.removeEventListener("click", handleTouch);
+      window.removeEventListener("keydown", handleTouch);
+    };
+  }, []);
+
+  // Countdown timer for automatic camera sleep
+  useEffect(() => {
+    if (!connected || !cameraActive || autoSleepSeconds <= 0) return;
+
+    const interval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - lastActivityRef.current) / 1000);
+      const remaining = Math.max(0, autoSleepSeconds - elapsed);
+      setSecondsRemaining(remaining);
+
+      if (remaining === 0) {
+        setCameraActive(false);
+        setIsAutoPaused(true);
+        setTorchOn(false);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [connected, cameraActive, autoSleepSeconds]);
+
+  // Page visibility / lock detection: immediately sleep camera when screen is locked or tab minimized
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        if (cameraActive) {
+          setCameraActive(false);
+          setIsAutoPaused(true);
+          setTorchOn(false);
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [cameraActive]);
+
+  // 5. Camera feed and continuous detection
+  useEffect(() => {
+    if (!connected || !sessionId || !cameraActive) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let cooldown = false;
@@ -198,6 +286,7 @@ function RemoteScannerContent() {
               if (first?.rawValue && !stopped && !cooldown) {
                 const code = first.rawValue.trim();
                 cooldown = true;
+                resetActivity();
                 if (soundOnRef.current) playBeep();
                 setLastScanned(code);
                 setScanCount((c) => c + 1);
@@ -237,7 +326,7 @@ function RemoteScannerContent() {
         streamRef.current = null;
       }
     };
-  }, [connected, sessionId, facingMode]);
+  }, [connected, sessionId, facingMode, cameraActive]);
 
   const toggleTorch = async () => {
     if (!streamRef.current) return;
@@ -258,6 +347,7 @@ function RemoteScannerContent() {
     e.preventDefault();
     const code = manualCode.trim();
     if (!code || !sessionId) return;
+    resetActivity();
     setSendingManual(true);
     try {
       await fetch(`/api/v1/scan-session/${encodeURIComponent(sessionId)}`, {
@@ -335,17 +425,49 @@ function RemoteScannerContent() {
             <div className="relative aspect-4/3 overflow-hidden rounded-2xl bg-black border border-slate-800 shadow-2xl">
               <video ref={videoRef} playsInline muted autoPlay className="size-full object-cover" />
 
-              {/* Aiming Reticle with Corner Accents */}
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <div className="relative h-36 w-64 rounded-xl border-2 border-dashed border-white/50 bg-black/20 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]">
-                  <div className="absolute -top-1 -left-1 size-4 border-t-3 border-l-3 border-brand-400" />
-                  <div className="absolute -top-1 -right-1 size-4 border-t-3 border-r-3 border-brand-400" />
-                  <div className="absolute -bottom-1 -left-1 size-4 border-b-3 border-l-3 border-brand-400" />
-                  <div className="absolute -bottom-1 -right-1 size-4 border-b-3 border-r-3 border-brand-400" />
-                  {/* Laser Scan line */}
-                  <div className="absolute inset-x-2 h-0.5 bg-gradient-to-r from-transparent via-brand-400 to-transparent shadow-[0_0_12px_rgba(234,179,8,1)] animate-pulse" />
+              {/* Power-Saving / Paused Sleep Overlay */}
+              {!cameraActive && (
+                <div
+                  onClick={resumeCamera}
+                  className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-slate-950/95 p-6 text-center cursor-pointer transition-all hover:bg-slate-900/95"
+                >
+                  <div className="size-16 rounded-full bg-slate-900 flex items-center justify-center mb-3 text-amber-400 ring-2 ring-amber-500/30 animate-pulse">
+                    {isAutoPaused ? <Moon className="size-8" /> : <CameraOff className="size-8 text-rose-400" />}
+                  </div>
+                  <p className="font-bold text-sm text-white">
+                    {isAutoPaused ? "Camera Paused (Battery Saver)" : "Camera is Turned Off"}
+                  </p>
+                  <p className="text-[11px] text-slate-400 max-w-xs mt-1 mb-4 leading-relaxed">
+                    {isAutoPaused
+                      ? "Auto-paused after 60s of inactivity to prevent phone overheating and save battery."
+                      : "Turned off manually to preserve your phone battery while not scanning."}
+                  </p>
+                  <Button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      resumeCamera();
+                    }}
+                    className="bg-brand-500 hover:bg-brand-400 text-slate-950 font-bold px-5 text-xs shadow-lg shadow-brand-500/20"
+                  >
+                    <Camera className="size-3.5 mr-1.5" /> Tap to Resume Camera
+                  </Button>
                 </div>
-              </div>
+              )}
+
+              {/* Aiming Reticle with Corner Accents (only when camera is active) */}
+              {cameraActive && (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                  <div className="relative h-36 w-64 rounded-xl border-2 border-dashed border-white/50 bg-black/20 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]">
+                    <div className="absolute -top-1 -left-1 size-4 border-t-3 border-l-3 border-brand-400" />
+                    <div className="absolute -top-1 -right-1 size-4 border-t-3 border-r-3 border-brand-400" />
+                    <div className="absolute -bottom-1 -left-1 size-4 border-b-3 border-l-3 border-brand-400" />
+                    <div className="absolute -bottom-1 -right-1 size-4 border-b-3 border-r-3 border-brand-400" />
+                    {/* Laser Scan line */}
+                    <div className="absolute inset-x-2 h-0.5 bg-gradient-to-r from-transparent via-brand-400 to-transparent shadow-[0_0_12px_rgba(234,179,8,1)] animate-pulse" />
+                  </div>
+                </div>
+              )}
 
               {/* Last Scanned Overlay Card */}
               {lastScanned && (
@@ -367,7 +489,31 @@ function RemoteScannerContent() {
             {/* Quick Actions Bar */}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                {hasTorch && (
+                {/* Camera Power Toggle Button */}
+                <Button
+                  type="button"
+                  variant={cameraActive ? "secondary" : "primary"}
+                  size="sm"
+                  onClick={cameraActive ? pauseCamera : resumeCamera}
+                  className={
+                    cameraActive
+                      ? "bg-slate-800 hover:bg-rose-950/40 text-slate-200 hover:text-rose-300 border border-slate-700 hover:border-rose-500/40"
+                      : "bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold shadow-md shadow-emerald-500/20"
+                  }
+                  title={cameraActive ? "Turn off camera to save battery" : "Turn on camera"}
+                >
+                  {cameraActive ? (
+                    <>
+                      <CameraOff className="size-4 mr-1 text-rose-400" /> Stop Camera
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="size-4 mr-1" /> Start Camera
+                    </>
+                  )}
+                </Button>
+
+                {cameraActive && hasTorch && (
                   <Button
                     type="button"
                     variant="secondary"
@@ -380,15 +526,17 @@ function RemoteScannerContent() {
                   </Button>
                 )}
 
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setFacingMode((f) => (f === "environment" ? "user" : "environment"))}
-                  className="bg-slate-800 text-slate-200"
-                >
-                  <FlipHorizontal className="size-4 mr-1" /> Flip
-                </Button>
+                {cameraActive && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setFacingMode((f) => (f === "environment" ? "user" : "environment"))}
+                    className="bg-slate-800 text-slate-200"
+                  >
+                    <FlipHorizontal className="size-4 mr-1" /> Flip
+                  </Button>
+                )}
 
                 <Button
                   type="button"
@@ -402,9 +550,23 @@ function RemoteScannerContent() {
                 </Button>
               </div>
 
-              <span className="text-xs text-slate-400 font-medium">
-                {scanCount} {scanCount === 1 ? "item" : "items"} scanned
-              </span>
+              <div className="flex items-center gap-2">
+                {cameraActive && (
+                  <span
+                    className={
+                      secondsRemaining <= 15
+                        ? "text-[10px] font-mono font-bold text-amber-400 bg-amber-950/80 px-2 py-0.5 rounded-full border border-amber-500/40 animate-pulse"
+                        : "text-[10px] text-slate-400 font-medium"
+                    }
+                    title="Auto-sleeps when inactive to save phone battery"
+                  >
+                    {secondsRemaining <= 15 ? `Sleep in ${secondsRemaining}s` : `Sleep: ${secondsRemaining}s`}
+                  </span>
+                )}
+                <span className="text-xs text-slate-400 font-medium">
+                  {scanCount} {scanCount === 1 ? "item" : "items"}
+                </span>
+              </div>
             </div>
 
             {/* Manual Code Fallback */}

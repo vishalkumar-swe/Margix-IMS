@@ -68,5 +68,42 @@ describe("Industrial & Universal Barcode Parser", () => {
     const part = parseScannedBarcode("IRF540N");
     expect(part.code).toBe("IRF540N");
   });
+
+  it("identifies Amazon ASIN from bare code, prefix, or product URL", () => {
+    const bare = parseScannedBarcode("B08N5WRWNW");
+    expect(bare.code).toBe("B08N5WRWNW");
+    expect(bare.asin).toBe("B08N5WRWNW");
+    expect(bare.identifierType).toBe("asin");
+
+    const prefixed = parseScannedBarcode("ASIN: B07XJ8C8F5");
+    expect(prefixed.code).toBe("B07XJ8C8F5");
+    expect(prefixed.asin).toBe("B07XJ8C8F5");
+
+    const url = parseScannedBarcode("https://www.amazon.in/dp/B08N5WRWNW?ref=nb_sb_noss");
+    expect(url.code).toBe("B08N5WRWNW");
+    expect(url.asin).toBe("B08N5WRWNW");
+  });
+
+  it("identifies Amazon FNSKU codes", () => {
+    const fnsku = parseScannedBarcode("X0023ABC99");
+    expect(fnsku.code).toBe("X0023ABC99");
+    expect(fnsku.fnsku).toBe("X0023ABC99");
+    expect(fnsku.identifierType).toBe("fnsku");
+
+    const prefixed = parseScannedBarcode("FNSKU: X001AABB22");
+    expect(prefixed.code).toBe("X001AABB22");
+    expect(prefixed.fnsku).toBe("X001AABB22");
+  });
+
+  it("identifies ISBN-13 and ISBN-10 book identifiers", () => {
+    const isbn13 = parseScannedBarcode("978-0-13-235088-4");
+    expect(isbn13.code).toBe("9780132350884");
+    expect(isbn13.isbn).toBe("9780132350884");
+    expect(isbn13.identifierType).toBe("isbn");
+
+    const prefixed = parseScannedBarcode("ISBN: 9780132350884");
+    expect(prefixed.code).toBe("9780132350884");
+    expect(prefixed.isbn).toBe("9780132350884");
+  });
 });
 

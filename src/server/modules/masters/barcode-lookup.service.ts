@@ -48,6 +48,7 @@ export interface CatalogProductDetails {
   suggestedUomCode?: string;
   suggestedHsnCode?: string;
   suggestedGstRate?: string;
+  identifierType?: string;
   confidence: "high" | "medium" | "low";
   source: "local" | "registry" | "searxng" | "ai" | "inferred";
 }
@@ -144,6 +145,9 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
         { barcode },
         { code: { equals: barcode, mode: "insensitive" } },
         ...(parsed.gtin ? [{ barcode: parsed.gtin }, { code: { equals: parsed.gtin, mode: "insensitive" as const } }] : []),
+        ...(parsed.asin ? [{ barcode: parsed.asin }, { code: { equals: parsed.asin, mode: "insensitive" as const } }] : []),
+        ...(parsed.isbn ? [{ barcode: parsed.isbn }, { code: { equals: parsed.isbn, mode: "insensitive" as const } }] : []),
+        ...(parsed.partNumber ? [{ barcode: parsed.partNumber }, { code: { equals: parsed.partNumber, mode: "insensitive" as const } }] : []),
       ],
     },
     include: {
@@ -233,6 +237,7 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
         suggestedUomCode: matchedUomId?.code || dbCatalogHit.uom || undefined,
         suggestedHsnCode: hsnCode,
         suggestedGstRate: gstRate,
+        identifierType: parsed.identifierType,
         confidence: (dbCatalogHit.confidence as "high" | "medium" | "low") || "high",
         source: "local",
       },
@@ -368,6 +373,7 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
       suggestedUomCode: matchedUom?.code || suggestedUomCode,
       suggestedHsnCode: suggestedHsn,
       suggestedGstRate: suggestedGst,
+      identifierType: parsed.identifierType,
       confidence,
       source,
     },
