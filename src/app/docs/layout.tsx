@@ -1,30 +1,75 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BookOpen, Search, ArrowLeft, Menu, X, Printer, Compass, FileText } from "lucide-react";
+import {
+  BookOpen,
+  Search,
+  ArrowLeft,
+  Menu,
+  X,
+  Printer,
+  Compass,
+  Layers,
+  Sparkles,
+  Barcode,
+  Truck,
+  ReceiptIndianRupee,
+  ShieldCheck,
+  ChevronRight,
+} from "lucide-react";
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { MANUAL_CHAPTERS } from "@/lib/manual-content";
+import { DocsSearchModal } from "@/features/docs/docs-search-modal";
+import { ReadingProgress } from "@/features/docs/reading-progress";
 import { cn } from "@/lib/cn";
+
+interface CategoryGroup {
+  name: string;
+  icon: any;
+  chapters: typeof MANUAL_CHAPTERS;
+}
 
 export default function DocsLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const [search, setSearch] = useState("");
+  const [sidebarFilter, setSidebarFilter] = useState("");
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const filteredChapters = MANUAL_CHAPTERS.filter(
-    (c) =>
-      c.title.toLowerCase().includes(search.toLowerCase()) ||
-      c.shortTitle.toLowerCase().includes(search.toLowerCase()) ||
-      c.summary.toLowerCase().includes(search.toLowerCase()) ||
-      c.category.toLowerCase().includes(search.toLowerCase()),
-  );
+  // Group chapters into functional operational domains
+  const categories: CategoryGroup[] = useMemo(() => {
+    const q = sidebarFilter.trim().toLowerCase();
+    const filterFn = (c: (typeof MANUAL_CHAPTERS)[0]) =>
+      !q ||
+      c.title.toLowerCase().includes(q) ||
+      c.shortTitle.toLowerCase().includes(q) ||
+      c.summary.toLowerCase().includes(q) ||
+      c.category.toLowerCase().includes(q);
+
+    const foundation = MANUAL_CHAPTERS.filter((c) => ["00", "01"].includes(c.number)).filter(filterFn);
+    const scanning = MANUAL_CHAPTERS.filter((c) => ["02"].includes(c.number)).filter(filterFn);
+    const logistics = MANUAL_CHAPTERS.filter((c) => ["03", "04", "05"].includes(c.number)).filter(filterFn);
+    const statutory = MANUAL_CHAPTERS.filter((c) => ["06", "07", "08"].includes(c.number)).filter(filterFn);
+    const intelligence = MANUAL_CHAPTERS.filter((c) => ["09", "10", "11"].includes(c.number)).filter(filterFn);
+
+    const groups: CategoryGroup[] = [
+      { name: "Platform Foundation", icon: Layers, chapters: foundation },
+      { name: "Universal Scanning", icon: Barcode, chapters: scanning },
+      { name: "Warehouse & Logistics", icon: Truck, chapters: logistics },
+      { name: "Taxation, Reports & ERP", icon: ReceiptIndianRupee, chapters: statutory },
+      { name: "Copilot AI & Runbooks", icon: Sparkles, chapters: intelligence },
+    ];
+
+    return groups.filter((g) => g.chapters.length > 0);
+  }, [sidebarFilter]);
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+    <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans">
+      {/* Top Reading Progress Bar */}
+      <ReadingProgress />
+
       {/* Top Navbar */}
-      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-white/95 px-4 backdrop-blur sm:px-8">
+      <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-200/80 bg-white/90 px-4 backdrop-blur-md sm:px-8">
         <div className="flex items-center gap-4">
           <button
             type="button"
@@ -38,24 +83,29 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
             <BrandLogo variant="wordmark" className="h-6" />
           </Link>
           <span className="hidden text-slate-300 sm:inline">|</span>
-          <span className="hidden items-center gap-1.5 text-xs font-semibold tracking-wide text-brand-700 uppercase sm:inline-flex">
-            <BookOpen className="size-4" />
+          <span className="hidden items-center gap-1.5 text-xs font-bold tracking-wider text-brand-700 uppercase sm:inline-flex">
+            <BookOpen className="size-4 text-brand-600" />
             Operations Manual
           </span>
         </div>
 
+        {/* Global ⌘K Search Modal */}
         <div className="flex items-center gap-3">
+          <DocsSearchModal />
+
           <button
             type="button"
             onClick={() => window.print()}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 print:hidden"
+            className="hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs print:hidden"
+            title="Print this chapter or save as PDF"
           >
             <Printer className="size-3.5" />
-            <span className="hidden sm:inline">Print Chapter</span>
+            <span>Print / PDF</span>
           </button>
+
           <Link
             href="/dashboard"
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-brand-700"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-brand-700 transition-colors"
           >
             <ArrowLeft className="size-3.5" />
             <span>Open Margix IMS</span>
@@ -63,85 +113,118 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
         </div>
       </header>
 
-      {/* Main Grid: Left Sidebar + Content */}
+      {/* Main Grid: Left Sidebar + Children Content + (Optional TOC in Chapter) */}
       <div className="mx-auto flex w-full max-w-7xl flex-1 items-start px-4 sm:px-6 lg:px-8">
         {/* Left Sidebar (Desktop + Mobile Drawer) */}
         <aside
           className={cn(
-            "fixed inset-y-16 left-0 z-20 w-72 transform border-r border-slate-200 bg-white p-4 transition-transform lg:static lg:inset-auto lg:w-72 lg:translate-x-0 lg:border-r lg:bg-transparent lg:p-0 lg:py-6",
-            mobileOpen ? "translate-x-0 shadow-xl" : "-translate-x-full lg:translate-x-0",
+            "fixed inset-y-16 left-0 z-30 w-72 transform border-r border-slate-200 bg-white p-4 transition-transform lg:static lg:inset-auto lg:w-72 lg:translate-x-0 lg:border-r lg:bg-transparent lg:p-0 lg:py-6",
+            mobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full lg:translate-x-0",
           )}
         >
-          {/* Search Bar */}
-          <div className="relative mb-4">
-            <Search className="absolute left-3 top-2.5 size-4 text-slate-400" />
+          {/* Quick Filter */}
+          <div className="relative mb-3">
+            <Search className="absolute left-3 top-2.5 size-3.5 text-slate-400" />
             <input
               type="text"
               placeholder="Filter chapters..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-9 pr-3 text-xs placeholder-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              value={sidebarFilter}
+              onChange={(e) => setSidebarFilter(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs placeholder-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
           </div>
 
-          {/* Master Index Link */}
-          <div className="mb-3">
+          {/* Master Index Overview */}
+          <div className="mb-4">
             <Link
               href="/docs"
               onClick={() => setMobileOpen(false)}
               className={cn(
-                "flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-semibold transition-colors",
+                "flex items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold transition-all",
                 pathname === "/docs"
-                  ? "bg-brand-50 text-brand-700 font-bold"
+                  ? "bg-brand-50 text-brand-700 font-bold shadow-2xs"
                   : "text-slate-700 hover:bg-slate-100",
               )}
             >
-              <Compass className="size-4 text-brand-600" />
-              <span>Master Index & Overview</span>
+              <div className="flex items-center gap-2">
+                <Compass className="size-4 text-brand-600" />
+                <span>Handbook Overview</span>
+              </div>
+              <span className="rounded bg-brand-100/80 px-1.5 py-0.2 text-[10px] font-bold text-brand-800">
+                12 Ch
+              </span>
             </Link>
           </div>
 
-          <p className="px-3 text-[11px] font-semibold tracking-wider text-slate-400 uppercase">Handbook Chapters</p>
-
-          <nav className="mt-2 space-y-1 overflow-y-auto max-h-[calc(100vh-14rem)] pr-1">
-            {filteredChapters.map((c) => {
-              const active = pathname === `/docs/${c.slug}`;
+          {/* Categorized Chapters Nav */}
+          <nav className="space-y-4 overflow-y-auto max-h-[calc(100vh-14rem)] pr-1 text-xs">
+            {categories.map((group) => {
+              const GroupIcon = group.icon;
               return (
-                <Link
-                  key={c.slug}
-                  href={`/docs/${c.slug}`}
-                  onClick={() => setMobileOpen(false)}
-                  className={cn(
-                    "flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs transition-colors",
-                    active
-                      ? "bg-brand-50 text-brand-700 font-semibold"
-                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "grid size-5 shrink-0 place-items-center rounded text-[10px] font-bold",
-                      active ? "bg-brand-600 text-white" : "bg-slate-200 text-slate-700",
-                    )}
-                  >
-                    {c.number}
-                  </span>
-                  <span className="truncate">{c.shortTitle}</span>
-                </Link>
+                <div key={group.name} className="space-y-1">
+                  <div className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-bold tracking-wider text-slate-400 uppercase">
+                    <GroupIcon className="size-3 text-slate-400" />
+                    <span>{group.name}</span>
+                  </div>
+
+                  <div className="space-y-0.5">
+                    {group.chapters.map((c) => {
+                      const active = pathname === `/docs/${c.slug}`;
+                      return (
+                        <Link
+                          key={c.slug}
+                          href={`/docs/${c.slug}`}
+                          onClick={() => setMobileOpen(false)}
+                          className={cn(
+                            "flex items-center gap-2.5 rounded-lg px-3 py-1.5 transition-colors",
+                            active
+                              ? "bg-brand-50 text-brand-700 font-semibold shadow-2xs"
+                              : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "grid size-5 shrink-0 place-items-center rounded text-[10px] font-bold",
+                              active ? "bg-brand-600 text-white" : "bg-slate-200 text-slate-700",
+                            )}
+                          >
+                            {c.number}
+                          </span>
+                          <span className="truncate">{c.shortTitle}</span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
               );
             })}
-            {filteredChapters.length === 0 && (
-              <p className="px-3 py-4 text-xs text-slate-400">No chapters matching &quot;{search}&quot;</p>
+
+            {categories.length === 0 && (
+              <p className="px-3 py-4 text-xs text-slate-400">No chapters matching filter</p>
             )}
           </nav>
+
+          {/* Bottom Compliance & Tally Badge */}
+          <div className="mt-6 border-t border-slate-200 pt-4 px-3 text-[11px] text-slate-400 space-y-1">
+            <div className="flex items-center gap-1 text-slate-500 font-medium">
+              <ShieldCheck className="size-3.5 text-emerald-600" />
+              <span>Production Release v1.0</span>
+            </div>
+            <p className="text-[10px] text-slate-400">Indian GST & Tally Prime Certified</p>
+          </div>
         </aside>
 
+        {/* Backdrop for Mobile Drawer */}
+        {mobileOpen && (
+          <div
+            className="fixed inset-0 z-20 bg-slate-900/30 backdrop-blur-2xs lg:hidden"
+            onClick={() => setMobileOpen(false)}
+          />
+        )}
+
         {/* Content Area */}
-        <main className="min-w-0 flex-1 py-6 lg:pl-8">
-          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-xs sm:p-10">{children}</div>
-        </main>
+        <main className="min-w-0 flex-1 py-6 lg:pl-8">{children}</main>
       </div>
     </div>
   );
 }
-
