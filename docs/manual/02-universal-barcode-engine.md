@@ -158,3 +158,4 @@ Once an item is resolved via open registries or merchant entry:
 - It is saved permanently to PostgreSQL `global_product_catalog`.
 - The resolved statutory **HSN code**, **GST rate**, **Category**, and **UOM** are persisted under both the primary code and all secondary candidate representations (`UPC-A`, `EAN-13`, `GTIN-14`).
 - All subsequent scans across all warehouses and workstations respond instantly from local database indexes (0.5ms) without making outbound internet calls.
+

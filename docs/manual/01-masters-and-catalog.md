@@ -114,3 +114,4 @@ SKU-1003,Bisleri Water 1L,Packaged Drinking Water,Beverages,BTL,22011010,18,yes,
 1. **All-or-Nothing Import**: If line 42 has an invalid UOM or duplicate SKU code, the entire transaction is rolled back with exact line-by-line error messages.
 2. **Auto-Allocation**: Leaving `code` blank in the CSV automatically assigns clean sequential codes (`SKU-000101`, `SKU-000102`).
 3. **HSN Cross-Check**: Rejects HSN codes that are inactive or missing from the statutory tariff table.
+

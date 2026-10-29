@@ -52,3 +52,4 @@ The printable cheatsheet is formatted for standard A4 and thermal clipboard disp
 - **Milestone Checklists**: Step-by-step role instructions for Inbound Receiving, Quality Inspection, Stock Transfers, Invoice Creation, and Dispatch QC.
 - **Common Error Codes & Immediate Fixes**: Quick reference table decoding system errors (e.g. `INSUFFICIENT_STOCK`, `EXPIRED_BATCH`, `STATE_CODE_MISMATCH`) and the exact operational steps to resolve them.
 - **Barcode Symbology Guide**: Visual reference of retail EAN-13, wholesale GTIN-14, automotive Code-39, and pharmaceutical PZN labels.
+

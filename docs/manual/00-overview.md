@@ -103,3 +103,4 @@ Every action (who logged in, who created a SKU, who approved an invoice, who adj
 - **Barcode Engine**: `@zxing/library`, `barcode-detector` ponyfill, custom industrial mathematical parser (`industrial-barcode.ts`).
 - **Authentication**: Session cookie authentication with scrypt password hashing, session TTL management, and brute-force lockout protection.
 - **Containerization**: Multi-stage production `Dockerfile` running on `node:22-bookworm-slim` with standalone Next.js server.
+

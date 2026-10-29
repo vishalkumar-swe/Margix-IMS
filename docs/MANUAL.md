@@ -74,3 +74,4 @@ To help team members and customer personnel get up to speed quickly, recommend f
 - **Readiness Probe**: `https://ims.margixindia.com/api/ready`
 - **Tally Connectivity Ping**: Accessible via Tally Sync Dashboard (`/tally`)
 - **System Logs & Diagnostics**: Standard JSON logger (`pino`) piped to Azure Container Apps log analytics workspace.
+

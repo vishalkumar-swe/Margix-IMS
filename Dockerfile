@@ -56,6 +56,7 @@ COPY prisma/schema.prisma ./prisma/schema.prisma
 COPY prisma/migrations ./prisma/migrations
 COPY ops/postgres/app-role-grants.sql ./ops/postgres/app-role-grants.sql
 COPY ops/railway/pre-deploy.sh ./ops/railway/pre-deploy.sh
+COPY docs ./docs
 
 # ---- Tools: migrations, DB grants, seed, the Tally sync and notification workers ----
 FROM deps AS tools

@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/generate-manual-content.mjs",
     "build": "next build",
     "build:workers": "node scripts/build-workers.mjs",
     "start": "next start",

@@ -129,3 +129,4 @@ Margix IMS stores tax information in an unaggregated, structured format suitable
 - **Table 12 (HSN Summary of Outward Supplies)**: Total quantity, taxable value, and tax amounts grouped by HSN code.
 
 Operators can export filtered transaction lists to CSV for one-click upload into the GST Offline Tool or direct sync with Tally Prime.
+

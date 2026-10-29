@@ -93,3 +93,4 @@ Margix IMS generates compliant, high-resolution printable documents formatted fo
   - High-density QR code encoding invoice metadata for fast mobile scanning.
 - **Delivery Challan (`/(print)/dispatches/[id]`)**: For inter-branch stock transfers and job work movements without commercial pricing.
 - **Product Barcode Labels (`/(print)/masters/skus`)**: Formatted for 2-inch and 4-inch thermal label rolls (Zebra, TSC, Citizen) displaying Product Code, Name, MRP, and Barcode.
+

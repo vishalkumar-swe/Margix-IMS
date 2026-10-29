@@ -120,3 +120,4 @@ Every action within Margix IMS writes a tamper-proof event to the `audit_log` ta
   - `newData`: Snapshot of row attributes immediately following the modification.
 
 Audit records cannot be altered or purged through any user interface, ensuring full compliance with ISO 27001, SOC 2, and statutory tax audit standards.
+

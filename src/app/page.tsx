@@ -110,6 +110,9 @@ export default function LandingPage() {
               <a href="#how" className="text-sm font-medium text-slate-600 hover:text-slate-900">
                 How it works
               </a>
+              <Link href="/docs" className="text-sm font-medium text-brand-700 hover:text-brand-900 font-semibold">
+                Documentation
+              </Link>
             </nav>
             <Link href="/login" className={buttonVariants()}>
               Sign in
@@ -249,6 +252,9 @@ export default function LandingPage() {
             <span>Inventory, purchasing and dispatch, on one ledger.</span>
           </div>
           <div className="flex items-center gap-5">
+            <Link href="/docs" className="font-medium text-brand-700 hover:text-brand-900">
+              Manual & Documentation
+            </Link>
             <Link href="/login" className="font-medium text-slate-600 hover:text-slate-900">
               Sign in
             </Link>

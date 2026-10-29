@@ -117,3 +117,4 @@ The Tally Sync dashboard at `/tally` provides operators and accountants with com
    - Resets attempts counter to zero and schedules immediate queue execution.
 4. **Detailed XML Payload Inspector**:
    - Operators can expand any failed job to view the exact raw XML request sent to Tally and the exact response string returned by Tally Prime for rapid diagnosis.
+

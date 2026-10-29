@@ -143,3 +143,4 @@ Margix IMS features an automated notification daemon that continuously monitors 
    - A warning notification is sent to warehouse managers via Email and WhatsApp (Meta Cloud API).
    - A task item appears in the **Dashboard** under *Critical Stock Alerts*.
    - A direct link is provided to create a Purchase Order (`/purchase-orders/new?skuId=...`) populated with the recommended reorder quantity.
+

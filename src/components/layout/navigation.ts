@@ -1,6 +1,7 @@
 import {
   ArrowLeftRight,
   BellRing,
+  BookOpen,
   Boxes,
   Building2,
   ChartColumn,
@@ -74,6 +75,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Analytics", href: "/analytics", icon: ChartLine, permission: "report.view" },
       { label: "Stock alerts", href: "/alerts", icon: BellRing, permission: "alert.view" },
       { label: "Reports", href: "/reports", icon: ChartColumn, permission: "report.view" },
+      { label: "User manual", href: "/docs", icon: BookOpen, permission: "dashboard.view" },
     ],
   },
   {

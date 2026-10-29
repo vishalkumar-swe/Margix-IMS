@@ -138,3 +138,4 @@ Warehouse teams must be certified before handling physical cutover:
    - [ ] Check Tally Sync Queue (`/tally`): 100% of jobs in `SYNCED` status.
    - [ ] Review Daily Stock Movement Report (`/reports/movements`).
    - [ ] Operational Sign-Off signed by Warehouse Head and Chief Accountant.
+

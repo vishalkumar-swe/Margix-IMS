@@ -105,3 +105,4 @@ When defective goods, damaged materials, or incorrect shipments must be returned
 - **Batch-Specific Reversal**: Returns are deducted directly from the specific batch and godown from which they were received.
 - **Ledger Impact**: Generates an immutable `PURCHASE_RETURN` row in the ledger with a negative quantity (`-`), decrementing the physical balance.
 - **Financial Document**: Prints a formal Debit Note with the supplier's original invoice reference, HSN summary, and tax breakdown for GST adjustment.
+

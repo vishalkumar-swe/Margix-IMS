@@ -96,3 +96,4 @@ The Executive Analytics console aggregates operational metrics across commercial
 3. **Fulfillment Cycle Time**: Average duration between Sales Invoice creation and final physical gate dispatch.
 4. **Active SKU Breadth**: Percentage of catalog SKUs actively circulating versus dormant items.
 5. **Quality Rejection Rate**: Ratio of goods rejected during GRN inspection to total goods received.
+
