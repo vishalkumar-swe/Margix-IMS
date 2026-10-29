@@ -5,6 +5,7 @@ import { FlipHorizontal, Image, Loader2, Smartphone, Volume2, VolumeX, Zap, ZapO
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { parseScannedBarcode } from "@/lib/industrial-barcode";
 import { PhoneScannerModal } from "./phone-scanner-modal";
 
 /**
@@ -345,15 +346,28 @@ export function CameraScanner({
         </div>
 
         {/* Detected banner */}
-        {detectedCode && (
-          <div className="absolute inset-x-0 bottom-4 flex justify-center px-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
-            <span className="flex items-center gap-2 rounded-full bg-emerald-600/95 backdrop-blur-xs px-4 py-1.5 text-xs font-semibold text-white shadow-xl ring-1 ring-emerald-400">
-              <span className="inline-block size-2 rounded-full bg-white animate-pulse" />
-              <span>Scanned:</span>
-              <span className="font-mono tracking-wider">{detectedCode}</span>
-            </span>
-          </div>
-        )}
+        {detectedCode && (() => {
+          const parsed = parseScannedBarcode(detectedCode);
+          return (
+            <div className="absolute inset-x-0 bottom-4 flex justify-center px-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
+              <span className="flex items-center gap-2 rounded-full bg-emerald-600/95 backdrop-blur-xs px-4 py-1.5 text-xs font-semibold text-white shadow-xl ring-1 ring-emerald-400">
+                <span className="inline-block size-2 rounded-full bg-white animate-pulse" />
+                <span>Scanned:</span>
+                {parsed.symbology && (
+                  <span className="bg-emerald-950/80 border border-emerald-400/50 text-emerald-200 text-[10px] px-1.5 py-0.5 rounded font-black">
+                    {parsed.symbology}
+                  </span>
+                )}
+                {parsed.packagingLevel === "outer_case" && (
+                  <span className="bg-amber-950/80 border border-amber-400/50 text-amber-200 text-[10px] px-1.5 py-0.5 rounded font-bold">
+                    Case
+                  </span>
+                )}
+                <span className="font-mono tracking-wider">{parsed.primaryCode || detectedCode}</span>
+              </span>
+            </div>
+          );
+        })()}
 
         {analyzingPhoto && (
           <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center gap-2 text-white text-xs">

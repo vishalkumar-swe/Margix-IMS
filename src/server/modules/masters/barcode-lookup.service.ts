@@ -1,5 +1,10 @@
 import { prisma } from "@/server/db/client";
-import { parseScannedBarcode, type ParsedIndustrialBarcode } from "@/lib/industrial-barcode";
+import {
+  parseScannedBarcode,
+  type ParsedIndustrialBarcode,
+  type BarcodeSymbology,
+  type IdentifierType,
+} from "@/lib/industrial-barcode";
 import { suggestHsnCodes } from "@/server/modules/hsn/hsn.queries";
 import {
   barcodeDiscoveryService,
@@ -12,7 +17,12 @@ export { cleanCategoryName, cleanCommercialProductName };
 
 export interface IndustrialBarcodePayload {
   isComposite: boolean;
+  symbology?: BarcodeSymbology;
+  identifierType?: IdentifierType;
+  checkDigitValid?: boolean;
   gtin?: string;
+  innerGtin?: string;
+  packagingLevel?: string;
   partNumber?: string;
   batchNumber?: string;
   expiryDate?: string;
@@ -48,7 +58,12 @@ export interface CatalogProductDetails {
   suggestedUomCode?: string;
   suggestedHsnCode?: string;
   suggestedGstRate?: string;
+  symbology?: BarcodeSymbology;
   identifierType?: string;
+  checkDigitValid?: boolean;
+  packagingLevel?: string;
+  innerGtin?: string;
+  equivalentCodes?: string[];
   confidence: "high" | "medium" | "low";
   source: "local" | "registry" | "searxng" | "ai" | "inferred";
 }
@@ -138,16 +153,31 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
     return memoryCached;
   }
 
-  // 2. Check local Margix master database (tenant's existing SKU)
+  // 2. Check local Margix master database (tenant's existing SKU across all equivalent symbologies)
+  const candidateBarcodes = new Set<string>([barcode]);
+  if (parsed.primaryCode) candidateBarcodes.add(parsed.primaryCode);
+  if (parsed.gtin) candidateBarcodes.add(parsed.gtin);
+  if (parsed.innerGtin) candidateBarcodes.add(parsed.innerGtin);
+  if (parsed.asin) candidateBarcodes.add(parsed.asin);
+  if (parsed.isbn) candidateBarcodes.add(parsed.isbn);
+  if (parsed.isbn10) candidateBarcodes.add(parsed.isbn10);
+  if (parsed.isbn13) candidateBarcodes.add(parsed.isbn13);
+  if (parsed.issn) candidateBarcodes.add(parsed.issn);
+  if (parsed.jan) candidateBarcodes.add(parsed.jan);
+  if (parsed.pzn) {
+    candidateBarcodes.add(parsed.pzn);
+    candidateBarcodes.add(parsed.pzn.replace(/[^0-9]/g, ""));
+  }
+  if (parsed.partNumber) candidateBarcodes.add(parsed.partNumber);
+  for (const s of parsed.secondaryCodes) {
+    if (s) candidateBarcodes.add(s);
+  }
+
   const existingSku = await prisma.sku.findFirst({
     where: {
       OR: [
-        { barcode },
-        { code: { equals: barcode, mode: "insensitive" } },
-        ...(parsed.gtin ? [{ barcode: parsed.gtin }, { code: { equals: parsed.gtin, mode: "insensitive" as const } }] : []),
-        ...(parsed.asin ? [{ barcode: parsed.asin }, { code: { equals: parsed.asin, mode: "insensitive" as const } }] : []),
-        ...(parsed.isbn ? [{ barcode: parsed.isbn }, { code: { equals: parsed.isbn, mode: "insensitive" as const } }] : []),
-        ...(parsed.partNumber ? [{ barcode: parsed.partNumber }, { code: { equals: parsed.partNumber, mode: "insensitive" as const } }] : []),
+        { barcode: { in: [...candidateBarcodes] } },
+        { code: { in: [...candidateBarcodes], mode: "insensitive" } },
       ],
     },
     include: {
@@ -174,7 +204,7 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
         barcode: existingSku.barcode,
         status: existingSku.status,
       },
-      industrialData: parsed.isComposite ? parsed : undefined,
+      industrialData: parsed,
     };
     lookupMemoryCache.set(barcode, res);
     return res;
@@ -187,9 +217,10 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
     prisma.hsnCode.findMany({ where: { isActive: true }, select: { code: true, gstRate: true } }),
   ]);
 
-  // 4. Check Central Global Product Catalog in PostgreSQL (stored in DB, sub-millisecond response)
-  const dbCatalogHit = await prisma.globalProductCatalog.findUnique({
-    where: { barcode },
+  // 4. Check Central Global Product Catalog in PostgreSQL (matches primary barcode or any equivalent code)
+  const catalogCandidates = [barcode, ...parsed.secondaryCodes];
+  const dbCatalogHit = await prisma.globalProductCatalog.findFirst({
+    where: { barcode: { in: catalogCandidates } },
   });
 
   const isPoisonedHit =
@@ -213,7 +244,7 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
           gstRate = hsnSuggestions[0].gstRate;
           prisma.globalProductCatalog
             .update({
-              where: { barcode },
+              where: { barcode: dbCatalogHit.barcode },
               data: { hsnCode, gstRate },
             })
             .catch(() => {});
@@ -237,10 +268,16 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
         suggestedUomCode: matchedUomId?.code || dbCatalogHit.uom || undefined,
         suggestedHsnCode: hsnCode,
         suggestedGstRate: gstRate,
+        symbology: parsed.symbology,
         identifierType: parsed.identifierType,
+        checkDigitValid: parsed.checkDigitValid,
+        packagingLevel: parsed.packagingLevel,
+        innerGtin: parsed.innerGtin,
+        equivalentCodes: parsed.secondaryCodes,
         confidence: (dbCatalogHit.confidence as "high" | "medium" | "low") || "high",
         source: "local",
       },
+      industrialData: parsed,
     };
     lookupMemoryCache.set(barcode, res);
     return res;
@@ -249,8 +286,8 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
   // 5. GS1 India Manufacturer Prefix check from Database
   const gs1PrefixInfo = await lookupGs1Prefix(barcode);
 
-  // 6. High-Speed Open-Source Multi-Tier Discovery Service (parallel race)
-  const discovered = await barcodeDiscoveryService.discover(barcode, gs1PrefixInfo);
+  // 6. High-Speed Open-Source Multi-Tier Discovery Service (with full parsed symbology context)
+  const discovered = await barcodeDiscoveryService.discover(barcode, gs1PrefixInfo, parsed);
 
   let productName = discovered?.name;
   let brand = discovered?.brand || gs1PrefixInfo?.brand;
@@ -288,6 +325,47 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
       suggestedHsn = gs1PrefixInfo.defaultHsn;
       suggestedGst = gs1PrefixInfo.defaultGst;
       confidence = "medium";
+      source = "inferred";
+    } else if (parsed.symbology === "ISSN") {
+      productName = `Periodical / Serial Publication (${barcode})`;
+      description = `Serial publication, journal or newspaper identified by ISSN / EAN ${barcode}`;
+      suggestedCategoryName = "Newspapers & Periodicals";
+      suggestedUomCode = "PCS";
+      suggestedHsn = "4902";
+      suggestedGst = "0.00";
+      confidence = "medium";
+      source = "inferred";
+    } else if (parsed.symbology === "PZN") {
+      productName = `Pharmaceutical Formulation (${barcode})`;
+      description = `Pharmaceutical product or medicament identified by PZN ${barcode}`;
+      suggestedCategoryName = "Pharmaceuticals";
+      suggestedUomCode = "BOX";
+      suggestedHsn = "3004";
+      suggestedGst = "12";
+      confidence = "medium";
+      source = "inferred";
+    } else if (parsed.symbology === "ISBN-13" || parsed.symbology === "ISBN-10") {
+      productName = `Printed Book (${barcode})`;
+      description = `Book publication identified by ISBN ${barcode}`;
+      suggestedCategoryName = "Books & Publications";
+      suggestedUomCode = "PCS";
+      suggestedHsn = "4901";
+      suggestedGst = "0.00";
+      confidence = "medium";
+      source = "inferred";
+    } else if (parsed.symbology === "GTIN-14") {
+      productName = `Case Pack / Outer Carton (${barcode})`;
+      description = `Wholesale trade packaging container (GTIN-14 ${barcode})`;
+      suggestedCategoryName = "Wholesale Packaging";
+      suggestedUomCode = "BOX";
+      confidence = "low";
+      source = "inferred";
+    } else if (parsed.symbology === "JAN") {
+      productName = `Japanese Commercial Product (${barcode})`;
+      description = `Consumer item with Japanese Article Number (JAN ${barcode})`;
+      suggestedCategoryName = "General";
+      suggestedUomCode = "PCS";
+      confidence = "low";
       source = "inferred";
     } else if (barcode.startsWith("890")) {
       productName = `GS1 India Product (${barcode.slice(-6)})`;
@@ -373,10 +451,16 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
       suggestedUomCode: matchedUom?.code || suggestedUomCode,
       suggestedHsnCode: suggestedHsn,
       suggestedGstRate: suggestedGst,
+      symbology: parsed.symbology,
       identifierType: parsed.identifierType,
+      checkDigitValid: parsed.checkDigitValid,
+      packagingLevel: parsed.packagingLevel,
+      innerGtin: parsed.innerGtin,
+      equivalentCodes: parsed.secondaryCodes,
       confidence,
       source,
     },
+    industrialData: parsed,
   };
 
   lookupMemoryCache.set(barcode, result);

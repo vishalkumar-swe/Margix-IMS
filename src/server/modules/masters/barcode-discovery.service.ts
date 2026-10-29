@@ -6,6 +6,7 @@ import { prisma } from "@/server/db/client";
 import { executeLlmChat, llmConfigured } from "@/server/modules/copilot/llm";
 import { suggestHsnCodes } from "@/server/modules/hsn/hsn.queries";
 import { logger } from "@/server/observability/logger";
+import { parseScannedBarcode, type ParsedIndustrialBarcode } from "@/lib/industrial-barcode";
 
 export interface Gs1PrefixHint {
   prefix: string;
@@ -88,7 +89,11 @@ export class BarcodeDiscoveryService {
    * 3. Fast-fallback to GS1 prefix routing if unlisted
    * 4. Write-through to PostgreSQL and L1 Cache permanently
    */
-  async discover(barcode: string, prefixHint?: Gs1PrefixHint | null): Promise<DiscoveredProduct | null> {
+  async discover(
+    barcode: string,
+    prefixHint?: Gs1PrefixHint | null,
+    parsedInput?: ParsedIndustrialBarcode | null,
+  ): Promise<DiscoveredProduct | null> {
     const cleanCode = barcode.trim();
     if (!cleanCode) return null;
 
@@ -97,9 +102,12 @@ export class BarcodeDiscoveryService {
       return this.l1Cache.get(cleanCode) || null;
     }
 
+    const parsed = parsedInput ?? parseScannedBarcode(cleanCode);
+
     // Check if barcode is an ISBN book code
-    const isIsbn = /^(?:97[89]\d{10}|\d{9}[\dX])$/i.test(cleanCode.replace(/[^0-9Xx]/g, ""));
-    const isbnPromise = isIsbn ? this.queryOpenLibrary(cleanCode, 2000) : Promise.resolve(null);
+    const isIsbn = parsed.symbology === "ISBN-13" || parsed.symbology === "ISBN-10" || /^(?:97[89]\d{10}|\d{9}[\dX])$/i.test(cleanCode.replace(/[^0-9Xx]/g, ""));
+    const isbnQueryCode = parsed.isbn || cleanCode;
+    const isbnPromise = isIsbn ? this.queryOpenLibrary(isbnQueryCode, 2000) : Promise.resolve(null);
 
     // 2. Query Open Registries (Food, Beauty, Products, UPCitemdb, Books) concurrently in parallel
     const [foodRes, beautyRes, productRes, upcRes, isbnRes] = await Promise.allSettled([
@@ -110,7 +118,7 @@ export class BarcodeDiscoveryService {
       isbnPromise,
     ]);
 
-    const found =
+    let found =
       (isbnRes.status === "fulfilled" && isbnRes.value) ||
       (foodRes.status === "fulfilled" && foodRes.value) ||
       (beautyRes.status === "fulfilled" && beautyRes.value) ||
@@ -118,7 +126,40 @@ export class BarcodeDiscoveryService {
       (upcRes.status === "fulfilled" && upcRes.value) ||
       null;
 
+    // For GTIN-14 outer cartons: if direct carton isn't in open retail registries, query using inner item GTIN!
+    if (!found && parsed.symbology === "GTIN-14" && parsed.innerGtin) {
+      const [innerFood, innerBeauty, innerProduct, innerUpc] = await Promise.allSettled([
+        this.queryOpenFoodFacts(parsed.innerGtin, 1500),
+        this.queryOpenBeautyFacts(parsed.innerGtin, 1500),
+        this.queryOpenProductsFacts(parsed.innerGtin, 1500),
+        this.queryUpcItemDb(parsed.innerGtin, 1500),
+      ]);
+      const innerFound =
+        (innerFood.status === "fulfilled" && innerFood.value) ||
+        (innerBeauty.status === "fulfilled" && innerBeauty.value) ||
+        (innerProduct.status === "fulfilled" && innerProduct.value) ||
+        (innerUpc.status === "fulfilled" && innerUpc.value) ||
+        null;
+
+      if (innerFound) {
+        found = {
+          ...innerFound,
+          barcode: cleanCode,
+          name: `${innerFound.name} (Case / Outer Carton)`,
+          category: innerFound.category ? `${innerFound.category} (Cases)` : "Wholesale Packaging",
+        };
+      }
+    }
+
     if (found) {
+      if (parsed.symbology === "ISSN" && !found.hsnCode) {
+        found.hsnCode = "4902";
+        found.gstRate = "0.00";
+      } else if (parsed.symbology === "PZN" && !found.hsnCode) {
+        found.hsnCode = "3004";
+        found.gstRate = "12";
+      }
+
       if (!found.hsnCode || !found.gstRate) {
         try {
           const suggestions = await suggestHsnCodes({ name: found.name, description: found.description }, 1);
@@ -136,8 +177,16 @@ export class BarcodeDiscoveryService {
     }
 
     // 3. Try Live Web Search via SearXNG + Deep AI Extraction (15s timeout)
-    const web = await this.queryWebAndExtract(cleanCode, prefixHint);
+    const web = await this.queryWebAndExtract(cleanCode, prefixHint, parsed);
     if (web) {
+      if (parsed.symbology === "ISSN" && !web.hsnCode) {
+        web.hsnCode = "4902";
+        web.gstRate = "0.00";
+      } else if (parsed.symbology === "PZN" && !web.hsnCode) {
+        web.hsnCode = "3004";
+        web.gstRate = "12";
+      }
+
       if (!web.hsnCode || !web.gstRate) {
         try {
           const suggestions = await suggestHsnCodes({ name: web.name, description: web.description }, 1);
@@ -369,9 +418,14 @@ export class BarcodeDiscoveryService {
   /**
    * Search Indian e-commerce / web via SearXNG or Gemini AI grounding
    */
-  async queryWebAndExtract(barcode: string, prefixHint?: Gs1PrefixHint | null): Promise<DiscoveredProduct | null> {
+  async queryWebAndExtract(
+    barcode: string,
+    prefixHint?: Gs1PrefixHint | null,
+    parsedInput?: ParsedIndustrialBarcode | null,
+  ): Promise<DiscoveredProduct | null> {
     const searxngUrl = process.env.SEARXNG_URL?.trim();
     const snippets: string[] = [];
+    const parsed = parsedInput ?? parseScannedBarcode(barcode);
 
     // Query SearXNG if available
     if (searxngUrl) {
@@ -410,14 +464,26 @@ export class BarcodeDiscoveryService {
       try {
         const isIndian = barcode.startsWith("890");
         let identifierHint = "";
-        if (/^B0[A-Z0-9]{8}$/i.test(barcode)) {
+        if (parsed.symbology === "ASIN" || /^B0[A-Z0-9]{8}$/i.test(barcode)) {
           identifierHint = `\nIdentifier Type: Amazon Standard Identification Number (ASIN): "${barcode}". Identify the exact commercial product, electronics, smartphone, appliance, or consumer item, manufacturer brand, and statutory Indian GST HSN code.`;
-        } else if (/^X0[A-Z0-9]{8}$/i.test(barcode)) {
+        } else if (parsed.symbology === "FNSKU" || /^X0[A-Z0-9]{8}$/i.test(barcode)) {
           identifierHint = `\nIdentifier Type: Amazon Fulfillment Network SKU (FNSKU): "${barcode}". Identify the Amazon catalog product, manufacturer brand, and statutory Indian GST HSN code.`;
-        } else if (/^97[89]\d{10}$/.test(barcode) || (barcode.length === 10 && /^\d{9}[\dX]$/i.test(barcode))) {
+        } else if (parsed.symbology === "ISBN-13" || parsed.symbology === "ISBN-10" || /^97[89]\d{10}$/.test(barcode) || (barcode.length === 10 && /^\d{9}[\dX]$/i.test(barcode))) {
           identifierHint = `\nIdentifier Type: International Standard Book Number (ISBN): "${barcode}". Identify the book title, author, publisher, and statutory Indian GST HSN code (4901 for printed books, 0% GST).`;
-        } else if (!/^\d+$/.test(barcode)) {
-          identifierHint = `\nIdentifier Type: Manufacturer Part Number (MPN) or Model Code: "${barcode}". Identify the exact equipment, automotive, electrical, mechanical component, bearings, or hardware, manufacturer brand, and statutory Indian GST HSN code.`;
+        } else if (parsed.symbology === "ISSN" || /^977\d{10}$/.test(barcode) || /^\d{4}-\d{3}[\dX]$/i.test(barcode)) {
+          identifierHint = `\nIdentifier Type: International Standard Serial Number (ISSN): "${barcode}". Identify the periodical, magazine, academic journal, or newspaper, publisher, and statutory Indian GST HSN code (4902 for newspapers, journals, and periodicals, 0.00% GST).`;
+        } else if (parsed.symbology === "PZN" || /^(?:pzn[\s:#-]+|[-])?\d{7,8}$/i.test(barcode)) {
+          identifierHint = `\nIdentifier Type: Pharma-Zentral-Nummer (PZN): "${barcode}". German & European national drug / pharmaceutical and medical device identifier. Identify the exact pharmaceutical medication, dosage, formulation, or medical device, manufacturer, and statutory Indian GST HSN code (3004 for medicaments, 12% GST, or 9018 for medical devices, 12% GST).`;
+        } else if (parsed.symbology === "JAN" || /^(?:45|49)\d{6,11}$/.test(barcode)) {
+          identifierHint = `\nIdentifier Type: Japanese Article Number (JAN / GS1 Japan): "${barcode}". Identify the Japanese consumer electronic, photography equipment, stationery/pen, anime merchandise, or cosmetic product, manufacturer brand, and statutory Indian GST HSN code.`;
+        } else if (parsed.symbology === "GTIN-14" || (/^\d{14}$/.test(barcode) && !barcode.startsWith("00"))) {
+          identifierHint = `\nIdentifier Type: Global Trade Item Number Case Level (GTIN-14 / ITF-14): "${barcode}". Outer wholesale shipping container / trade item carton. Base consumer item GTIN: "${parsed.innerGtin || ""}". Identify the contained retail product, case pack quantity, manufacturer brand, and statutory Indian GST HSN code.`;
+        } else if (parsed.symbology === "EAN-8") {
+          identifierHint = `\nIdentifier Type: EAN-8 (GTIN-8): "${barcode}". Compact 8-digit retail barcode for small consumer items, confectionery, cosmetics, or medicines.`;
+        } else if (parsed.symbology === "UPC-A") {
+          identifierHint = `\nIdentifier Type: UPC-A (GTIN-12): "${barcode}". Standard 12-digit retail barcode.`;
+        } else if (parsed.symbology === "CODE-39" || !/^\d+$/.test(barcode)) {
+          identifierHint = `\nIdentifier Type: Code-39 / Manufacturer Part Number (MPN) or Model Code: "${barcode}". Identify the exact equipment, automotive, electrical, mechanical component, bearings, or hardware, manufacturer brand, and statutory Indian GST HSN code.`;
         }
 
         const hintText = prefixHint

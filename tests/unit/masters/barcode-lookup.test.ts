@@ -97,6 +97,44 @@ describe("Barcode Intelligence Lookup", () => {
     expect(hulItem.catalogDetails?.brand).toBe("HUL");
   });
 
+  it("identifies diverse symbologies (UPC-A, GTIN-14, Code-39, ISSN, PZN, JAN) with rich metadata", async () => {
+    // 1. UPC-A (12 digits)
+    const upc = await lookupBarcodeDetails("012345678905");
+    expect(upc.catalogDetails?.symbology).toBe("UPC-A");
+    expect(upc.catalogDetails?.checkDigitValid).toBe(true);
+    expect(upc.industrialData?.symbology).toBe("UPC-A");
+
+    // 2. GTIN-14 Outer Carton (14 digits)
+    const gtin14 = await lookupBarcodeDetails("18901234567897");
+    expect(gtin14.catalogDetails?.symbology).toBe("GTIN-14");
+    expect(gtin14.catalogDetails?.innerGtin).toBe("8901234567890");
+    expect(gtin14.catalogDetails?.packagingLevel).toBe("inner_pack");
+
+    // 3. Code-39 with asterisks
+    const code39 = await lookupBarcodeDetails("*SKF-6205*");
+    expect(code39.barcode).toBe("SKF-6205");
+    expect(code39.catalogDetails?.symbology).toBe("CODE-39");
+
+    // 4. ISSN (8 digits)
+    const issn = await lookupBarcodeDetails("0362-4331");
+    expect(issn.catalogDetails?.symbology).toBe("ISSN");
+    expect(issn.catalogDetails?.identifierType).toBe("issn");
+    expect(issn.catalogDetails?.suggestedHsnCode).toBe("4902");
+    expect(issn.catalogDetails?.suggestedGstRate).toBe("0.00");
+
+    // 5. PZN (Pharmaceutical German code)
+    const pzn = await lookupBarcodeDetails("PZN-1000001");
+    expect(pzn.catalogDetails?.symbology).toBe("PZN");
+    expect(pzn.catalogDetails?.identifierType).toBe("pzn");
+    expect(pzn.catalogDetails?.suggestedHsnCode).toBe("3004");
+    expect(pzn.catalogDetails?.suggestedGstRate).toBe("12");
+
+    // 6. JAN (GS1 Japan starting with 49)
+    const jan = await lookupBarcodeDetails("4905524985870");
+    expect(jan.catalogDetails?.symbology).toBe("JAN");
+    expect(jan.catalogDetails?.identifierType).toBe("jan");
+  });
+
   it("copilot tools include lookup_barcode with correct permissions and schema", async () => {
     const tool = TOOLS.find((t) => t.name === "lookup_barcode");
     expect(tool).toBeDefined();

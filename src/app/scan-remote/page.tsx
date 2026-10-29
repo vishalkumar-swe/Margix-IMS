@@ -20,6 +20,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/form-controls";
 import { loadDetectorClass } from "@/features/scan/camera-scanner";
+import { parseScannedBarcode } from "@/lib/industrial-barcode";
 
 const WANTED_FORMATS = [
   "qr_code",
@@ -469,21 +470,36 @@ function RemoteScannerContent() {
                 </div>
               )}
 
-              {/* Last Scanned Overlay Card */}
-              {lastScanned && (
-                <div className="absolute inset-x-3 bottom-3 flex items-center justify-between gap-2 rounded-xl bg-emerald-600/95 backdrop-blur-md px-3.5 py-2 text-white shadow-xl ring-1 ring-emerald-400/50 animate-in fade-in slide-in-from-bottom-2 duration-200">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <CheckCircle2 className="size-5 shrink-0 text-white" />
-                    <div className="min-w-0">
-                      <p className="text-[10px] uppercase font-bold tracking-wider text-emerald-100">Sent to Desktop</p>
-                      <p className="font-mono text-sm font-black truncate">{lastScanned}</p>
+              {/* Last Scanned Overlay Card with Symbology Badge */}
+              {lastScanned && (() => {
+                const parsed = parseScannedBarcode(lastScanned);
+                return (
+                  <div className="absolute inset-x-3 bottom-3 flex items-center justify-between gap-2 rounded-xl bg-emerald-600/95 backdrop-blur-md px-3.5 py-2 text-white shadow-xl ring-1 ring-emerald-400/50 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <CheckCircle2 className="size-5 shrink-0 text-white" />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="text-[10px] uppercase font-bold tracking-wider text-emerald-100">Sent to PC</p>
+                          {parsed.symbology && (
+                            <span className="text-[10px] font-black bg-emerald-950/80 border border-emerald-400/50 text-emerald-200 px-1.5 py-0.2 rounded">
+                              {parsed.symbology}
+                            </span>
+                          )}
+                          {parsed.packagingLevel === "outer_case" && (
+                            <span className="text-[10px] font-bold bg-amber-950/80 border border-amber-400/50 text-amber-200 px-1.5 py-0.2 rounded">
+                              Case Carton
+                            </span>
+                          )}
+                        </div>
+                        <p className="font-mono text-sm font-black truncate">{parsed.primaryCode || lastScanned}</p>
+                      </div>
                     </div>
+                    <span className="text-xs font-semibold bg-emerald-800/80 px-2 py-0.5 rounded-md shrink-0">
+                      #{scanCount}
+                    </span>
                   </div>
-                  <span className="text-xs font-semibold bg-emerald-800/80 px-2 py-0.5 rounded-md shrink-0">
-                    #{scanCount}
-                  </span>
-                </div>
-              )}
+                );
+              })()}
             </div>
 
             {/* Quick Actions Bar */}

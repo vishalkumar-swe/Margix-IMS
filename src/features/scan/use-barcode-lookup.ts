@@ -95,9 +95,10 @@ export function useBarcodeLookup({
       }
 
       if (result.catalogDetails) {
+        const symbologyBadge = result.catalogDetails.symbology ? `[${result.catalogDetails.symbology}] ` : "";
         setStatus({
           tone: "success",
-          text: `✨ Detected "${result.catalogDetails.name}". Details auto-filled!`,
+          text: `✨ Detected ${symbologyBadge}"${result.catalogDetails.name}". Details auto-filled!`,
         });
         onAutoFillRef.current?.(result.catalogDetails);
         return result;
