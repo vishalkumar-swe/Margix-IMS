@@ -217,11 +217,15 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
     prisma.hsnCode.findMany({ where: { isActive: true }, select: { code: true, gstRate: true } }),
   ]);
 
-  // 4. Check Central Global Product Catalog in PostgreSQL (matches primary barcode or any equivalent code)
-  const catalogCandidates = [barcode, ...parsed.secondaryCodes];
-  const dbCatalogHit = await prisma.globalProductCatalog.findFirst({
-    where: { barcode: { in: catalogCandidates } },
+  // 4. Check Central Global Product Catalog in PostgreSQL (matches primary barcode first, then secondary codes)
+  let dbCatalogHit = await prisma.globalProductCatalog.findUnique({
+    where: { barcode },
   });
+  if (!dbCatalogHit && parsed.secondaryCodes.length > 0) {
+    dbCatalogHit = await prisma.globalProductCatalog.findFirst({
+      where: { barcode: { in: parsed.secondaryCodes } },
+    });
+  }
 
   const isPoisonedHit =
     dbCatalogHit &&
@@ -318,29 +322,14 @@ export async function lookupBarcodeDetails(rawBarcode: string): Promise<BarcodeL
   // 7. Inferred fallback if uncataloged in any registry
   if (!productName) {
     if (gs1PrefixInfo) {
-      const b = gs1PrefixInfo.brand;
-      const cat = gs1PrefixInfo.category;
-      let inferredName = `${b} Product (${barcode.slice(-6)})`;
-      if (cat.includes("Water")) {
-        inferredName = `${b} Packaged Drinking Water (${barcode.slice(-6)})`;
-      } else if (cat.includes("Bathing") || cat.includes("Soap")) {
-        inferredName = `${b} Bathing Soap (${barcode.slice(-6)})`;
-      } else if (cat.includes("Skin Care") || cat.includes("Lotion")) {
-        inferredName = `${b} Body Lotion / Skin Cream (${barcode.slice(-6)})`;
-      } else if (cat.includes("Hair Care") || cat.includes("Shampoo")) {
-        inferredName = `${b} Shampoo / Hair Care (${barcode.slice(-6)})`;
-      } else if (cat.includes("Beverages") || cat.includes("Drinks")) {
-        inferredName = `${b} Beverage / Cold Drink (${barcode.slice(-6)})`;
-      } else if (cat.includes("Snacks")) {
-        inferredName = `${b} Packaged Snacks (${barcode.slice(-6)})`;
-      }
-      productName = inferredName;
-      description = `${gs1PrefixInfo.manufacturer} product with barcode ${barcode}`;
+      const b = gs1PrefixInfo.brand || gs1PrefixInfo.manufacturer;
+      productName = `${b} Commercial Product (${barcode.slice(-6)})`;
+      description = `${gs1PrefixInfo.manufacturer} commercial item with barcode ${barcode}`;
       suggestedCategoryName = gs1PrefixInfo.category;
       suggestedUomCode = gs1PrefixInfo.defaultUom;
       suggestedHsn = gs1PrefixInfo.defaultHsn;
       suggestedGst = gs1PrefixInfo.defaultGst;
-      confidence = "medium";
+      confidence = "low";
       source = "inferred";
     } else if (parsed.symbology === "ISSN") {
       productName = `Periodical / Serial Publication (${barcode})`;

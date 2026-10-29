@@ -17,7 +17,10 @@ export function getActiveLlmConfig(sessionId?: string): CompletionConfig {
 
   if (provider === "google" || provider === "gemini") {
     const apiKey = env.GEMINI_API_KEY || env.AI_API_KEY || "";
-    const model = env.AI_MODEL.startsWith("gemini") ? env.AI_MODEL : "gemini-1.5-flash";
+    const model =
+      env.AI_MODEL.startsWith("gemini") && env.AI_MODEL !== "gemini-1.5-flash"
+        ? env.AI_MODEL
+        : "gemini-2.5-flash";
     return {
       baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
       apiKey,

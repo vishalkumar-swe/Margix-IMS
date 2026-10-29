@@ -416,18 +416,113 @@ export class BarcodeDiscoveryService {
   }
 
   /**
-   * Search Indian e-commerce / web via SearXNG or Gemini AI grounding
+   * Directly queries Gemini with native Google Search Grounding.
+   * Grounded search eliminates hallucinations: if unindexed, it returns null.
+   */
+  async queryGeminiWithGoogleSearch(
+    barcode: string,
+    prefixHint?: Gs1PrefixHint | null,
+    parsedInput?: ParsedIndustrialBarcode | null,
+  ): Promise<DiscoveredProduct | null> {
+    try {
+      const { getEnv } = await import("@/server/config/env");
+      const env = getEnv();
+      const apiKey = env.GEMINI_API_KEY || env.AI_API_KEY;
+      if (!apiKey || (env.AI_PROVIDER !== "google" && env.AI_PROVIDER !== "gemini")) {
+        return null;
+      }
+
+      const parsed = parsedInput ?? parseScannedBarcode(barcode);
+      let contextHint = "";
+      if (prefixHint) {
+        contextHint = `\nGS1 India Manufacturer Registry: "${prefixHint.manufacturer}", Brand: "${prefixHint.brand}".`;
+      }
+      if (parsed.symbology) {
+        contextHint += `\nSymbology: ${parsed.symbology}`;
+      }
+
+      const prompt = `Search Google for the exact commercial, retail, or industrial product with identifier / barcode: "${barcode}".${contextHint}
+If found on the web, respond strictly in JSON format with these exact keys:
+{
+  "name": "Accurate Commercial or Industrial Product Name with variant/size/rating if available",
+  "brand": "Brand or Manufacturer Name",
+  "description": "Short description of the product or technical specifications",
+  "category": "Broad Category (e.g. FMCG, Electronics, Industrial Hardware, Pharmaceuticals, etc.)",
+  "uom": "Unit of measure (e.g. PCS, NOS, PACK, BOX, KG, LTR, MTR, STRIP)",
+  "hsnCode": "Indian GST HSN code (4 to 8 digits, e.g. 8482, 8536, 3004, etc.)",
+  "gstRate": "Standard GST rate percentage in India (0, 5, 12, 18, 28)"
+}
+CRITICAL REQUIREMENT: If this specific identifier is not found in search results, or if the product cannot be determined with certainty, respond strictly with: {"name": null}. DO NOT guess, fabricate, or hallucinate a product name.`;
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          tools: [{ google_search: {} }],
+        }),
+      }).finally(() => clearTimeout(timeout));
+
+      if (!res.ok) return null;
+      const data = await res.json();
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) return null;
+
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) {
+        const item = JSON.parse(match[0]);
+        if (item.name && typeof item.name === "string" && item.name.trim() && item.name.toLowerCase() !== "null") {
+          const brand = item.brand ? String(item.brand).trim() : prefixHint?.brand;
+          return {
+            barcode,
+            name: cleanCommercialProductName(item.name.trim(), brand),
+            brand,
+            description: item.description ? String(item.description).trim() : undefined,
+            category: item.category ? cleanCategoryName(String(item.category)) : prefixHint?.category,
+            uom: item.uom ? String(item.uom).trim() : prefixHint?.defaultUom,
+            hsnCode: item.hsnCode ? String(item.hsnCode).replace(/\D/g, "") : prefixHint?.defaultHsn,
+            gstRate: item.gstRate !== undefined ? String(item.gstRate).replace("%", "").trim() : prefixHint?.defaultGst,
+            confidence: "high",
+            source: "ai",
+          };
+        }
+      }
+    } catch (err) {
+      logger.debug("Gemini Google search barcode lookup error", { barcode, err: String(err) });
+    }
+    return null;
+  }
+
+  /**
+   * Search Indian e-commerce / web via Google Search Grounded Gemini or SearXNG
    */
   async queryWebAndExtract(
     barcode: string,
     prefixHint?: Gs1PrefixHint | null,
     parsedInput?: ParsedIndustrialBarcode | null,
   ): Promise<DiscoveredProduct | null> {
-    const searxngUrl = process.env.SEARXNG_URL?.trim();
-    const snippets: string[] = [];
+    // If in test environment, skip external network/LLM to guarantee deterministic sub-second tests
+    if (process.env.VITEST || process.env.NODE_ENV === "test") {
+      return null;
+    }
+
     const parsed = parsedInput ?? parseScannedBarcode(barcode);
 
-    // Query SearXNG if available
+    // 1. Try Google Search Grounding with Gemini 2.5 Flash if Google AI is configured
+    const grounded = await this.queryGeminiWithGoogleSearch(barcode, prefixHint, parsed);
+    if (grounded) {
+      return grounded;
+    }
+
+    // 2. Query SearXNG if available for web snippets
+    const searxngUrl = process.env.SEARXNG_URL?.trim();
+    const snippets: string[] = [];
+
     if (searxngUrl) {
       try {
         const query = prefixHint
@@ -454,12 +549,12 @@ export class BarcodeDiscoveryService {
       }
     }
 
-    // If in test environment, skip external LLM to guarantee deterministic sub-second tests
-    if (process.env.VITEST || process.env.NODE_ENV === "test") {
+    // Only invoke LLM if we have grounded search snippets; never speculate on raw barcodes
+    if (snippets.length === 0) {
       return null;
     }
 
-    // If LLM configured, extract structured product attributes
+    // If LLM configured, extract structured product attributes from grounded snippets
     if (llmConfigured()) {
       try {
         const isIndian = barcode.startsWith("890");
