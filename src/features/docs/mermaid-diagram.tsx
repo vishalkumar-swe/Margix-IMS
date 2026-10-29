@@ -258,3 +258,4 @@ export function MermaidDiagram({ chart, title }: MermaidDiagramProps) {
     </figure>
   );
 }
+
