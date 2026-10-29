@@ -15,7 +15,7 @@ export async function resetDatabase(): Promise<void> {
   tableNames ??= (
     await prisma.$queryRaw<{ tablename: string }[]>`
       SELECT tablename FROM pg_tables
-      WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'`
+      WHERE schemaname = 'public' AND tablename NOT IN ('_prisma_migrations', 'global_product_catalog')`
   ).map((row) => row.tablename);
 
   await prisma.$transaction([

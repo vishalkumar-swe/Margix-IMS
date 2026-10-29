@@ -311,6 +311,29 @@ model SkuUnit {
   @@map("sku_unit")
 }
 
+/// Global product catalog cache for FMCG, retail goods, and commodities.
+/// Shared database table populated from open registries, live web discovery, and self-learning scans.
+model GlobalProductCatalog {
+  id          String   @id @default(uuid()) @db.Uuid
+  barcode     String   @unique
+  name        String
+  brand       String?
+  description String?
+  category    String?
+  uom         String?
+  hsnCode     String?  @map("hsn_code")
+  gstRate     String?  @map("gst_rate")
+  source      String   @default("registry")
+  confidence  String   @default("medium")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([barcode])
+  @@index([brand])
+  @@index([category])
+  @@map("global_product_catalog")
+}
+
 model Batch {
   id                String    @id @default(uuid()) @db.Uuid
   skuId             String    @map("sku_id") @db.Uuid
