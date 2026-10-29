@@ -12,8 +12,14 @@ import {
   Zap,
   Users,
   CheckCircle2,
+  XCircle,
   Workflow,
+  HelpCircle,
   Compass,
+  Lightbulb,
+  ShieldAlert,
+  Printer,
+  Check,
 } from "lucide-react";
 import { MANUAL_CHAPTERS, getChapterBySlug } from "@/lib/manual-content";
 import { DocMarkdown } from "@/features/docs/doc-markdown";
@@ -55,8 +61,8 @@ export default async function DocChapterPage({ params }: Props) {
 
   return (
     <div className="flex items-start justify-center gap-8">
-      {/* Chapter Center Reading Card (Max width 820px: prevents line stretch & congestion!) */}
-      <article className="min-w-0 flex-1 max-w-[820px] rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs sm:p-10">
+      {/* Chapter Center Reading Card (Max width 800px: optimal typographic line length) */}
+      <article className="min-w-0 flex-1 max-w-[800px] rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs sm:p-10">
         {/* Breadcrumbs */}
         <nav className="mb-6 flex items-center gap-1.5 text-xs text-slate-400">
           <Link href="/docs" className="hover:text-slate-700 transition-colors">
@@ -86,7 +92,7 @@ export default async function DocChapterPage({ params }: Props) {
             </span>
           </div>
 
-          <h1 className="mt-4 text-2xl font-extrabold tracking-tight text-slate-900 sm:text-3xl lg:text-4xl">
+          <h1 className="mt-4 text-2xl font-extrabold tracking-tight text-slate-900 sm:text-3xl lg:text-4xl leading-tight">
             {chapter.title}
           </h1>
 
@@ -97,13 +103,26 @@ export default async function DocChapterPage({ params }: Props) {
           )}
         </header>
 
-        {/* Executive Summary / "At a Glance" Card: Eliminates reading fatigue! */}
+        {/* Real-World Warehouse Scenario: Makes chapter immediately intuitive! */}
+        {chapter.realWorldScenario && (
+          <div className="mb-8 rounded-xl border border-sky-200/80 bg-sky-50/60 p-4 sm:p-5">
+            <div className="flex items-center gap-2 text-xs font-bold tracking-wider text-sky-900 uppercase">
+              <Lightbulb className="size-4 text-sky-600" />
+              <span>Real-World Warehouse Scenario</span>
+            </div>
+            <p className="mt-2 text-xs sm:text-sm leading-relaxed text-sky-950 font-normal">
+              {chapter.realWorldScenario}
+            </p>
+          </div>
+        )}
+
+        {/* 30-Second Executive Summary Card */}
         <div className="mb-10 overflow-hidden rounded-xl border border-brand-200/80 bg-gradient-to-br from-brand-50/40 via-white to-slate-50/50 p-5 shadow-2xs">
           <div className="flex items-center justify-between gap-2 border-b border-brand-100/70 pb-3">
             <div className="flex items-center gap-2">
               <Zap className="size-4 text-brand-600" />
               <span className="text-xs font-bold tracking-wider text-brand-900 uppercase">
-                At a Glance · 30-Second Executive Summary
+                At a Glance · Quick Summary
               </span>
             </div>
 
@@ -112,7 +131,7 @@ export default async function DocChapterPage({ params }: Props) {
                 href={chapter.primaryRoute}
                 className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-700 hover:text-brand-900 underline decoration-brand-300"
               >
-                <span>Try {chapter.primaryRoute}</span>
+                <span>Try {chapter.primaryRoute} in App</span>
                 <ExternalLink className="size-3" />
               </Link>
             )}
@@ -128,11 +147,11 @@ export default async function DocChapterPage({ params }: Props) {
             </div>
           )}
 
-          {/* Key Takeaways 3-Point Grid */}
+          {/* Key Capabilities */}
           {chapter.quickTakeaways && chapter.quickTakeaways.length > 0 && (
             <div className="mt-4 space-y-2">
               <p className="text-[11px] font-bold tracking-wider text-slate-400 uppercase">
-                Key Platform Capabilities
+                What this module solves
               </p>
               <div className="space-y-1.5">
                 {chapter.quickTakeaways.map((item, idx) => (
@@ -167,7 +186,7 @@ export default async function DocChapterPage({ params }: Props) {
             </div>
           )}
 
-          {/* Applicable Roles Footer */}
+          {/* Target Roles */}
           {chapter.applicableRoles && chapter.applicableRoles.length > 0 && (
             <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center gap-2 text-[11px] text-slate-500">
               <Users className="size-3.5 text-slate-400 shrink-0" />
@@ -186,10 +205,59 @@ export default async function DocChapterPage({ params }: Props) {
           )}
         </div>
 
-        {/* Detailed Chapter Markdown Body (With Mermaid Graphs, Code Blocks, Tables) */}
+        {/* Detailed Chapter Markdown Body (Interactive Mermaid Flowcharts, Code Blocks, Tables) */}
         <div className="prose-content">
           <DocMarkdown text={chapter.content} />
         </div>
+
+        {/* DO's and DON'Ts Best Practice Card */}
+        {chapter.dosAndDonts && (
+          <div className="mt-12 rounded-xl border border-slate-200/80 bg-slate-50/50 p-5">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-3 flex items-center gap-1.5">
+              <ShieldAlert className="size-4 text-brand-600" />
+              Operational Best Practices · Do&apos;s &amp; Don&apos;ts
+            </h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg bg-emerald-50/70 border border-emerald-200/60 p-3.5">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-800 uppercase tracking-wide mb-1">
+                  <Check className="size-4 text-emerald-600" />
+                  <span>Recommended Action</span>
+                </div>
+                <p className="text-xs leading-relaxed text-emerald-950 font-normal">
+                  {chapter.dosAndDonts.do}
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-rose-50/70 border border-rose-200/60 p-3.5">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-rose-800 uppercase tracking-wide mb-1">
+                  <XCircle className="size-4 text-rose-600" />
+                  <span>Common Pitfall to Avoid</span>
+                </div>
+                <p className="text-xs leading-relaxed text-rose-950 font-normal">
+                  {chapter.dosAndDonts.dont}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Frequently Asked Questions (FAQ) */}
+        {chapter.faqs && chapter.faqs.length > 0 && (
+          <div className="mt-8 rounded-xl border border-slate-200/80 bg-white p-5 shadow-2xs">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-3 flex items-center gap-1.5">
+              <HelpCircle className="size-4 text-brand-600" />
+              Frequently Asked Questions &amp; Edge Cases
+            </h3>
+            <div className="space-y-3">
+              {chapter.faqs.map((faq, idx) => (
+                <div key={idx} className="rounded-lg bg-slate-50/80 p-3 text-xs leading-relaxed">
+                  <p className="font-bold text-slate-900 mb-1">Q: {faq.q}</p>
+                  <p className="text-slate-600">{faq.a}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Chapter Pagination (Previous / Next) */}
         <footer className="mt-14 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 border-t border-slate-100 pt-8">

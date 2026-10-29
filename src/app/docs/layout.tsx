@@ -163,8 +163,8 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
       {/* Top Reading Progress Bar */}
       <ReadingProgress />
 
-      {/* Top Sticky Header */}
-      <header className="sticky top-0 z-40 flex h-16 w-full items-center justify-between border-b border-slate-200/80 bg-white/95 px-4 backdrop-blur-md sm:px-8 shadow-2xs">
+      {/* Top Fixed Header (Physically locked to the viewport: NEVER SCROLLS AWAY) */}
+      <header className="fixed top-0 left-0 right-0 z-50 flex h-16 w-full items-center justify-between border-b border-slate-200/80 bg-white/95 px-4 backdrop-blur-md sm:px-8 shadow-2xs">
         <div className="flex items-center gap-4">
           <button
             type="button"
@@ -181,6 +181,10 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
           <span className="hidden items-center gap-1.5 text-xs font-bold tracking-wider text-brand-700 uppercase sm:inline-flex">
             <BookOpen className="size-4 text-brand-600" />
             Operations Manual
+          </span>
+          <span className="hidden items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 md:inline-flex">
+            <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            Live v1.0
           </span>
         </div>
 
@@ -244,8 +248,8 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
         </div>
       )}
 
-      {/* MAIN CONTENT AREA: Offset by lg:pl-64 xl:pl-72 so it never collides with fixed sidebar */}
-      <div className="flex-1 lg:pl-64 xl:pl-72 flex justify-center w-full">
+      {/* MAIN CONTENT AREA: Offset by pt-16 and lg:pl-64 xl:pl-72 so it never collides with fixed navbar or fixed sidebar */}
+      <div className="flex-1 pt-16 lg:pl-64 xl:pl-72 flex justify-center w-full">
         <main className="w-full max-w-[1140px] px-4 sm:px-6 lg:px-8 py-6">{children}</main>
       </div>
     </div>

@@ -25,7 +25,7 @@ export function ReadingProgress() {
 
   return (
     <div
-      className="fixed top-0 left-0 right-0 z-50 h-0.5 bg-gradient-to-r from-brand-600 via-sky-500 to-emerald-500 transition-all duration-75"
+      className="fixed top-16 left-0 right-0 z-50 h-0.5 bg-gradient-to-r from-brand-600 via-sky-500 to-emerald-500 transition-all duration-75"
       style={{ width: `${progress}%` }}
     />
   );
